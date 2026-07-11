@@ -260,7 +260,7 @@ namespace OpenMSViewer
 
   void PeakMapWidget::setColorMap(int colorMapIndex)
   {
-    const auto next = static_cast<PeakMapColorMap>(std::clamp(colorMapIndex, 0, 3));
+    const auto next = static_cast<PeakMapColorMap>(std::clamp(colorMapIndex, 0, 6));
     if (colorMap_ == next) return;
     colorMap_ = next;
     minimap_ = {};
@@ -271,7 +271,7 @@ namespace OpenMSViewer
 
   void PeakMapWidget::setIntensityScale(int intensityScaleIndex)
   {
-    const auto next = static_cast<PeakMapIntensityScale>(std::clamp(intensityScaleIndex, 0, 2));
+    const auto next = static_cast<PeakMapIntensityScale>(std::clamp(intensityScaleIndex, 0, 3));
     if (intensityScale_ == next) return;
     intensityScale_ = next;
     minimap_ = {};
@@ -467,7 +467,9 @@ namespace OpenMSViewer
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
     painter.fillRect(rect(), palette().window());
     const QRect area = plotRect();
-    painter.fillRect(area, QColor(10, 10, 16));
+    // Colormap floor so the plot ground matches the raster's "no data" colour and
+    // there is no seam between the widget background and the rendered image.
+    painter.fillRect(area, QColor::fromRgb(PeakMapRasterizer::color(0.0, colorMap_)));
 
     if (!raster_.isNull()) painter.drawImage(area, raster_);
     drawAxes(painter, area);

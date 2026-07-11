@@ -150,7 +150,7 @@ namespace OpenMSViewer
     std::vector<PlotRange> history_;
     QImage minimap_;
     PeakMapColorMap colorMap_{PeakMapColorMap::Viridis};
-    PeakMapIntensityScale intensityScale_{PeakMapIntensityScale::Logarithmic};
+    PeakMapIntensityScale intensityScale_{PeakMapIntensityScale::Equalized};
     PeakMapInteractionMode interactionMode_{PeakMapInteractionMode::Zoom};
     bool showMinimap_{true};
   };

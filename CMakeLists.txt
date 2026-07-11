@@ -41,6 +41,8 @@ add_library(openms_viewer_core STATIC
   src/model/ViewerDocument.h
   src/plot/PeakMapRasterizer.cpp
   src/plot/PeakMapRasterizer.h
+  src/plot/RasterShading.cpp
+  src/plot/RasterShading.h
   src/plot/IonMobilityRasterizer.cpp
   src/plot/IonMobilityRasterizer.h
   src/plot/PlotRange.h

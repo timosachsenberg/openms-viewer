@@ -13,12 +13,16 @@ namespace OpenMSViewer
   {
     Viridis,
     Plasma,
+    Inferno,
     Magma,
+    Jet,
+    Hot,
     Grayscale
   };
 
   enum class PeakMapIntensityScale
   {
+    Equalized,      // histogram/rank equalization (datashader eq_hist); default
     Logarithmic,
     SquareRoot,
     Linear
@@ -33,7 +37,7 @@ namespace OpenMSViewer
                                        bool axesSwapped = true,
                                        unsigned int msLevel = 1,
                                        PeakMapColorMap colorMap = PeakMapColorMap::Viridis,
-                                       PeakMapIntensityScale intensityScale = PeakMapIntensityScale::Logarithmic);
+                                       PeakMapIntensityScale intensityScale = PeakMapIntensityScale::Equalized);
     [[nodiscard]] static QRgb color(double normalized, PeakMapColorMap colorMap);
   };
 }

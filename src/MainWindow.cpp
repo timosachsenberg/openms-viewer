@@ -879,16 +879,19 @@ namespace OpenMSViewer
     peakMapControlBar_->addWidget(colorLabel);
     auto* colorMap = new QComboBox(peakMapControlBar_);
     colorMap->setObjectName(QStringLiteral("peakMapColorMap"));
-    colorMap->addItems({tr("Viridis"), tr("Plasma"), tr("Magma"), tr("Grayscale")});
+    colorMap->addItems({tr("Viridis"), tr("Plasma"), tr("Inferno"), tr("Magma"),
+                        tr("Jet"), tr("Hot"), tr("Grayscale")});
     colorMap->setMaximumWidth(110);
     colorMap->setAccessibleName(tr("Peak-map color map"));
     peakMapControlBar_->addWidget(colorMap);
     connect(colorMap, qOverload<int>(&QComboBox::currentIndexChanged),
             peakMap_, &PeakMapWidget::setColorMap);
+    connect(colorMap, qOverload<int>(&QComboBox::currentIndexChanged),
+            ionMobility_, &IonMobilityPanelWidget::setColorMap);
 
     auto* scale = new QComboBox(peakMapControlBar_);
     scale->setObjectName(QStringLiteral("peakMapIntensityScale"));
-    scale->addItems({tr("Log"), tr("Square root"), tr("Linear")});
+    scale->addItems({tr("Equalize"), tr("Log"), tr("Square root"), tr("Linear")});
     scale->setToolTip(tr("Peak-map intensity normalization"));
     scale->setAccessibleName(tr("Peak-map intensity scale"));
     peakMapControlBar_->addWidget(scale);

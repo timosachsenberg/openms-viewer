@@ -88,6 +88,14 @@ namespace OpenMSViewer
     scheduleRender();
   }
 
+  void IonMobilityPlotWidget::setColorMap(PeakMapColorMap colorMap)
+  {
+    if (colorMap_ == colorMap) return;
+    colorMap_ = colorMap;
+    scheduleRender();
+    update();  // repaint the floor background immediately, even before the re-render lands
+  }
+
   void IonMobilityPlotWidget::resetView()
   {
     if (!framePosition_) return;
@@ -158,9 +166,10 @@ namespace OpenMSViewer
     const auto experiment = experiment_;
     const std::size_t spectrumIndex = frame.spectrumIndex;
     const IonMobilityRange range = view_;
-    renderWatcher_.setFuture(QtConcurrent::run([experiment, spectrumIndex, range, size]
+    const PeakMapColorMap colorMap = colorMap_;
+    renderWatcher_.setFuture(QtConcurrent::run([experiment, spectrumIndex, range, size, colorMap]
     {
-      return IonMobilityRasterizer::render((*experiment)[spectrumIndex], range, size);
+      return IonMobilityRasterizer::render((*experiment)[spectrumIndex], range, size, colorMap);
     }));
   }
 
@@ -182,7 +191,7 @@ namespace OpenMSViewer
     painter.setRenderHint(QPainter::Antialiasing);
     painter.fillRect(rect(), palette().color(QPalette::Base));
     const QRect area = mainPlotRect();
-    painter.fillRect(area, QColor(9, 8, 18));
+    painter.fillRect(area, QColor::fromRgb(PeakMapRasterizer::color(0.0, colorMap_)));
     if (!raster_.image.isNull()) painter.drawImage(area, raster_.image);
     drawAxes(painter, area);
 
@@ -524,6 +533,12 @@ namespace OpenMSViewer
     // The ion-mobility map tracks the peak map's m/z viewport so the visible
     // region stays consistent across panels.
     plot_->setMzRange(minimumMz, maximumMz);
+  }
+
+  void IonMobilityPanelWidget::setColorMap(int colorMapIndex)
+  {
+    // Follows the main peak map's colormap selector (same PeakMapColorMap order).
+    plot_->setColorMap(static_cast<PeakMapColorMap>(std::clamp(colorMapIndex, 0, 6)));
   }
 
   std::size_t IonMobilityPanelWidget::frameCount() const noexcept { return frames_.size(); }

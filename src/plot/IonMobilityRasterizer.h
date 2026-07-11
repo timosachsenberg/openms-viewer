@@ -1,5 +1,7 @@
 #pragma once
 
+#include "plot/PeakMapRasterizer.h"
+
 #include <OpenMS/KERNEL/MSSpectrum.h>
 
 #include <QImage>
@@ -36,6 +38,7 @@ namespace OpenMSViewer
     [[nodiscard]] static IonMobilityRaster render(
       const OpenMS::MSSpectrum& spectrum,
       const IonMobilityRange& range,
-      QSize size);
+      QSize size,
+      PeakMapColorMap colorMap = PeakMapColorMap::Viridis);
   };
 }

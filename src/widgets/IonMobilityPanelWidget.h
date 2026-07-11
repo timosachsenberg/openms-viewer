@@ -37,6 +37,7 @@ namespace OpenMSViewer
                  const std::vector<IonMobilityFrameRecord>& frames);
     void setFramePosition(std::optional<std::size_t> position);
     void setShowMobilogram(bool show);
+    void setColorMap(PeakMapColorMap colorMap);
     void resetView();
     void setMzRange(double minimumMz, double maximumMz, bool reset = false);
     [[nodiscard]] std::optional<std::size_t> framePosition() const noexcept;
@@ -71,6 +72,7 @@ namespace OpenMSViewer
     IonMobilityRange bounds_;
     IonMobilityRange view_;
     IonMobilityRaster raster_;
+    PeakMapColorMap colorMap_{PeakMapColorMap::Viridis};
     bool showMobilogram_{true};
     bool dragging_{false};
     bool draggingMobilogram_{false};
@@ -95,6 +97,7 @@ namespace OpenMSViewer
     void setSpectrumIndex(std::size_t spectrumIndex);
     void setSpectrumMzRange(double minimumMz, double maximumMz, bool reset);
     void setPeakMapMzRange(double minimumMz, double maximumMz);
+    void setColorMap(int colorMapIndex);
     [[nodiscard]] std::size_t frameCount() const noexcept;
     [[nodiscard]] std::optional<std::size_t> selectedSpectrumIndex() const noexcept;
     [[nodiscard]] IonMobilityPlotWidget* plot() const noexcept;

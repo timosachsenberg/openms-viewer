@@ -1,9 +1,8 @@
 #include "plot/PeakMapRasterizer.h"
 
-#include <QColor>
+#include "plot/RasterShading.h"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <vector>
 
@@ -11,68 +10,6 @@ namespace OpenMSViewer
 {
   namespace
   {
-    struct ColorStop
-    {
-      double position;
-      int red;
-      int green;
-      int blue;
-    };
-
-    QRgb viridis(double value)
-    {
-      static constexpr std::array<ColorStop, 6> stops{{
-        {0.00, 68, 1, 84},
-        {0.20, 59, 82, 139},
-        {0.40, 33, 145, 140},
-        {0.60, 94, 201, 98},
-        {0.80, 170, 220, 50},
-        {1.00, 253, 231, 37},
-      }};
-
-      const double clamped = std::clamp(value, 0.0, 1.0);
-      auto upper = std::upper_bound(stops.begin(), stops.end(), clamped,
-        [](double needle, const ColorStop& stop) { return needle < stop.position; });
-      if (upper == stops.begin()) return qRgb(upper->red, upper->green, upper->blue);
-      if (upper == stops.end())
-      {
-        const auto& stop = stops.back();
-        return qRgb(stop.red, stop.green, stop.blue);
-      }
-      const auto& high = *upper;
-      const auto& low = *(upper - 1);
-      const double fraction = (clamped - low.position) / (high.position - low.position);
-      const auto blend = [fraction](int from, int to)
-      {
-        return static_cast<int>(std::lround(from + fraction * (to - from)));
-      };
-      return qRgb(blend(low.red, high.red), blend(low.green, high.green),
-                  blend(low.blue, high.blue));
-    }
-
-    QRgb colorFor(double value, PeakMapColorMap colorMap)
-    {
-      const double clamped = std::clamp(value, 0.0, 1.0);
-      if (colorMap == PeakMapColorMap::Grayscale)
-      {
-        const int gray = static_cast<int>(std::lround(clamped * 255.0));
-        return qRgb(gray, gray, gray);
-      }
-      if (colorMap == PeakMapColorMap::Plasma)
-      {
-        return qRgb(static_cast<int>(255.0 * std::clamp(0.35 + 1.1 * clamped, 0.0, 1.0)),
-                    static_cast<int>(255.0 * std::pow(clamped, 1.7)),
-                    static_cast<int>(255.0 * std::clamp(0.8 - 0.7 * clamped, 0.0, 1.0)));
-      }
-      if (colorMap == PeakMapColorMap::Magma)
-      {
-        return qRgb(static_cast<int>(255.0 * std::clamp(1.5 * clamped, 0.0, 1.0)),
-                    static_cast<int>(255.0 * std::pow(clamped, 2.2)),
-                    static_cast<int>(255.0 * std::clamp(0.18 + 0.55 * clamped, 0.0, 1.0)));
-      }
-      return viridis(clamped);
-    }
-
     // Deep-zoom thresholds mirror pyopenms-viewer: below BOTH spans, switch from
     // native RT/m-z rasterization to exact per-peak point rendering.
     constexpr double kDeepZoomRtThreshold = 60.0;   // seconds
@@ -108,7 +45,7 @@ namespace OpenMSViewer
       }
     }
 
-    // Shared shading tail: adaptive spread + colormap, used by both render paths.
+    // Shared shading tail: adaptive spread + intensity mapping + colormap.
     QImage shadeGrid(std::vector<float>& values, std::size_t rtBins, std::size_t mzBins,
                      QSize size, bool axesSwapped, PeakMapColorMap colorMap,
                      PeakMapIntensityScale intensityScale)
@@ -121,53 +58,52 @@ namespace OpenMSViewer
         if (value > 0.0F) ++occupied;
       }
 
-      // Adaptive spread (datashader dynspread equivalent): grow each occupied cell
-      // into a small blob when the view is sparse so individual peaks stay visible
-      // as crisp points; dense (zoomed-out) views are left untouched.
       const double occupancy = values.empty()
         ? 0.0 : static_cast<double>(occupied) / static_cast<double>(values.size());
-      if (maximum > 0.0F && occupied > 0 && occupancy < 0.03)
-      {
-        constexpr int radius = 2;
-        std::vector<float> spread(values);
-        for (std::size_t mz = 0; mz < mzBins; ++mz)
-          for (std::size_t rt = 0; rt < rtBins; ++rt)
-          {
-            const float source = values[mz * rtBins + rt];
-            if (source <= 0.0F) continue;
-            for (int dy = -radius; dy <= radius; ++dy)
-            {
-              const long ny = static_cast<long>(mz) + dy;
-              if (ny < 0 || ny >= static_cast<long>(mzBins)) continue;
-              for (int dx = -radius; dx <= radius; ++dx)
-              {
-                const long nx = static_cast<long>(rt) + dx;
-                if (nx < 0 || nx >= static_cast<long>(rtBins)) continue;
-                float& target = spread[static_cast<std::size_t>(ny) * rtBins
-                                       + static_cast<std::size_t>(nx)];
-                target = std::max(target, source);
-              }
-            }
-          }
-        values.swap(spread);
-      }
 
       QImage image(size, QImage::Format_RGB32);
-      image.fill(QColor(10, 10, 16));
+      // Background is the colormap floor so "no data" blends into "lowest data".
+      image.fill(RasterShading::sample(colorMap, 0.0));
       if (maximum <= 0.0F) return image;
+
+      // Histogram equalization (datashader eq_hist): build the CDF from the
+      // ORIGINAL grid so a value's colour depends only on the data distribution,
+      // not on where the peak sits or how its spread blob is clipped.
+      RasterShading::EqualizationCdf equalization;
+      if (intensityScale == PeakMapIntensityScale::Equalized)
+        equalization = RasterShading::buildEqualization(values);
+
+      // Adaptive spread (dynspread) for display only: grow occupied cells into
+      // small blobs when the view is sparse; dense views are left untouched.
+      // Max-dilation reuses original values, so the CDF above still applies.
+      if (occupied > 0)
+        RasterShading::dilateMax(values, mzBins, rtBins, RasterShading::dynspreadRadius(occupancy));
 
       const double logMaximum = std::log1p(static_cast<double>(maximum));
       for (std::size_t mzIndex = 0; mzIndex < mzBins; ++mzIndex)
         for (std::size_t rtIndex = 0; rtIndex < rtBins; ++rtIndex)
         {
           const float intensity = values[mzIndex * rtBins + rtIndex];
-          if (intensity <= 0.0F) continue;
+          if (!(intensity > 0.0F)) continue;   // skips empty and non-finite cells
           double normalized = static_cast<double>(intensity) / maximum;
-          if (intensityScale == PeakMapIntensityScale::Logarithmic)
-            normalized = std::pow(std::log1p(static_cast<double>(intensity)) / logMaximum, 0.72);
-          else if (intensityScale == PeakMapIntensityScale::SquareRoot)
-            normalized = std::sqrt(normalized);
-          const QRgb color = colorFor(normalized, colorMap);
+          switch (intensityScale)
+          {
+            case PeakMapIntensityScale::Equalized:
+              normalized = equalization.rank(intensity);
+              break;
+            case PeakMapIntensityScale::Logarithmic:
+              normalized = std::pow(std::log1p(static_cast<double>(intensity)) / logMaximum, 0.72);
+              break;
+            case PeakMapIntensityScale::SquareRoot:
+              normalized = std::sqrt(normalized);
+              break;
+            case PeakMapIntensityScale::Linear:
+              break;
+          }
+          // Keep any occupied cell at least one LUT step above the floor so a lone
+          // faint peak never disappears into the colormap-floor background.
+          normalized = std::max(normalized, 1.0 / 255.0);
+          const QRgb color = RasterShading::sample(colorMap, normalized);
           const int x = axesSwapped ? static_cast<int>(mzIndex) : static_cast<int>(rtIndex);
           const int y = axesSwapped
                           ? size.height() - 1 - static_cast<int>(rtIndex)
@@ -211,6 +147,6 @@ namespace OpenMSViewer
 
   QRgb PeakMapRasterizer::color(double normalized, PeakMapColorMap colorMap)
   {
-    return colorFor(normalized, colorMap);
+    return RasterShading::sample(colorMap, normalized);
   }
 }

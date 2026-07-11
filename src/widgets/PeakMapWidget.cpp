@@ -156,9 +156,14 @@ namespace OpenMSViewer
   }
 
   bool PeakMapWidget::axesSwapped() const noexcept { return axesSwapped_; }
+  PeakMapColorMap PeakMapWidget::colorMap() const noexcept { return colorMap_; }
   const PlotRange& PeakMapWidget::viewRange() const noexcept { return view_; }
   bool PeakMapWidget::canZoomBack() const noexcept { return !history_.empty(); }
   bool PeakMapWidget::hasExperiment() const noexcept { return experiment_ != nullptr; }
+  std::shared_ptr<const OpenMS::MSExperiment> PeakMapWidget::experiment() const noexcept
+  {
+    return experiment_;
+  }
   std::optional<std::size_t> PeakMapWidget::selectedFeature() const noexcept { return selectedFeature_; }
   std::optional<std::size_t> PeakMapWidget::selectedIdentification() const noexcept
   {

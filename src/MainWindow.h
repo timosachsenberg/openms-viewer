@@ -82,6 +82,8 @@ namespace OpenMSViewer
     void reloadLastFile();
     void cancelCurrentOperation();
     void resetDockLayout();
+    void show3DSurface();
+    void closeSurface3D();
 
   private:
     void createActions();
@@ -142,6 +144,8 @@ namespace OpenMSViewer
     QWidget* peakMapPanel_{nullptr};
     QToolBar* peakMapControlBar_{nullptr};
     PeakMapWidget* peakMap_{nullptr};
+    class PeakSurface3DWidget* surface3D_{nullptr};
+    QDialog* surface3DDialog_{nullptr};
     QWidget* spectrumPanel_{nullptr};
     QToolBar* spectrumControlBar_{nullptr};
     LoadingOverlayWidget* loadingOverlay_{nullptr};
@@ -182,6 +186,7 @@ namespace OpenMSViewer
     QAction* spectrumNextAction_{nullptr};
     QAction* spectrumLastAction_{nullptr};
     QAction* swapAxesAction_{nullptr};
+    QAction* surface3DAction_{nullptr};
     QAction* darkThemeAction_{nullptr};
     QAction* showMinimapAction_{nullptr};
     QAction* rtInMinutesAction_{nullptr};

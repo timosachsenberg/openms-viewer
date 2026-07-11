@@ -41,9 +41,11 @@ namespace OpenMSViewer
     void setSelectedIdentification(std::optional<std::size_t> identificationIndex);
 
     [[nodiscard]] bool axesSwapped() const noexcept;
+    [[nodiscard]] PeakMapColorMap colorMap() const noexcept;
     [[nodiscard]] const PlotRange& viewRange() const noexcept;
     [[nodiscard]] bool canZoomBack() const noexcept;
     [[nodiscard]] bool hasExperiment() const noexcept;
+    [[nodiscard]] std::shared_ptr<const OpenMS::MSExperiment> experiment() const noexcept;
     [[nodiscard]] std::optional<std::size_t> selectedFeature() const noexcept;
     [[nodiscard]] std::optional<std::size_t> selectedIdentification() const noexcept;
     [[nodiscard]] QPointF mapDataToWidget(double rt, double mz) const;

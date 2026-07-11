@@ -5,6 +5,7 @@
 #include "logging/ApplicationLog.h"
 
 #include "widgets/PeakMapWidget.h"
+#include "widgets/PeakSurface3DWidget.h"
 #include "widgets/ChromatogramPanelWidget.h"
 #include "widgets/FaimsPanelWidget.h"
 #include "widgets/FeatureTableWidget.h"
@@ -545,6 +546,7 @@ namespace OpenMSViewer
       document_.clear();
       imagingStore_.reset();
       imagingSummary_ = {};
+      closeSurface3D();
       peakMap_->clear();
       tic_->clear();
       spectrum_->clear();
@@ -611,6 +613,11 @@ namespace OpenMSViewer
     swapAxesAction_->setCheckable(true);
     swapAxesAction_->setChecked(true);
     connect(swapAxesAction_, &QAction::toggled, peakMap_, &PeakMapWidget::setAxesSwapped);
+
+    surface3DAction_ = new QAction(tr("3-D surface of the current view…"), this);
+    surface3DAction_->setStatusTip(
+      tr("Show the zoomed region as a rotatable 3-D intensity surface (zoom in first)"));
+    connect(surface3DAction_, &QAction::triggered, this, &MainWindow::show3DSurface);
 
     darkThemeAction_ = new QAction(tr("Dark theme"), this);
     darkThemeAction_->setCheckable(true);
@@ -915,6 +922,8 @@ namespace OpenMSViewer
     auto* displayMenu = new QMenu(display);
     displayMenu->addAction(swapAxesAction_);
     displayMenu->addAction(showMinimapAction_);
+    displayMenu->addSeparator();
+    displayMenu->addAction(surface3DAction_);
     display->setMenu(displayMenu);
     peakMapControlBar_->addWidget(display);
 
@@ -1301,6 +1310,50 @@ namespace OpenMSViewer
     if (!dock) return;
     dock->toggleViewAction()->setEnabled(available);
     dock->setVisible(available && dockVisibilityPreference_.value(dock->objectName(), false));
+  }
+
+  void MainWindow::closeSurface3D()
+  {
+    // Hide + release on any primary-data transition so a stale run isn't shown and
+    // its (potentially large) experiment isn't retained.
+    if (surface3D_) surface3D_->clear();
+    if (surface3DDialog_) surface3DDialog_->hide();
+  }
+
+  void MainWindow::show3DSurface()
+  {
+    if (imagingStore_) return;   // imaging mode has no RT/m-z peak map
+    // Use the experiment the peak map is actually showing (e.g. a FAIMS-filtered
+    // channel), not the full document, so the surface matches the 2-D view.
+    const auto experiment = peakMap_->experiment();
+    if (!experiment)
+    {
+      statusBar()->showMessage(tr("Load an mzML file first"), 4000);
+      return;
+    }
+    const PlotRange view = peakMap_->viewRange();
+    if (!PeakSurface3DWidget::viewFitsForSurface(view))
+    {
+      statusBar()->showMessage(
+        tr("Zoom the peak map in (RT ≤ %1 s, m/z ≤ %2) before opening the 3-D view")
+          .arg(PeakSurface3DWidget::kMaxRtSpan, 0, 'f', 0)
+          .arg(PeakSurface3DWidget::kMaxMzSpan, 0, 'f', 0), 5000);
+      return;
+    }
+    if (!surface3DDialog_)
+    {
+      surface3DDialog_ = new QDialog(this);
+      surface3DDialog_->setWindowTitle(tr("3-D peak surface"));
+      surface3DDialog_->resize(560, 480);
+      auto* layout = new QVBoxLayout(surface3DDialog_);
+      layout->setContentsMargins(0, 0, 0, 0);
+      surface3D_ = new PeakSurface3DWidget(surface3DDialog_);
+      layout->addWidget(surface3D_);
+    }
+    surface3D_->setView(experiment, view, peakMap_->colorMap());
+    surface3DDialog_->show();
+    surface3DDialog_->raise();
+    surface3DDialog_->activateWindow();
   }
 
   void MainWindow::resetDockLayout()
@@ -1749,6 +1802,7 @@ namespace OpenMSViewer
     }
 
     document_.clear();
+    closeSurface3D();
     peakMap_->clear();
     tic_->clear();
     spectrum_->clear();
@@ -1795,6 +1849,7 @@ namespace OpenMSViewer
   void MainWindow::updateDocumentViews()
   {
     const auto experiment = document_.experimentHandle();
+    closeSurface3D();   // the previous run's surface no longer applies
     peakMap_->setExperiment(experiment, document_.bounds());
     setPeakMapControlsEnabled(experiment != nullptr);
     tic_->setTrace(document_.tic(), document_.ticLabel());
@@ -2143,6 +2198,7 @@ namespace OpenMSViewer
 
   void MainWindow::applyFaimsChannel(int channelIndex, bool selectNearest)
   {
+    closeSurface3D();   // the peak map's experiment is changing (channel filter)
     if (channelIndex < 0 || static_cast<std::size_t>(channelIndex) >= document_.faimsChannels().size())
     {
       selection_.setFaimsChannel(-1);

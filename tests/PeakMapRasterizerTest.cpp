@@ -3,6 +3,7 @@
 #include "plot/PeakMapRasterizer.h"
 #include "plot/PlotRange.h"
 #include "widgets/PeakMapWidget.h"
+#include "widgets/PeakSurface3DWidget.h"
 
 #include <QApplication>
 #include <QColor>
@@ -284,6 +285,25 @@ private slots:
     const QImage ms2 = widget.grab().toImage();
     QVERIFY(!ms1.isNull() && !ms2.isNull());
     QVERIFY(ms1 != ms2);
+  }
+
+  void surface3DGatingAndRender()
+  {
+    using OpenMSViewer::PeakSurface3DWidget;
+    // Only offered when zoomed: both spans must be within the limits.
+    QVERIFY(PeakSurface3DWidget::viewFitsForSurface({10.0, 60.0, 400.0, 420.0}));   // 50 s, 20 m/z
+    QVERIFY(!PeakSurface3DWidget::viewFitsForSurface({0.0, 200.0, 400.0, 420.0}));  // RT span 200
+    QVERIFY(!PeakSurface3DWidget::viewFitsForSurface({10.0, 60.0, 400.0, 480.0}));  // m/z span 80
+
+    PeakSurface3DWidget widget;
+    widget.resize(400, 320);
+    widget.show();
+    QVERIFY(!widget.grab().isNull());   // "zoom in" hint state, no crash
+
+    auto experiment = std::make_shared<OpenMS::MSExperiment>(OpenMSViewer::TestData::experiment());
+    widget.setView(experiment, {9.0, 12.0, 395.0, 415.0}, OpenMSViewer::PeakMapColorMap::Viridis);
+    QTest::qWait(300);                  // let the async grid computation settle
+    QVERIFY(!widget.grab().isNull());   // renders the surface without crashing
   }
 
   void rejectsInvalidRequest()

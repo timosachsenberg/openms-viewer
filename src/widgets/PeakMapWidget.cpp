@@ -4,6 +4,10 @@
 
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDoubleSpinBox>
+#include <QFormLayout>
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QPainter>
@@ -62,6 +66,8 @@ namespace OpenMSViewer
       if (activeGeneration_ == desiredGeneration_)
       {
         raster_ = renderWatcher_.result();
+        rasterRange_ = pendingRasterRange_;         // remember what this image depicts
+        rasterAxesSwapped_ = pendingAxesSwapped_;   // ...and in which axis orientation
         update();
       }
       else if (experiment_)
@@ -118,7 +124,14 @@ namespace OpenMSViewer
 
   void PeakMapWidget::setSelectedRt(double rt)
   {
+    setSpectrumMarker(rt, 1, std::nullopt);
+  }
+
+  void PeakMapWidget::setSpectrumMarker(double rt, int msLevel, std::optional<double> precursorMz)
+  {
     selectedRt_ = rt;
+    selectedMsLevel_ = msLevel;
+    selectedMarkerMz_ = precursorMz;
     hasSelectedRt_ = true;
     update();
   }
@@ -397,7 +410,10 @@ namespace OpenMSViewer
       update();
       return;
     }
-    renderTimer_.start();
+    // Throttle, not debounce: leave an already-running timer alone so continuous
+    // pan/zoom re-renders at the timer cadence instead of freezing until the
+    // interaction pauses. The reprojected preview (paintEvent) tracks in between.
+    if (!renderTimer_.isActive()) renderTimer_.start();
     update();
   }
 
@@ -410,7 +426,9 @@ namespace OpenMSViewer
     activeGeneration_ = desiredGeneration_;
     const auto experiment = experiment_;
     const PlotRange range = view_;
+    pendingRasterRange_ = range;
     const bool swapped = axesSwapped_;
+    pendingAxesSwapped_ = swapped;
     const PeakMapColorMap colorMap = colorMap_;
     const PeakMapIntensityScale intensityScale = intensityScale_;
     renderWatcher_.setFuture(QtConcurrent::run([experiment, range, renderSize, swapped, colorMap, intensityScale]
@@ -432,6 +450,40 @@ namespace OpenMSViewer
     {
       return PeakMapRasterizer::render(*experiment, bounds, QSize(220, 130), swapped, 1, colorMap, intensityScale);
     }));
+  }
+
+  void PeakMapWidget::showGoToRangeDialog()
+  {
+    if (!experiment_) return;
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Go to range"));
+    auto* form = new QFormLayout(&dialog);
+    const auto makeSpin = [&](double value, double low, double high, int decimals)
+    {
+      auto* spin = new QDoubleSpinBox(&dialog);
+      spin->setDecimals(decimals);   // m/z needs finer precision than RT seconds
+      spin->setRange(low, high);     // clamped to the data bounds
+      spin->setValue(std::clamp(value, low, high));
+      spin->setSingleStep((high - low) / 100.0);
+      return spin;
+    };
+    auto* rtMin = makeSpin(view_.rtMin, dataBounds_.rtMin, dataBounds_.rtMax, 3);
+    auto* rtMax = makeSpin(view_.rtMax, dataBounds_.rtMin, dataBounds_.rtMax, 3);
+    auto* mzMin = makeSpin(view_.mzMin, dataBounds_.mzMin, dataBounds_.mzMax, 5);
+    auto* mzMax = makeSpin(view_.mzMax, dataBounds_.mzMin, dataBounds_.mzMax, 5);
+    form->addRow(tr("RT min (s)"), rtMin);
+    form->addRow(tr("RT max (s)"), rtMax);
+    form->addRow(tr("m/z min"), mzMin);
+    form->addRow(tr("m/z max"), mzMax);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    // Only navigate on a well-ordered, non-empty range (reject min>=max before
+    // normalize() would silently expand an equal pair into a 1-unit interval).
+    if (dialog.exec() == QDialog::Accepted
+        && rtMax->value() > rtMin->value() && mzMax->value() > mzMin->value())
+      applyRange({rtMin->value(), rtMax->value(), mzMin->value(), mzMax->value()}, true);
   }
 
   void PeakMapWidget::applyRange(const PlotRange& range, bool remember)
@@ -471,7 +523,43 @@ namespace OpenMSViewer
     // there is no seam between the widget background and the rendered image.
     painter.fillRect(area, QColor::fromRgb(PeakMapRasterizer::color(0.0, colorMap_)));
 
-    if (!raster_.isNull()) painter.drawImage(area, raster_);
+    // Only draw the raster while it matches the current axis orientation; after an
+    // axis swap it is skipped (floor shown) until the re-render lands, so we never
+    // paint an image whose axes disagree with the view.
+    if (!raster_.isNull() && rasterAxesSwapped_ == axesSwapped_)
+    {
+      // Reproject the last raster into the CURRENT view so a pan/zoom shows a
+      // tracking preview (shifted/scaled) until the throttled re-render lands.
+      // Fractions map against the plot rect's continuous edges, so at rest
+      // (rasterRange_==view_) the target is exactly `area`.
+      QRectF target(area);
+      if (rasterRange_.isValid() && view_.rtSpan() > 0.0 && view_.mzSpan() > 0.0)
+      {
+        const auto fracRt = [&](double rt) { return (rt - view_.rtMin) / view_.rtSpan(); };
+        const auto fracMz = [&](double mz) { return (mz - view_.mzMin) / view_.mzSpan(); };
+        double x0, x1, y0, y1;
+        if (axesSwapped_)   // x = m/z, y = RT (inverted: rtMax at top)
+        {
+          x0 = area.left() + fracMz(rasterRange_.mzMin) * area.width();
+          x1 = area.left() + fracMz(rasterRange_.mzMax) * area.width();
+          y0 = area.top() + (1.0 - fracRt(rasterRange_.rtMax)) * area.height();
+          y1 = area.top() + (1.0 - fracRt(rasterRange_.rtMin)) * area.height();
+        }
+        else                // x = RT, y = m/z (inverted: mzMax at top)
+        {
+          x0 = area.left() + fracRt(rasterRange_.rtMin) * area.width();
+          x1 = area.left() + fracRt(rasterRange_.rtMax) * area.width();
+          y0 = area.top() + (1.0 - fracMz(rasterRange_.mzMax)) * area.height();
+          y1 = area.top() + (1.0 - fracMz(rasterRange_.mzMin)) * area.height();
+        }
+        target = QRectF(QPointF(std::min(x0, x1), std::min(y0, y1)),
+                        QPointF(std::max(x0, x1), std::max(y0, y1)));
+      }
+      painter.save();
+      painter.setClipRect(area);
+      painter.drawImage(target, raster_);
+      painter.restore();
+    }
     drawAxes(painter, area);
 
     if (!experiment_)
@@ -493,10 +581,41 @@ namespace OpenMSViewer
 
     if (hasSelectedRt_ && selectedRt_ >= view_.rtMin && selectedRt_ <= view_.rtMax)
     {
-      painter.setPen(QPen(QColor(255, 94, 94), 1.5, Qt::DashLine));
-      const QPointF point = pixelFor(selectedRt_, (view_.mzMin + view_.mzMax) / 2.0);
-      if (axesSwapped_) painter.drawLine(QPointF(area.left(), point.y()), QPointF(area.right(), point.y()));
-      else painter.drawLine(QPointF(point.x(), area.top()), QPointF(point.x(), area.bottom()));
+      // MS level colours the marker (blue MS1, orange MS2+); an MS2 precursor adds
+      // a perpendicular m/z line and a crosshair so the fragmented precursor is
+      // located in both RT and m/z, not just its RT column.
+      const QColor markerColor = selectedMsLevel_ >= 2 ? QColor(255, 140, 40) : QColor(90, 200, 255);
+      const QPointF rtPoint = pixelFor(selectedRt_, (view_.mzMin + view_.mzMax) / 2.0);
+      painter.setPen(QPen(markerColor, 1.5, Qt::DashLine));
+      if (axesSwapped_) painter.drawLine(QPointF(area.left(), rtPoint.y()), QPointF(area.right(), rtPoint.y()));
+      else painter.drawLine(QPointF(rtPoint.x(), area.top()), QPointF(rtPoint.x(), area.bottom()));
+
+      const bool precursorVisible = selectedMarkerMz_
+        && *selectedMarkerMz_ >= view_.mzMin && *selectedMarkerMz_ <= view_.mzMax;
+      if (precursorVisible)
+      {
+        const QPointF cross = pixelFor(selectedRt_, *selectedMarkerMz_);
+        painter.setPen(QPen(markerColor, 1.5, Qt::DashLine));
+        if (axesSwapped_) painter.drawLine(QPointF(cross.x(), area.top()), QPointF(cross.x(), area.bottom()));
+        else painter.drawLine(QPointF(area.left(), cross.y()), QPointF(area.right(), cross.y()));
+        painter.setPen(QPen(markerColor, 1.8));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawEllipse(cross, 5.0, 5.0);
+      }
+
+      const QString markerLabel = selectedMarkerMz_
+        ? tr("MS%1 · precursor m/z %2").arg(selectedMsLevel_).arg(*selectedMarkerMz_, 0, 'f', 4)
+        : tr("MS%1 · RT %2 s").arg(selectedMsLevel_).arg(selectedRt_, 0, 'f', 1);
+      painter.setPen(markerColor);
+      const int markerLabelWidth = painter.fontMetrics().horizontalAdvance(markerLabel);
+      if (axesSwapped_)
+        painter.drawText(QPointF(area.left() + 6, std::max<double>(area.top() + 12, rtPoint.y() - 5)), markerLabel);
+      else
+      {
+        const double labelX = std::clamp<double>(rtPoint.x() + 6, area.left() + 4,
+                                                 area.right() - markerLabelWidth - 4);
+        painter.drawText(QPointF(labelX, area.top() + 14), markerLabel);
+      }
     }
 
     drawFeatures(painter);
@@ -540,6 +659,26 @@ namespace OpenMSViewer
       painter.setPen(QPen(QColor(255, 225, 70), 2.0));
       painter.setBrush(QColor(255, 225, 70, 25));
       painter.drawRect(viewport.normalized());
+
+      // Mirror the selected-spectrum marker onto the minimap.
+      if (hasSelectedRt_ && dataBounds_.rtSpan() > 0.0 && dataBounds_.mzSpan() > 0.0)
+      {
+        const double markerMz = selectedMarkerMz_ ? *selectedMarkerMz_
+                                                   : (dataBounds_.mzMin + dataBounds_.mzMax) / 2.0;
+        // Clamp to [0,1] so an out-of-bounds precursor never draws the dot outside
+        // the minimap (onto the main plot); skip if the values are not finite.
+        const double rtFrac = std::clamp((selectedRt_ - dataBounds_.rtMin) / dataBounds_.rtSpan(), 0.0, 1.0);
+        const double mzFrac = std::clamp((markerMz - dataBounds_.mzMin) / dataBounds_.mzSpan(), 0.0, 1.0);
+        if (std::isfinite(rtFrac) && std::isfinite(mzFrac))
+        {
+          const double markerX = mini.left() + (axesSwapped_ ? mzFrac : rtFrac) * mini.width();
+          const double markerY = mini.bottom() - (axesSwapped_ ? rtFrac : mzFrac) * mini.height();
+          const QColor markerColor = selectedMsLevel_ >= 2 ? QColor(255, 140, 40) : QColor(90, 200, 255);
+          painter.setPen(QPen(markerColor, 1.2));
+          painter.setBrush(markerColor);
+          painter.drawEllipse(QPointF(markerX, markerY), 2.5, 2.5);
+        }
+      }
     }
 
     if (dragMode_ == DragMode::Zoom)
@@ -1074,7 +1213,8 @@ namespace OpenMSViewer
       event->accept();
       return;
     }
-    if (event->key() == Qt::Key_Z) setInteractionMode(0);
+    if (event->key() == Qt::Key_G) showGoToRangeDialog();
+    else if (event->key() == Qt::Key_Z) setInteractionMode(0);
     else if (event->key() == Qt::Key_P) setInteractionMode(1);
     else if (event->key() == Qt::Key_M) setInteractionMode(2);
     else

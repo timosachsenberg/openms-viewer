@@ -4,8 +4,43 @@
 #include "plot/PlotRange.h"
 #include "widgets/PeakMapWidget.h"
 
+#include <QApplication>
 #include <QColor>
+#include <QDialog>
+#include <QDoubleSpinBox>
 #include <QTest>
+#include <QTimer>
+
+#include <optional>
+
+namespace
+{
+  // Fill the modal Go-to-Range dialog's four spin boxes (rtMin/rtMax/mzMin/mzMax,
+  // in construction order) and accept it, once it appears. Bounded so it can never
+  // spin forever if no dialog opens.
+  void scheduleGoToRangeFill(double rtMin, double rtMax, double mzMin, double mzMax)
+  {
+    auto* timer = new QTimer(qApp);
+    auto* attempts = new int(0);
+    QObject::connect(timer, &QTimer::timeout, timer, [=]()
+    {
+      for (QWidget* widget : QApplication::topLevelWidgets())
+      {
+        auto* dialog = qobject_cast<QDialog*>(widget);
+        if (!dialog || !dialog->isVisible()) continue;
+        const auto spins = dialog->findChildren<QDoubleSpinBox*>();
+        if (spins.size() < 4) continue;
+        spins[0]->setValue(rtMin); spins[1]->setValue(rtMax);
+        spins[2]->setValue(mzMin); spins[3]->setValue(mzMax);
+        dialog->accept();
+        timer->stop(); timer->deleteLater(); delete attempts;
+        return;
+      }
+      if (++(*attempts) > 500) { timer->stop(); timer->deleteLater(); delete attempts; }
+    });
+    timer->start(1);
+  }
+}
 
 class PeakMapRasterizerTest final : public QObject
 {
@@ -211,6 +246,44 @@ private slots:
              qRgb(68, 1, 84));
     const QRgb top = OpenMSViewer::PeakMapRasterizer::color(1.0, OpenMSViewer::PeakMapColorMap::Viridis);
     QVERIFY(qRed(top) > 200 && qGreen(top) > 200 && qBlue(top) < 80);
+  }
+
+  void goToRangeDialogNavigatesToEnteredRange()
+  {
+    const auto source = OpenMSViewer::TestData::experiment();
+    const OpenMSViewer::PlotRange bounds{0.0, 30.0, 300.0, 700.0};
+    OpenMSViewer::PeakMapWidget widget;
+    widget.resize(900, 600);
+    widget.show();
+    widget.setExperiment(std::make_shared<OpenMS::MSExperiment>(source), bounds);
+    widget.setFocus();
+
+    scheduleGoToRangeFill(10.0, 20.0, 400.0, 500.0);
+    QTest::keyClick(&widget, Qt::Key_G);   // opens the modal dialog; the timer fills+accepts
+
+    QVERIFY(qAbs(widget.viewRange().rtMin - 10.0) < 1e-6);
+    QVERIFY(qAbs(widget.viewRange().rtMax - 20.0) < 1e-6);
+    QVERIFY(qAbs(widget.viewRange().mzMin - 400.0) < 1e-6);
+    QVERIFY(qAbs(widget.viewRange().mzMax - 500.0) < 1e-6);
+  }
+
+  void spectrumMarkerDistinguishesMs1AndMs2()
+  {
+    const auto source = OpenMSViewer::TestData::experiment();
+    const OpenMSViewer::PlotRange bounds{9.0, 21.0, 390.0, 610.0};
+    OpenMSViewer::PeakMapWidget widget;
+    widget.resize(900, 600);
+    widget.show();
+    widget.setExperiment(std::make_shared<OpenMS::MSExperiment>(source), bounds);
+    QTRY_VERIFY_WITH_TIMEOUT(!widget.rasterImage().isNull(), 3000);
+
+    widget.setSpectrumMarker(11.0, 1, std::nullopt);
+    const QImage ms1 = widget.grab().toImage();
+    // An MS2 selection adds a precursor m/z line + crosshair in a different colour.
+    widget.setSpectrumMarker(11.0, 2, std::optional<double>(500.2));
+    const QImage ms2 = widget.grab().toImage();
+    QVERIFY(!ms1.isNull() && !ms2.isNull());
+    QVERIFY(ms1 != ms2);
   }
 
   void rejectsInvalidRequest()

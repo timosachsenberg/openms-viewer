@@ -34,6 +34,7 @@ namespace OpenMSViewer
                        const PlotRange& bounds);
     void clear();
     void setSelectedRt(double rt);
+    void setSpectrumMarker(double rt, int msLevel, std::optional<double> precursorMz);
     void setAxesSwapped(bool swapped);
     void setFeatures(const std::vector<FeatureRecord>& features);
     void setSelectedFeature(std::optional<std::size_t> featureIndex);
@@ -104,6 +105,7 @@ namespace OpenMSViewer
     void scheduleRender();
     void startRender();
     void startMinimapRender();
+    void showGoToRangeDialog();
     void applyRange(const PlotRange& range, bool remember);
     void rememberCurrentRange();
     void drawAxes(QPainter& painter, const QRect& area) const;
@@ -119,9 +121,15 @@ namespace OpenMSViewer
     PlotRange dataBounds_;
     PlotRange view_;
     QImage raster_;
+    PlotRange rasterRange_;          // data footprint the current raster_ was rendered for
+    PlotRange pendingRasterRange_;   // range of the render currently in flight
+    bool rasterAxesSwapped_{true};   // axis orientation the current raster_ was rendered with
+    bool pendingAxesSwapped_{true};  // axis orientation of the render currently in flight
     bool axesSwapped_{true};
     double selectedRt_{0.0};
     bool hasSelectedRt_{false};
+    int selectedMsLevel_{1};
+    std::optional<double> selectedMarkerMz_;   // precursor m/z for an MS2+ selection
     std::vector<FeatureRecord> features_;
     std::optional<std::size_t> selectedFeature_;
     std::optional<std::size_t> hoveredFeature_;

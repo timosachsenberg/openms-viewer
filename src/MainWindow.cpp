@@ -2008,7 +2008,11 @@ namespace OpenMSViewer
     spectrum_->setSpectrumIndex(spectrumIndex);
     tic_->setSelectedSpectrum(spectrumIndex);
     tic_->setSelectedRt(selected->getRT());
-    peakMap_->setSelectedRt(selected->getRT());
+    std::optional<double> precursorMz;
+    if (selected->getMSLevel() >= 2 && !selected->getPrecursors().empty())
+      precursorMz = selected->getPrecursors().front().getMZ();
+    peakMap_->setSpectrumMarker(selected->getRT(),
+                                static_cast<int>(selected->getMSLevel()), precursorMz);
     ionMobility_->setSpectrumIndex(spectrumIndex);
 
     // Derive the identification for this spectrum (highlight only, no zoom).

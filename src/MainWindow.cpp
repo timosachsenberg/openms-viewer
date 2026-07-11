@@ -21,6 +21,7 @@
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -706,6 +707,19 @@ namespace OpenMSViewer
     connect(measureSpectrumAction_, &QAction::toggled,
             spectrum_, &SpectrumWidget::setMeasurementMode);
 
+    labelSpectrumAction_ = new QAction(tr("Label peaks"), this);
+    labelSpectrumAction_->setCheckable(true);
+    labelSpectrumAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_L));
+    labelSpectrumAction_->setStatusTip(
+      tr("Click a peak to add, edit, or remove a free-text label (clear the text to remove)"));
+    connect(labelSpectrumAction_, &QAction::toggled, spectrum_, &SpectrumWidget::setLabelMode);
+
+    // The two click tools are mutually exclusive but either can be off.
+    auto* spectrumToolGroup = new QActionGroup(this);
+    spectrumToolGroup->setExclusionPolicy(QActionGroup::ExclusionPolicy::ExclusiveOptional);
+    spectrumToolGroup->addAction(measureSpectrumAction_);
+    spectrumToolGroup->addAction(labelSpectrumAction_);
+
     showMzLabelsAction_ = new QAction(tr("Automatic m/z labels"), this);
     showMzLabelsAction_->setCheckable(true);
     connect(showMzLabelsAction_, &QAction::toggled,
@@ -718,6 +732,10 @@ namespace OpenMSViewer
     clearSpectrumMeasurementsAction_ = new QAction(tr("Clear spectrum measurements"), this);
     connect(clearSpectrumMeasurementsAction_, &QAction::triggered,
             spectrum_, &SpectrumWidget::clearMeasurements);
+
+    clearSpectrumLabelsAction_ = new QAction(tr("Clear spectrum labels"), this);
+    connect(clearSpectrumLabelsAction_, &QAction::triggered,
+            spectrum_, &SpectrumWidget::clearLabels);
 
     spectrumFirstAction_ = new QAction(style()->standardIcon(QStyle::SP_MediaSkipBackward),
                                        QStringLiteral("⏮"), this);
@@ -988,6 +1006,11 @@ namespace OpenMSViewer
     measureButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
     spectrumControlBar_->addWidget(measureButton);
 
+    auto* labelButton = new QToolButton(spectrumControlBar_);
+    labelButton->setDefaultAction(labelSpectrumAction_);
+    labelButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    spectrumControlBar_->addWidget(labelButton);
+
     auto* annotationButton = new QToolButton(spectrumControlBar_);
     annotationButton->setText(tr("Annotation"));
     annotationButton->setPopupMode(QToolButton::InstantPopup);
@@ -1025,6 +1048,7 @@ namespace OpenMSViewer
     moreMenu->addSeparator();
     moreMenu->addAction(resetSpectrumViewAction_);
     moreMenu->addAction(clearSpectrumMeasurementsAction_);
+    moreMenu->addAction(clearSpectrumLabelsAction_);
     more->setMenu(moreMenu);
     spectrumControlBar_->addWidget(more);
 

@@ -197,9 +197,11 @@ namespace OpenMSViewer
     QAction* mirrorSpectrumAction_{nullptr};
     QAction* showUnmatchedIonsAction_{nullptr};
     QAction* measureSpectrumAction_{nullptr};
+    QAction* labelSpectrumAction_{nullptr};
     QAction* showMzLabelsAction_{nullptr};
     QAction* resetSpectrumViewAction_{nullptr};
     QAction* clearSpectrumMeasurementsAction_{nullptr};
+    QAction* clearSpectrumLabelsAction_{nullptr};
     QMenu* recentFilesMenu_{nullptr};
     QComboBox* spectrumLevel_{nullptr};
     QSpinBox* spectrumIndex_{nullptr};

@@ -2,6 +2,8 @@
 
 #include <QPainter>
 #include <QFontMetrics>
+#include <QInputDialog>
+#include <QLineEdit>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -69,6 +71,8 @@ namespace OpenMSViewer
     hoveredPeak_.reset();
     measurementStart_.reset();
     measurements_.clear();
+    peakLabels_.clear();
+    selectedMeasurement_.reset();
     update();
   }
 
@@ -80,6 +84,7 @@ namespace OpenMSViewer
     annotation_.reset();
     hoveredPeak_.reset();
     measurementStart_.reset();
+    selectedMeasurement_.reset();
     if (mzView_)
     {
       const auto full = fullMzRange();
@@ -101,6 +106,8 @@ namespace OpenMSViewer
     hoveredPeak_.reset();
     measurementStart_.reset();
     measurements_.clear();
+    peakLabels_.clear();
+    selectedMeasurement_.reset();
     update();
   }
 
@@ -115,6 +122,8 @@ namespace OpenMSViewer
     hoveredPeak_.reset();
     measurementStart_.reset();
     measurements_.clear();
+    peakLabels_.clear();
+    selectedMeasurement_.reset();
     update();
   }
 
@@ -151,7 +160,18 @@ namespace OpenMSViewer
   void SpectrumWidget::setMeasurementMode(bool enabled)
   {
     measurementMode_ = enabled;
+    if (enabled) labelMode_ = false;  // the two click tools are mutually exclusive
     measurementStart_.reset();
+    setCursor(measurementMode_ || labelMode_ ? Qt::CrossCursor : Qt::ArrowCursor);
+    update();
+  }
+
+  void SpectrumWidget::setLabelMode(bool enabled)
+  {
+    labelMode_ = enabled;
+    if (enabled) measurementMode_ = false;  // the two click tools are mutually exclusive
+    measurementStart_.reset();
+    setCursor(measurementMode_ || labelMode_ ? Qt::CrossCursor : Qt::ArrowCursor);
     update();
   }
 
@@ -171,6 +191,13 @@ namespace OpenMSViewer
   {
     measurements_.erase(spectrumIndex_);
     measurementStart_.reset();
+    selectedMeasurement_.reset();
+    update();
+  }
+
+  void SpectrumWidget::clearLabels()
+  {
+    peakLabels_.erase(spectrumIndex_);
     update();
   }
 
@@ -185,7 +212,15 @@ namespace OpenMSViewer
   std::size_t SpectrumWidget::spectrumIndex() const noexcept { return spectrumIndex_; }
   const std::optional<SpectrumAnnotation>& SpectrumWidget::annotation() const noexcept { return annotation_; }
   bool SpectrumWidget::measurementMode() const noexcept { return measurementMode_; }
+  bool SpectrumWidget::labelMode() const noexcept { return labelMode_; }
   std::optional<std::pair<double, double>> SpectrumWidget::mzView() const noexcept { return mzView_; }
+
+  const std::vector<PeakLabel>& SpectrumWidget::labels() const noexcept
+  {
+    static const std::vector<PeakLabel> empty;
+    const auto found = peakLabels_.find(spectrumIndex_);
+    return found == peakLabels_.end() ? empty : found->second;
+  }
 
   const std::vector<SpectrumMeasurement>& SpectrumWidget::measurements() const noexcept
   {
@@ -284,6 +319,106 @@ namespace OpenMSViewer
     if (!best) return std::nullopt;
     return std::pair{static_cast<double>(best->getMZ()),
                      static_cast<double>(best->getIntensity())};
+  }
+
+  std::optional<std::size_t> SpectrumWidget::measurementAt(const QPointF& position) const
+  {
+    const auto& list = measurements();
+    const auto* spectrum = currentSpectrum();
+    if (list.empty() || !spectrum || spectrum->empty()) return std::nullopt;
+    const QRect area = plotRect();
+    const auto full = fullMzRange();
+    const double mzMin = mzView_ ? mzView_->first : full.first;
+    const double mzMax = mzView_ ? mzView_->second : full.second;
+
+    // Recompute the exact scaling paintEvent uses (a click is not perf-critical),
+    // so hit-testing matches the current view rather than a possibly stale cache.
+    const bool mirror = annotationEnabled_ && annotation_
+                        && !annotation_->sequence.isEmpty() && mirrorMode_;
+    const double baseline = mirror ? area.center().y() : area.bottom();
+    const double positiveHeight = mirror ? area.height() * 0.45 : area.height() * 0.95;
+    double viewMax = 0.0;
+    double baseMax = 0.0;
+    for (const auto& peak : *spectrum)
+    {
+      const double intensity = peak.getIntensity();
+      baseMax = std::max(baseMax, intensity);
+      if (peak.getMZ() >= mzMin && peak.getMZ() <= mzMax) viewMax = std::max(viewMax, intensity);
+    }
+    if (baseMax <= 0.0) baseMax = 1.0;
+    if (viewMax <= 0.0) viewMax = baseMax;
+    const double intensityMax = (mirror || autoYScale_) ? viewMax : baseMax;
+    const auto xForMz = [&](double mz)
+    {
+      return area.left() + (mz - mzMin) / (mzMax - mzMin) * area.width();
+    };
+    const auto yForIntensity = [&](double intensity)
+    {
+      return baseline - intensity / intensityMax * positiveHeight;
+    };
+
+    // Hit-test the horizontal bracket bar; only brackets paintEvent actually draws
+    // (both endpoints inside the visible range) are selectable.
+    std::optional<std::size_t> best;
+    double bestDy = 7.0;
+    for (std::size_t index = 0; index < list.size(); ++index)
+    {
+      const SpectrumMeasurement& measurement = list[index];
+      if (measurement.firstMz < mzMin || measurement.firstMz > mzMax
+          || measurement.secondMz < mzMin || measurement.secondMz > mzMax) continue;
+      const double firstX = xForMz(measurement.firstMz);
+      const double secondX = xForMz(measurement.secondMz);
+      const double firstY = yForIntensity(measurement.firstIntensity);
+      const double secondY = yForIntensity(measurement.secondIntensity);
+      const double bracketY = std::max<double>(area.top() + 22,
+        std::min(firstY, secondY) - std::max(18, area.height() / 14));
+      if (position.x() < std::min(firstX, secondX) - 3 || position.x() > std::max(firstX, secondX) + 3)
+        continue;
+      const double dy = std::abs(position.y() - bracketY);
+      if (dy <= bestDy) { bestDy = dy; best = index; }
+    }
+    return best;
+  }
+
+  void SpectrumWidget::editLabelAt(const std::pair<double, double>& peak)
+  {
+    // Capture context and hold NO references/iterators across the modal dialog:
+    // its nested event loop can deliver a background load or spectrum change that
+    // mutates or clears peakLabels_ and would otherwise dangle these.
+    const std::size_t targetSpectrum = spectrumIndex_;
+    QString current;
+    if (const auto found = peakLabels_.find(targetSpectrum); found != peakLabels_.end())
+    {
+      const auto existing = std::find_if(found->second.begin(), found->second.end(),
+        [&](const PeakLabel& label) { return std::abs(label.mz - peak.first) <= 1e-3; });
+      if (existing != found->second.end()) current = existing->text;
+    }
+
+    bool accepted = false;
+    const QString text = QInputDialog::getText(this, tr("Peak label"),
+      tr("Label for m/z %1 (clear to remove):").arg(peak.first, 0, 'f', 4),
+      QLineEdit::Normal, current, &accepted).trimmed();
+    if (!accepted) return;                          // cancelled — leave labels untouched
+    if (spectrumIndex_ != targetSpectrum) return;   // spectrum changed under the dialog
+
+    // Re-find after the dialog; the store may have changed while it was open.
+    auto& list = peakLabels_[targetSpectrum];
+    const auto existing = std::find_if(list.begin(), list.end(),
+      [&](const PeakLabel& label) { return std::abs(label.mz - peak.first) <= 1e-3; });
+    if (text.isEmpty())
+    {
+      if (existing != list.end()) list.erase(existing);   // clearing the text removes it
+    }
+    else if (existing != list.end())
+    {
+      existing->text = text;
+    }
+    else
+    {
+      list.push_back({peak.first, peak.second, text});
+    }
+    if (list.empty()) peakLabels_.erase(targetSpectrum);   // never leave an empty entry
+    update();
   }
 
   void SpectrumWidget::paintEvent(QPaintEvent*)
@@ -540,25 +675,31 @@ namespace OpenMSViewer
     }
 
     painter.setRenderHint(QPainter::Antialiasing, true);
-    for (const SpectrumMeasurement& measurement : measurements())
     {
-      if (measurement.firstMz < mzMin || measurement.firstMz > mzMax
-          || measurement.secondMz < mzMin || measurement.secondMz > mzMax) continue;
-      const int firstX = xForMz(measurement.firstMz);
-      const int secondX = xForMz(measurement.secondMz);
-      const int firstY = yForIntensity(measurement.firstIntensity);
-      const int secondY = yForIntensity(measurement.secondIntensity);
-      const int bracketY = std::max(area.top() + 22,
-        std::min(firstY, secondY) - std::max(18, area.height() / 14));
-      painter.setPen(QPen(QColor(255, 136, 0), 1.8));
-      painter.drawLine(firstX, bracketY, secondX, bracketY);
-      painter.setPen(QPen(QColor(255, 136, 0), 1.0, Qt::DotLine));
-      painter.drawLine(firstX, firstY, firstX, bracketY);
-      painter.drawLine(secondX, secondY, secondX, bracketY);
-      painter.setPen(QColor(255, 155, 30));
-      painter.drawText(QRect(std::min(firstX, secondX), bracketY - 20,
-                             std::abs(secondX - firstX), 18), Qt::AlignCenter,
-                       tr("Δ %1").arg(std::abs(measurement.secondMz - measurement.firstMz), 0, 'f', 4));
+      const auto& measurementList = measurements();
+      for (std::size_t index = 0; index < measurementList.size(); ++index)
+      {
+        const SpectrumMeasurement& measurement = measurementList[index];
+        if (measurement.firstMz < mzMin || measurement.firstMz > mzMax
+            || measurement.secondMz < mzMin || measurement.secondMz > mzMax) continue;
+        const bool selected = selectedMeasurement_ && *selectedMeasurement_ == index;
+        const int firstX = xForMz(measurement.firstMz);
+        const int secondX = xForMz(measurement.secondMz);
+        const int firstY = yForIntensity(measurement.firstIntensity);
+        const int secondY = yForIntensity(measurement.secondIntensity);
+        const int bracketY = std::max(area.top() + 22,
+          std::min(firstY, secondY) - std::max(18, area.height() / 14));
+        const QColor barColor = selected ? QColor(255, 80, 40) : QColor(255, 136, 0);
+        painter.setPen(QPen(barColor, selected ? 2.6 : 1.8));
+        painter.drawLine(firstX, bracketY, secondX, bracketY);
+        painter.setPen(QPen(barColor, 1.0, Qt::DotLine));
+        painter.drawLine(firstX, firstY, firstX, bracketY);
+        painter.drawLine(secondX, secondY, secondX, bracketY);
+        painter.setPen(selected ? QColor(255, 110, 70) : QColor(255, 155, 30));
+        painter.drawText(QRect(std::min(firstX, secondX), bracketY - 20,
+                               std::abs(secondX - firstX), 18), Qt::AlignCenter,
+                         tr("Δ %1").arg(std::abs(measurement.secondMz - measurement.firstMz), 0, 'f', 4));
+      }
     }
 
     if (measurementStart_)
@@ -570,10 +711,52 @@ namespace OpenMSViewer
       painter.drawEllipse(QPointF(x, y), 5.0, 5.0);
       if (hoveredPeak_ && hoveredPeak_->first != measurementStart_->first)
       {
+        const int hx = xForMz(hoveredPeak_->first);
+        const int hy = yForIntensity(hoveredPeak_->second);
         painter.setPen(QPen(QColor(255, 136, 0), 1.3, Qt::DashLine));
-        painter.drawLine(QPointF(x, y), QPointF(xForMz(hoveredPeak_->first),
-                                                yForIntensity(hoveredPeak_->second)));
+        painter.drawLine(QPointF(x, y), QPointF(hx, hy));
+        // Live Δ m/z readout tracking the candidate second peak during placement.
+        painter.setPen(QColor(255, 155, 30));
+        painter.drawText(QPointF((x + hx) / 2.0 + 4.0, std::min(y, hy) - 6),
+                         tr("Δ %1").arg(std::abs(hoveredPeak_->first - measurementStart_->first), 0, 'f', 4));
       }
+    }
+
+    // User-authored peak labels: an arrowed leader to the peak tip plus a text
+    // chip, stacked upward to avoid overlapping one another.
+    {
+      const QColor labelColor = darkTheme ? QColor(120, 220, 140) : QColor(28, 130, 60);
+      painter.setFont(QFont(painter.font().family(), std::max(7, font().pointSize() - 1)));
+      std::vector<QRect> usedRects;
+      for (const PeakLabel& label : labels())
+      {
+        if (label.mz < mzMin || label.mz > mzMax || label.text.isEmpty()) continue;
+        const int x = xForMz(label.mz);
+        const int yTip = yForIntensity(label.intensity);
+        const QSize textSize = painter.fontMetrics().size(Qt::TextSingleLine, label.text);
+        QRect box(QPoint(x - textSize.width() / 2, yTip - textSize.height() - 12),
+                  textSize + QSize(8, 4));
+        box.moveLeft(std::clamp(box.left(), area.left(), std::max(area.left(), area.right() - box.width())));
+        for (int attempt = 0; attempt < 4
+             && std::any_of(usedRects.cbegin(), usedRects.cend(),
+               [&box](const QRect& used) { return used.intersects(box); }); ++attempt)
+          box.translate(0, -(textSize.height() + 4));
+        if (box.top() < area.top()) box.moveTop(area.top());
+        usedRects.push_back(box);
+        painter.setPen(QPen(labelColor, 1.2));
+        painter.drawLine(QPoint(x, box.bottom()), QPoint(x, yTip));
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(labelColor);
+        const QPointF arrow[3] = {QPointF(x, yTip), QPointF(x - 3, yTip - 6.0), QPointF(x + 3, yTip - 6.0)};
+        painter.drawPolygon(arrow, 3);
+        const QColor chip = palette().color(QPalette::Base);
+        painter.setBrush(QColor(chip.red(), chip.green(), chip.blue(), 225));
+        painter.drawRoundedRect(box, 3, 3);
+        painter.setPen(labelColor);
+        painter.drawText(box, Qt::AlignCenter, label.text);
+      }
+      painter.setFont(font());       // don't leak the label font into later drawing
+      painter.setBrush(Qt::NoBrush);
     }
 
     if (hoveredPeak_ && hoveredPeak_->first >= mzMin && hoveredPeak_->first <= mzMax)
@@ -722,6 +905,12 @@ namespace OpenMSViewer
       update();
       return;
     }
+    if (labelMode_)
+    {
+      const auto peak = peakAt(event->position());
+      if (peak) editLabelAt(*peak);  // snap, then add/edit/remove a free-text label
+      return;
+    }
     draggingZoom_ = true;
     dragStart_ = event->pos();
     dragCurrent_ = dragStart_;
@@ -779,6 +968,11 @@ namespace OpenMSViewer
     dragCurrent_ = event->pos();
     if (std::abs(dragCurrent_.x() - dragStart_.x()) < 6)
     {
+      // A click (rather than a drag-to-zoom) selects/deselects a measurement so it
+      // can be removed with Delete; clicking empty space clears the selection.
+      const auto hit = measurementAt(event->position());
+      if (hit && hit == selectedMeasurement_) selectedMeasurement_.reset();
+      else selectedMeasurement_ = hit;
       update();
       return;
     }
@@ -810,6 +1004,23 @@ namespace OpenMSViewer
       resetMzView();
       event->accept();
       return;
+    }
+    if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace)
+    {
+      if (selectedMeasurement_)
+      {
+        const auto found = measurements_.find(spectrumIndex_);
+        if (found != measurements_.end() && *selectedMeasurement_ < found->second.size())
+        {
+          found->second.erase(found->second.begin()
+            + static_cast<std::ptrdiff_t>(*selectedMeasurement_));
+          if (found->second.empty()) measurements_.erase(found);
+        }
+        selectedMeasurement_.reset();
+        update();
+        event->accept();
+        return;
+      }
     }
     if (event->key() == Qt::Key_Plus || event->key() == Qt::Key_Equal
         || event->key() == Qt::Key_Minus)

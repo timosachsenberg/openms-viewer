@@ -5,8 +5,39 @@
 #include "widgets/TicWidget.h"
 
 #include <QApplication>
+#include <QInputDialog>
 #include <QTest>
+#include <QTimer>
 #include <QWheelEvent>
+
+namespace
+{
+  // Auto-answer the next QInputDialog (from the peak-label tool) once it becomes
+  // modal, so a click that opens it never blocks the test. Bounded so it can
+  // never spin forever if no dialog appears.
+  void scheduleDialogResponse(const QString& text)
+  {
+    auto* timer = new QTimer(qApp);
+    auto* attempts = new int(0);
+    QObject::connect(timer, &QTimer::timeout, timer, [timer, attempts, text]()
+    {
+      for (QWidget* widget : QApplication::topLevelWidgets())
+      {
+        if (auto* dialog = qobject_cast<QInputDialog*>(widget))
+        {
+          dialog->setTextValue(text);
+          dialog->accept();
+          timer->stop();
+          timer->deleteLater();
+          delete attempts;
+          return;
+        }
+      }
+      if (++(*attempts) > 500) { timer->stop(); timer->deleteLater(); delete attempts; }
+    });
+    timer->start(1);
+  }
+}
 
 class SpectrumInteractionTest final : public QObject
 {
@@ -127,6 +158,82 @@ private slots:
     const int baseX = plot.left() + static_cast<int>((450.0 - 200.0) / 500.0 * plot.width());
     QTest::mouseMove(&widget, QPoint(baseX, plot.top() + 20));
     QVERIFY(!widget.grab().isNull());
+  }
+
+  void addsEditsAndRemovesPeakLabels()
+  {
+    auto experiment = std::make_shared<OpenMS::MSExperiment>();
+    experiment->addSpectrum(OpenMSViewer::TestData::spectrum(
+      10.0, 1, {{400.0, 10.0F}, {500.0, 100.0F}, {600.0, 5.0F}}));
+    OpenMSViewer::SpectrumWidget widget;
+    widget.resize(820, 420);
+    widget.show();
+    widget.setExperiment(experiment);
+    widget.setSpectrumIndex(0);
+    widget.grab();  // populate the hit-test scaling used by peakAt()
+    widget.setLabelMode(true);
+    QVERIFY(widget.labelMode());
+    QVERIFY(!widget.measurementMode());  // the two click tools are mutually exclusive
+    widget.grab();
+
+    const QRect plot = widget.rect().adjusted(62, 42, -18, -42);
+    const int x500 = plot.left() + static_cast<int>((500.0 - 400.0) / 200.0 * plot.width());
+
+    // Click the base peak and add a label via the (auto-answered) dialog.
+    scheduleDialogResponse(QStringLiteral("contaminant"));
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier, QPoint(x500, plot.top() + 30));
+    QCOMPARE(widget.labels().size(), std::size_t{1});
+    QCOMPARE(widget.labels().front().text, QStringLiteral("contaminant"));
+    QVERIFY(std::abs(widget.labels().front().mz - 500.0) < 1e-6);
+    QVERIFY(!widget.grab().isNull());  // the arrowed label renders without crashing
+
+    // Click the same peak and clear the text to remove the label.
+    scheduleDialogResponse(QString());
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier, QPoint(x500, plot.top() + 30));
+    QCOMPARE(widget.labels().size(), std::size_t{0});
+  }
+
+  void selectsAndDeletesMeasurements()
+  {
+    auto experiment = std::make_shared<OpenMS::MSExperiment>();
+    experiment->addSpectrum(OpenMSViewer::TestData::spectrum(10.0, 1,
+      {{300.0, 40.0F}, {400.0, 80.0F}, {500.0, 100.0F}, {600.0, 60.0F}, {650.0, 5.0F}}));
+    OpenMSViewer::SpectrumWidget widget;
+    widget.resize(820, 420);
+    widget.show();
+    widget.setExperiment(experiment);
+    widget.setSpectrumIndex(0);
+    widget.grab();
+
+    const QRect plot = widget.rect().adjusted(62, 42, -18, -42);
+    const auto xOf = [&](double mz) {
+      return plot.left() + static_cast<int>((mz - 300.0) / 350.0 * plot.width());
+    };
+
+    // Two measurements: 300<->400 and 500<->600.
+    widget.setMeasurementMode(true);
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier, QPoint(xOf(300.0), plot.bottom() - 6));
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier, QPoint(xOf(400.0), plot.bottom() - 6));
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier, QPoint(xOf(500.0), plot.bottom() - 6));
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier, QPoint(xOf(600.0), plot.bottom() - 6));
+    QCOMPARE(widget.measurements().size(), std::size_t{2});
+    widget.grab();  // ensure bracket geometry is painted before hit-testing
+
+    // Back in zoom mode, click the first bracket to select it (geometry mirrors paint).
+    widget.setMeasurementMode(false);
+    const int baseline = plot.bottom();
+    const auto yOf = [&](double intensity) {
+      return baseline - static_cast<int>(intensity / 100.0 * plot.height() * 0.95);
+    };
+    const int bracketY = std::max(plot.top() + 22,
+      std::min(yOf(40.0), yOf(80.0)) - std::max(18, plot.height() / 14));
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier,
+                      QPoint((xOf(300.0) + xOf(400.0)) / 2, bracketY));
+    QCOMPARE(widget.measurements().size(), std::size_t{2});  // selected, not yet removed
+
+    QTest::keyClick(&widget, Qt::Key_Delete);
+    QCOMPARE(widget.measurements().size(), std::size_t{1});
+    QVERIFY(std::abs(widget.measurements().front().firstMz - 500.0) < 1e-6);  // the other one survives
   }
 
   void ticClickAndDragDriveSelectionAndPeakMapRange()

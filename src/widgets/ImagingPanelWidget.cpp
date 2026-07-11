@@ -1,5 +1,7 @@
 #include "widgets/ImagingPanelWidget.h"
 
+#include "plot/RasterShading.h"
+
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <QComboBox>
@@ -21,25 +23,11 @@ namespace OpenMSViewer
 {
   namespace
   {
+    // Reuse the shared 256-entry viridis LUT so the image and colorbar match the
+    // rest of the app instead of carrying a separate approximation.
     QRgb viridis(double value)
     {
-      struct Stop { double at; int r; int g; int b; };
-      static constexpr std::array<Stop, 6> stops{{
-        {0.0, 68, 1, 84}, {0.2, 59, 82, 139}, {0.4, 33, 145, 140},
-        {0.6, 94, 201, 98}, {0.8, 170, 220, 50}, {1.0, 253, 231, 37}}};
-      const double clamped = std::clamp(value, 0.0, 1.0);
-      auto upper = std::upper_bound(stops.begin(), stops.end(), clamped,
-        [](double needle, const Stop& stop) { return needle < stop.at; });
-      if (upper == stops.begin()) return qRgb(upper->r, upper->g, upper->b);
-      if (upper == stops.end()) return qRgb(stops.back().r, stops.back().g, stops.back().b);
-      const auto& high = *upper;
-      const auto& low = *(upper - 1);
-      const double fraction = (clamped - low.at) / (high.at - low.at);
-      const auto blend = [fraction](int from, int to)
-      {
-        return static_cast<int>(std::lround(from + fraction * (to - from)));
-      };
-      return qRgb(blend(low.r, high.r), blend(low.g, high.g), blend(low.b, high.b));
+      return RasterShading::sample(PeakMapColorMap::Viridis, value);
     }
 
     // Robust normalization scale: the `percentile`-th value of the positive,
@@ -398,6 +386,7 @@ namespace OpenMSViewer
   void ImagingPanelWidget::setData(std::shared_ptr<ImagingStore> store,
                                    const ImagingSummary& summary)
   {
+    ++dataGeneration_;   // any in-flight extraction now belongs to a stale dataset
     store_ = std::move(store);
     summary_ = summary;
     ticImage_.assign(static_cast<std::size_t>(summary.width) * summary.height, 0.0);
@@ -425,6 +414,7 @@ namespace OpenMSViewer
 
   void ImagingPanelWidget::clear()
   {
+    ++dataGeneration_;
     store_.reset();
     summary_ = {};
     ticImage_.clear();
@@ -449,6 +439,7 @@ namespace OpenMSViewer
   void ImagingPanelWidget::extractIonImage()
   {
     if (!store_ || extractionWatcher_.isRunning()) return;
+    activeExtraction_ = dataGeneration_;
     const auto store = store_;
     const double mz = mz_->value();
     const double ppm = tolerance_->value();
@@ -478,18 +469,25 @@ namespace OpenMSViewer
 
   void ImagingPanelWidget::finishExtraction()
   {
-    extract_->setEnabled(true);
     ImagingImageResult result = extractionWatcher_.result();
+    // Reject a result whose dataset was replaced (or cleared) while it extracted —
+    // a same-pixel-count dataset would otherwise pass the size check below.
+    if (activeExtraction_ != dataGeneration_)
+    {
+      updateControls();
+      return;
+    }
+    extract_->setEnabled(true);
     if (!result.error.isEmpty())
     {
       info_->setText(tr("Ion-image extraction failed: %1").arg(result.error));
+      updateControls();
       return;
     }
-    // Ignore a stale extraction (e.g. one that finished after a new dataset loaded):
-    // its dimensions must match the current geometry.
-    if (result.intensities.size() != ticImage_.size())
+    if (result.intensities.size() != ticImage_.size())   // defensive geometry check
     {
       info_->setText(tr("Ion-image extraction did not match the current dataset"));
+      updateControls();
       return;
     }
     currentIonImage_ = std::move(result);

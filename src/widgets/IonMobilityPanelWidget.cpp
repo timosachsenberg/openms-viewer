@@ -94,6 +94,7 @@ namespace OpenMSViewer
   {
     if (colorMap_ == colorMap) return;
     colorMap_ = colorMap;
+    raster_.image = QImage();   // don't show the old-colormap frame while re-rendering
     scheduleRender();
     update();  // repaint the floor background immediately, even before the re-render lands
   }

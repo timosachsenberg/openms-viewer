@@ -133,5 +133,7 @@ namespace OpenMSViewer
     QLabel* info_{nullptr};
     ImagingImageWidget* image_{nullptr};
     QFutureWatcher<ImagingImageResult> extractionWatcher_;
+    std::uint64_t dataGeneration_{0};      // bumped whenever the dataset changes
+    std::uint64_t activeExtraction_{0};    // dataGeneration_ the in-flight extraction was launched for
   };
 }

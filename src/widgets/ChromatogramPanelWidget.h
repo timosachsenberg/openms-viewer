@@ -9,7 +9,6 @@
 #include <optional>
 #include <vector>
 
-class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QSortFilterProxyModel;

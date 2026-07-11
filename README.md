@@ -15,8 +15,10 @@ The current vertical slice supports:
   markers, sequence labels, all peptide hits, metadata, and deterministic
   one-to-many MS/MS-spectrum linking with a preferred default match;
 - a screen-resolution MS1 peak map rendered by
-  `OpenMS::MSExperiment::rasterizeRTMZ`, with four colormaps and a clickable
-  full-run minimap/current-viewport indicator;
+  `OpenMS::MSExperiment::rasterizeRTMZ`, with histogram-equalized (default),
+  log, square-root, and linear intensity scales, seven colormaps
+  (viridis/plasma/inferno/magma/jet/hot/grayscale), a Go-to-Range dialog, and a
+  clickable full-run minimap/current-viewport indicator;
 - wheel zoom, rectangle zoom, Alt-drag panning, Shift-drag measurement, zoom
   history, and RT/m/z axis swapping;
 - a clickable MS1 TIC with an RT marker for every selected scan (including

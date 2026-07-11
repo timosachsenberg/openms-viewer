@@ -1,6 +1,7 @@
 #include "widgets/PeakMapWidget.h"
 
 #include "plot/PeakMapRasterizer.h"
+#include "plot/PlotAxis.h"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -24,24 +25,6 @@ namespace OpenMSViewer
 {
   namespace
   {
-    std::vector<double> niceTicks(double minimum, double maximum, int target = 7)
-    {
-      std::vector<double> ticks;
-      const double span = maximum - minimum;
-      if (!(span > 0.0)) return ticks;
-      const double rawStep = span / std::max(1, target);
-      const double magnitude = std::pow(10.0, std::floor(std::log10(rawStep)));
-      const double residual = rawStep / magnitude;
-      const double factor = residual <= 1.0 ? 1.0 : residual <= 2.0 ? 2.0 : residual <= 5.0 ? 5.0 : 10.0;
-      const double step = factor * magnitude;
-      const double first = std::ceil(minimum / step) * step;
-      for (double value = first; value <= maximum + step * 1e-9; value += step)
-      {
-        ticks.push_back(value);
-      }
-      return ticks;
-    }
-
     QString tickLabel(double value, double span)
     {
       const int precision = span < 0.1 ? 4 : span < 1.0 ? 3 : span < 10.0 ? 2 : span < 100.0 ? 1 : 0;
@@ -120,11 +103,6 @@ namespace OpenMSViewer
     ++desiredGeneration_;
     emit zoomHistoryChanged(false);
     update();
-  }
-
-  void PeakMapWidget::setSelectedRt(double rt)
-  {
-    setSpectrumMarker(rt, 1, std::nullopt);
   }
 
   void PeakMapWidget::setSpectrumMarker(double rt, int msLevel, std::optional<double> precursorMz)
@@ -276,6 +254,7 @@ namespace OpenMSViewer
     const auto next = static_cast<PeakMapColorMap>(std::clamp(colorMapIndex, 0, 6));
     if (colorMap_ == next) return;
     colorMap_ = next;
+    raster_ = {};   // don't reproject the old-colormap image; show the floor until re-render
     minimap_ = {};
     ++desiredMinimapGeneration_;
     scheduleRender();
@@ -287,6 +266,7 @@ namespace OpenMSViewer
     const auto next = static_cast<PeakMapIntensityScale>(std::clamp(intensityScaleIndex, 0, 3));
     if (intensityScale_ == next) return;
     intensityScale_ = next;
+    raster_ = {};   // the old scale's image would misrepresent the new one; show floor
     minimap_ = {};
     ++desiredMinimapGeneration_;
     scheduleRender();
@@ -671,8 +651,12 @@ namespace OpenMSViewer
         const double mzFrac = std::clamp((markerMz - dataBounds_.mzMin) / dataBounds_.mzSpan(), 0.0, 1.0);
         if (std::isfinite(rtFrac) && std::isfinite(mzFrac))
         {
-          const double markerX = mini.left() + (axesSwapped_ ? mzFrac : rtFrac) * mini.width();
-          const double markerY = mini.bottom() - (axesSwapped_ ? rtFrac : mzFrac) * mini.height();
+          const double markerX = std::clamp(
+            mini.left() + (axesSwapped_ ? mzFrac : rtFrac) * mini.width(),
+            static_cast<double>(mini.left()), static_cast<double>(mini.right()));
+          const double markerY = std::clamp(
+            mini.bottom() - (axesSwapped_ ? rtFrac : mzFrac) * mini.height(),
+            static_cast<double>(mini.top()), static_cast<double>(mini.bottom()));
           const QColor markerColor = selectedMsLevel_ >= 2 ? QColor(255, 140, 40) : QColor(90, 200, 255);
           painter.setPen(QPen(markerColor, 1.2));
           painter.setBrush(markerColor);
@@ -710,10 +694,10 @@ namespace OpenMSViewer
     painter.setPen(QPen(palette().color(QPalette::Mid), 1));
     painter.drawRect(area);
 
-    const auto xTicks = axesSwapped_ ? niceTicks(view_.mzMin, view_.mzMax)
-                                     : niceTicks(view_.rtMin, view_.rtMax);
-    const auto yTicks = axesSwapped_ ? niceTicks(view_.rtMin, view_.rtMax)
-                                     : niceTicks(view_.mzMin, view_.mzMax);
+    const auto xTicks = axesSwapped_ ? PlotAxis::niceTicks(view_.mzMin, view_.mzMax, 7)
+                                     : PlotAxis::niceTicks(view_.rtMin, view_.rtMax, 7);
+    const auto yTicks = axesSwapped_ ? PlotAxis::niceTicks(view_.rtMin, view_.rtMax, 7)
+                                     : PlotAxis::niceTicks(view_.mzMin, view_.mzMax, 7);
     const double xMin = axesSwapped_ ? view_.mzMin : view_.rtMin;
     const double xSpan = axesSwapped_ ? view_.mzSpan() : view_.rtSpan();
     const double yMin = axesSwapped_ ? view_.rtMin : view_.mzMin;

@@ -1,7 +1,6 @@
 #include "widgets/ChromatogramPanelWidget.h"
 
 #include <QAbstractTableModel>
-#include <QCheckBox>
 #include <QFileDialog>
 #include <QHeaderView>
 #include <QHBoxLayout>

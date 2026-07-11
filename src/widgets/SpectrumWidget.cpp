@@ -136,12 +136,16 @@ namespace OpenMSViewer
   void SpectrumWidget::setAnnotation(std::optional<SpectrumAnnotation> annotation)
   {
     annotation_ = std::move(annotation);
+    hoveredPeak_.reset();   // force the annotation-aware tooltip to rebuild on next hover
+    setToolTip({});
     update();
   }
 
   void SpectrumWidget::setAnnotationEnabled(bool enabled)
   {
     annotationEnabled_ = enabled;
+    hoveredPeak_.reset();
+    setToolTip({});
     update();
   }
 

@@ -33,7 +33,6 @@ namespace OpenMSViewer
     void setExperiment(std::shared_ptr<const OpenMS::MSExperiment> experiment,
                        const PlotRange& bounds);
     void clear();
-    void setSelectedRt(double rt);
     void setSpectrumMarker(double rt, int msLevel, std::optional<double> precursorMz);
     void setAxesSwapped(bool swapped);
     void setFeatures(const std::vector<FeatureRecord>& features);

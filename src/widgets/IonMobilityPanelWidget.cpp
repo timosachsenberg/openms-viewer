@@ -1,5 +1,7 @@
 #include "widgets/IonMobilityPanelWidget.h"
 
+#include "plot/PlotAxis.h"
+
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <QCheckBox>
@@ -248,18 +250,54 @@ namespace OpenMSViewer
   {
     painter.setPen(palette().color(QPalette::Mid));
     painter.drawRect(area);
-    painter.setPen(palette().color(QPalette::Text));
-    for (int tick = 0; tick <= 5; ++tick)
+
+    // Round "nice" ticks + gridlines on both axes (m/z across, mobility up),
+    // instead of arbitrary evenly-spaced fractions of the view.
+    const auto mzTicks = PlotAxis::niceTicks(view_.mzMin, view_.mzMax, 6);
+    const auto mobilityTicks = PlotAxis::niceTicks(view_.mobilityMin, view_.mobilityMax, 5);
+    const auto xForMz = [&](double mz)
     {
-      const double fraction = tick / 5.0;
-      const int x = area.left() + static_cast<int>(fraction * area.width());
-      const int y = area.top() + static_cast<int>(fraction * area.height());
-      const double mz = view_.mzMin + fraction * view_.mzSpan();
-      const double mobility = view_.mobilityMax - fraction * view_.mobilitySpan();
-      painter.drawText(QRect(x - 38, area.bottom() + 5, 76, 18), Qt::AlignHCenter | Qt::AlignTop,
-                       QString::number(mz, 'f', view_.mzSpan() < 10.0 ? 2 : 1));
-      painter.drawText(QRect(0, y - 9, area.left() - 8, 18), Qt::AlignRight | Qt::AlignVCenter,
-                       QString::number(mobility, 'f', 3));
+      return area.left() + (mz - view_.mzMin) / view_.mzSpan() * area.width();
+    };
+    const auto yForMobility = [&](double mobility)
+    {
+      return area.bottom() - (mobility - view_.mobilityMin) / view_.mobilitySpan() * area.height();
+    };
+    const int mzDecimals = view_.mzSpan() < 10.0 ? 2 : 1;
+    const double mobilityStep = mobilityTicks.size() > 1
+      ? std::abs(mobilityTicks[1] - mobilityTicks[0]) : 0.1;
+    const int mobilityDecimals = std::clamp(static_cast<int>(std::ceil(-std::log10(mobilityStep))), 0, 4);
+
+    painter.setPen(QPen(palette().color(QPalette::Mid), 1.0, Qt::DotLine));
+    for (const double mz : mzTicks)
+    {
+      const double x = xForMz(mz);
+      if (x >= area.left() && x <= area.right())
+        painter.drawLine(QPointF(x, area.top()), QPointF(x, area.bottom()));
+    }
+    for (const double mobility : mobilityTicks)
+    {
+      const double y = yForMobility(mobility);
+      if (y >= area.top() && y <= area.bottom())
+        painter.drawLine(QPointF(area.left(), y), QPointF(area.right(), y));
+    }
+
+    painter.setPen(palette().color(QPalette::Text));
+    for (const double mz : mzTicks)
+    {
+      const double x = xForMz(mz);
+      if (x < area.left() - 0.5 || x > area.right() + 0.5) continue;
+      painter.drawLine(QPointF(x, area.bottom()), QPointF(x, area.bottom() + 4));
+      painter.drawText(QRectF(x - 38, area.bottom() + 5, 76, 16), Qt::AlignHCenter | Qt::AlignTop,
+                       QString::number(mz, 'f', mzDecimals));
+    }
+    for (const double mobility : mobilityTicks)
+    {
+      const double y = yForMobility(mobility);
+      if (y < area.top() - 0.5 || y > area.bottom() + 0.5) continue;
+      painter.drawLine(QPointF(area.left() - 4, y), QPointF(area.left(), y));
+      painter.drawText(QRectF(0, y - 9, area.left() - 8.0, 18), Qt::AlignRight | Qt::AlignVCenter,
+                       QString::number(mobility, 'f', mobilityDecimals));
     }
     painter.drawText(QRect(area.left(), height() - 24, area.width(), 20), Qt::AlignCenter,
                      QStringLiteral("m/z"));

@@ -3,6 +3,7 @@
 #include "model/RunData.h"
 #include "plot/PlotRange.h"
 
+#include <QPoint>
 #include <QWidget>
 
 #include <cstddef>
@@ -38,6 +39,8 @@ namespace OpenMSViewer
   protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void leaveEvent(QEvent* event) override;
 
   private:
     [[nodiscard]] QRectF plotRect() const;
@@ -46,6 +49,7 @@ namespace OpenMSViewer
     std::vector<ChromatogramRecord> chromatograms_;
     std::vector<std::size_t> selectedIndices_;
     std::optional<std::pair<double, double>> peakMapRtRange_;
+    std::optional<QPoint> hoverPos_;
     bool rtInMinutes_{false};
   };
 

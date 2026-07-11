@@ -47,6 +47,7 @@ namespace OpenMSViewer
   class SpectrumWidget;
   class TicWidget;
   class WelcomeWidget;
+  enum class ToastLevel;
 
   class MainWindow final : public QMainWindow
   {
@@ -105,6 +106,7 @@ namespace OpenMSViewer
     void installPlotContextMenu(QWidget* widget, const QString& defaultName,
                                 std::function<void()> reset = {});
     void showOperationError(const QString& title, const QString& summary, const QString& details);
+    void notify(const QString& message, ToastLevel level);
     void beginOperation(int operation, const QString& title, const QString& detail,
                         bool cancellable = true);
     void endOperation(int operation);
@@ -159,6 +161,7 @@ namespace OpenMSViewer
     LogWidget* log_{nullptr};
     TicWidget* tic_{nullptr};
     SpectrumWidget* spectrum_{nullptr};
+    class ToastOverlay* toasts_{nullptr};
     QDockWidget* ticDock_{nullptr};
     QDockWidget* spectrumDock_{nullptr};
     QDockWidget* featuresDock_{nullptr};

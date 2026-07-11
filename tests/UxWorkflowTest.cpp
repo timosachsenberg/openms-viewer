@@ -1,11 +1,16 @@
 #include "TestData.h"
 
 #include "MainWindow.h"
+#include "widgets/ChromatogramPanelWidget.h"
 #include "widgets/LoadingOverlayWidget.h"
 #include "widgets/PeakMapWidget.h"
+#include "widgets/ToastOverlay.h"
 #include "widgets/WelcomeWidget.h"
 
 #include <OpenMS/FORMAT/MzMLFile.h>
+
+#include <algorithm>
+#include <cmath>
 
 #include <QAction>
 #include <QApplication>
@@ -266,6 +271,68 @@ private slots:
     // The combo still drives the plot in the other direction.
     interaction->setCurrentIndex(2);
     QCOMPARE(modeSpy.count(), 4);
+  }
+
+  void toastOverlayStacksColourCodedAndCaps()
+  {
+    QWidget host;
+    host.resize(640, 480);
+    host.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&host));
+
+    auto* toasts = new OpenMSViewer::ToastOverlay(&host);
+    QCOMPARE(toasts->activeToastCount(), 0);
+
+    toasts->showToast(QStringLiteral("Loaded run"), OpenMSViewer::ToastLevel::Success);
+    QCOMPARE(toasts->activeToastCount(), 1);
+    QVERIFY(toasts->isVisible());
+    // Painting the overlay (colour-coded card + accent stripe) must not crash.
+    QVERIFY(!toasts->grab().isNull());
+
+    // A burst beyond the cap evicts the oldest; live toasts never exceed four.
+    for (int index = 0; index < 8; ++index)
+      toasts->showToast(QStringLiteral("Event %1").arg(index), OpenMSViewer::ToastLevel::Warning);
+    QVERIFY(toasts->activeToastCount() <= 4);
+    QVERIFY(toasts->activeToastCount() >= 1);
+
+    toasts->clearToasts();
+    QCOMPARE(toasts->activeToastCount(), 0);
+  }
+
+  void chromatogramHoverReadoutRendersWithoutCrash()
+  {
+    OpenMSViewer::ChromatogramPlotWidget plot;
+    plot.resize(520, 320);
+
+    OpenMSViewer::ChromatogramRecord record;
+    record.nativeId = QStringLiteral("SRM 500.0 -> 300.0");
+    record.rtMin = 10.0;
+    record.rtMax = 60.0;
+    for (int step = 0; step <= 50; ++step)
+    {
+      const double rt = 10.0 + step;
+      const double intensity = 1000.0 * std::exp(-((rt - 35.0) * (rt - 35.0)) / 50.0);
+      record.points.push_back({rt, intensity});
+      record.maximumIntensity = std::max(record.maximumIntensity, intensity);
+    }
+    plot.setChromatograms({record});
+    plot.setSelectedIndices({0});
+    plot.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&plot));
+
+    // A hover over the plot draws the snapped RT/intensity chip; it must paint
+    // cleanly whether the cursor is over the trace or in empty space. Deliver the
+    // move directly, since QTest::mouseMove does not warp the cursor offscreen.
+    const auto hoverAt = [&plot](const QPointF& local)
+    {
+      QMouseEvent move(QEvent::MouseMove, local, plot.mapToGlobal(local.toPoint()),
+                       Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+      QApplication::sendEvent(&plot, &move);
+    };
+    hoverAt(QPointF(260, 160));
+    QVERIFY(!plot.grab().isNull());
+    hoverAt(QPointF(400, 40));
+    QVERIFY(!plot.grab().isNull());
   }
 };
 

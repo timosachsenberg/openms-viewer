@@ -17,6 +17,7 @@
 #include "widgets/LoadingOverlayWidget.h"
 #include "widgets/SpectrumWidget.h"
 #include "widgets/TicWidget.h"
+#include "widgets/ToastOverlay.h"
 #include "widgets/WelcomeWidget.h"
 
 #include <QtConcurrent/QtConcurrentRun>
@@ -426,6 +427,7 @@ namespace OpenMSViewer
     centralStack_->addWidget(peakMapPanel_);
     setCentralWidget(centralStack_);
     loadingOverlay_ = new LoadingOverlayWidget(centralStack_);
+    toasts_ = new ToastOverlay(centralStack_);
 
     tic_ = new TicWidget(this);
     ticDock_ = new QDockWidget(tr("Total ion chromatogram"), this);
@@ -1157,6 +1159,11 @@ namespace OpenMSViewer
     }
   }
 
+  void MainWindow::notify(const QString& message, ToastLevel level)
+  {
+    if (toasts_) toasts_->showToast(message, level);
+  }
+
   void MainWindow::rebuildRecentFiles()
   {
     QStringList valid;
@@ -1687,11 +1694,13 @@ namespace OpenMSViewer
     if (cancelled)
     {
       statusBar()->showMessage(tr("mzML loading cancelled; the previous data was kept"), 5000);
+      notify(tr("mzML loading cancelled — previous data kept"), ToastLevel::Info);
       return;
     }
     if (!result.succeeded())
     {
       statusBar()->showMessage(tr("Load failed"), 5000);
+      notify(tr("mzML load failed"), ToastLevel::Error);
       showOperationError(tr("Could not open file"), tr("The mzML file could not be loaded."), result.error);
       return;
     }
@@ -1706,6 +1715,11 @@ namespace OpenMSViewer
     rememberRecentFile(sourcePath);
     showDataPage();
     updateDocumentViews();
+    notify(tr("Loaded %1 · %2 spectra, %3 peaks")
+             .arg(QFileInfo(sourcePath).fileName())
+             .arg(document_.statistics().spectrumCount)
+             .arg(document_.statistics().peakCount),
+           ToastLevel::Success);
     qInfo().noquote() << QStringLiteral(
       "Loaded mzML in %1 ms: %2 spectra, %3 peaks, %4 chromatograms, %5 IM frames, %6 FAIMS CVs")
       .arg(mzMLLoadTimer_.isValid() ? mzMLLoadTimer_.elapsed() : -1)
@@ -1730,11 +1744,13 @@ namespace OpenMSViewer
     {
       featureCancelled_ = false;
       statusBar()->showMessage(tr("Feature overlay loading cancelled"), 5000);
+      notify(tr("Feature overlay loading cancelled"), ToastLevel::Info);
       return;
     }
     if (!result.succeeded())
     {
       statusBar()->showMessage(tr("FeatureXML load failed"), 5000);
+      notify(tr("FeatureXML load failed"), ToastLevel::Error);
       showOperationError(tr("Could not open feature overlay"),
                          tr("The FeatureXML overlay could not be loaded."), result.error);
       return;
@@ -1747,6 +1763,7 @@ namespace OpenMSViewer
     updateRunContext();
     qInfo().noquote() << QStringLiteral("Loaded FeatureXML: %1 features").arg(count);
     statusBar()->showMessage(tr("Loaded %1 features from %2").arg(count).arg(filename), 8000);
+    notify(tr("Loaded %1 features from %2").arg(count).arg(filename), ToastLevel::Success);
   }
 
   void MainWindow::finishIdentificationLoad()
@@ -1758,11 +1775,13 @@ namespace OpenMSViewer
     {
       identificationCancelled_ = false;
       statusBar()->showMessage(tr("Identification overlay loading cancelled"), 5000);
+      notify(tr("Identification overlay loading cancelled"), ToastLevel::Info);
       return;
     }
     if (!result.succeeded())
     {
       statusBar()->showMessage(tr("idXML load failed"), 5000);
+      notify(tr("idXML load failed"), ToastLevel::Error);
       showOperationError(tr("Could not open identification overlay"),
                          tr("The idXML overlay could not be loaded."), result.error);
       return;
@@ -1780,6 +1799,8 @@ namespace OpenMSViewer
       .arg(count).arg(linked);
     statusBar()->showMessage(tr("Loaded %1 identifications from %2 · %3 linked spectra")
       .arg(count).arg(filename).arg(linked), 8000);
+    notify(tr("Loaded %1 identifications · %2 linked spectra").arg(count).arg(linked),
+           ToastLevel::Success);
   }
 
   void MainWindow::finishImagingLoad()
@@ -1791,11 +1812,13 @@ namespace OpenMSViewer
     {
       imagingCancelled_ = false;
       statusBar()->showMessage(tr("Imaging-data loading cancelled; the previous data was kept"), 5000);
+      notify(tr("Imaging-data loading cancelled — previous data kept"), ToastLevel::Info);
       return;
     }
     if (!result.succeeded())
     {
       statusBar()->showMessage(tr("imzML load failed"), 5000);
+      notify(tr("imzML load failed"), ToastLevel::Error);
       showOperationError(tr("Could not open imaging dataset"),
                          tr("The imzML imaging dataset could not be loaded."), result.error);
       return;
@@ -1839,6 +1862,9 @@ namespace OpenMSViewer
     statusBar()->showMessage(tr("Loaded %1 imaging pixels (%2 × %3), %4 peaks")
       .arg(imagingSummary_.pixels.size()).arg(imagingSummary_.width).arg(imagingSummary_.height)
       .arg(imagingSummary_.peakCount), 8000);
+    notify(tr("Loaded %1 imaging pixels (%2 × %3)")
+             .arg(imagingSummary_.pixels.size()).arg(imagingSummary_.width).arg(imagingSummary_.height),
+           ToastLevel::Success);
     qInfo().noquote() << QStringLiteral(
       "Loaded imzML: %1 pixels, %2x%3 grid, %4 peaks, m/z %5-%6")
       .arg(imagingSummary_.pixels.size()).arg(imagingSummary_.width).arg(imagingSummary_.height)
@@ -1986,11 +2012,15 @@ namespace OpenMSViewer
     if (!result.succeeded())
     {
       statusBar()->showMessage(tr("mzML export failed"), 5000);
+      notify(tr("mzML export failed"), ToastLevel::Error);
       showOperationError(tr("Could not export mzML"), tr("The filtered mzML export failed."), result.error);
       return;
     }
     statusBar()->showMessage(tr("Exported %1 spectra and %2 peaks to %3")
       .arg(result.spectrumCount).arg(result.peakCount).arg(QFileInfo(result.outputPath).fileName()), 8000);
+    notify(tr("Exported %1 spectra to %2")
+             .arg(result.spectrumCount).arg(QFileInfo(result.outputPath).fileName()),
+           ToastLevel::Success);
     qInfo().noquote() << QStringLiteral("Exported filtered mzML: %1 spectra, %2 peaks, %3")
       .arg(result.spectrumCount).arg(result.peakCount).arg(result.outputPath);
   }

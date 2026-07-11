@@ -89,11 +89,47 @@ namespace OpenMSViewer
 
   QString formatIonLabel(const QString& name)
   {
-    if (name.isEmpty() || name.startsWith(QLatin1Char('['))) return name;
+    if (name.isEmpty()) return name;
     static const QString subscriptDigits = QStringLiteral("₀₁₂₃₄₅₆₇₈₉");
     static const QString superscriptDigits = QStringLiteral("⁰¹²³⁴⁵⁶⁷⁸⁹");
     auto subscript = [&](QChar digit) { return subscriptDigits.at(digit.digitValue()); };
     auto superscript = [&](QChar digit) { return superscriptDigits.at(digit.digitValue()); };
+
+    // Precursor / adduct labels (e.g. "[M+2H]2+") keep their bracketed core verbatim
+    // — the digits inside are stoichiometry — and only superscript the trailing charge.
+    if (name.startsWith(QLatin1Char('[')))
+    {
+      const int close = name.lastIndexOf(QLatin1Char(']'));
+      if (close < 0) return name;
+      // The trailing charge may be written as "2+", "+2", "+", or "++"; parse the
+      // sign and magnitude order-independently so it renders like the fragment-ion
+      // path (superscript magnitude then sign, magnitude 1 hidden).
+      const QString suffix = name.mid(close + 1);
+      QChar sign;
+      QString digits;
+      int signCount = 0;
+      bool onlyChargeChars = !suffix.isEmpty();
+      for (const QChar character : suffix)
+      {
+        if (character == QLatin1Char('+') || character == QLatin1Char('-'))
+        {
+          sign = character;
+          ++signCount;
+        }
+        else if (character.isDigit())
+          digits += character;
+        else
+          onlyChargeChars = false;
+      }
+      // Not a clean charge token (e.g. "[alpha|ci$y3]") — keep the label verbatim.
+      if (!onlyChargeChars || signCount == 0) return name;
+      const QString magnitude = !digits.isEmpty() ? digits
+        : (signCount > 1 ? QString::number(signCount) : QString());
+      QString charge;
+      for (const QChar digit : magnitude) charge += superscript(digit);
+      charge += sign == QLatin1Char('+') ? QStringLiteral("⁺") : QStringLiteral("⁻");
+      return name.left(close + 1) + charge;
+    }
 
     QString core = name;
     QString charge;

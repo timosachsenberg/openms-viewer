@@ -91,6 +91,8 @@ add_library(openms_viewer_ui STATIC
   src/widgets/SpectrumTableWidget.h
   src/widgets/TicWidget.cpp
   src/widgets/TicWidget.h
+  src/widgets/ToastOverlay.cpp
+  src/widgets/ToastOverlay.h
   src/widgets/WelcomeWidget.cpp
   src/widgets/WelcomeWidget.h
 )

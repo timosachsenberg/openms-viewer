@@ -139,6 +139,7 @@ namespace OpenMSViewer
     setMinimumHeight(210);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setFocusPolicy(Qt::StrongFocus);
+    setMouseTracking(true);
     setAccessibleName(tr("Chromatogram traces"));
     setAccessibleDescription(tr("Selected chromatogram traces linked to the peak-map RT range."));
   }
@@ -312,6 +313,79 @@ namespace OpenMSViewer
       if (legendX > area.right() - 100.0) break;
       ++colorIndex;
     }
+
+    // Hover readout: mirror the TIC — snap to the sample under the cursor on the
+    // vertically nearest trace and show a colour-matched RT/intensity chip.
+    if (hoverPos_ && area.contains(QPointF(*hoverPos_)))
+    {
+      const double hoverX = hoverPos_->x();
+      const double hoverY = hoverPos_->y();
+      const ChromatogramPoint* bestPoint = nullptr;
+      QColor bestColor;
+      QString bestLabel;
+      QPointF bestPos;
+      double bestVertical = std::numeric_limits<double>::max();
+      // Advance the colour counter exactly as the draw/legend loops do (skip
+      // out-of-range indices WITHOUT advancing) so the chip colour matches its trace.
+      int traceColor = 0;
+      for (const std::size_t index : selectedIndices_)
+      {
+        if (index >= chromatograms_.size()) continue;
+        const auto& record = chromatograms_[index];
+        if (record.points.empty()) continue;
+        // Points are RT-sorted, so map the cursor x back to a target RT and binary
+        // search the nearest sample (O(log n)) rather than rescanning every point.
+        const double targetRt = rtMinimum
+          + (hoverX - area.left()) / area.width() * (rtMaximum - rtMinimum);
+        auto upper = std::lower_bound(record.points.begin(), record.points.end(), targetRt,
+          [](const ChromatogramPoint& point, double value) { return point.rt < value; });
+        const ChromatogramPoint* nearest = upper != record.points.end() ? &*upper : nullptr;
+        if (upper != record.points.begin())
+        {
+          const auto previous = upper - 1;
+          if (!nearest || std::abs(previous->rt - targetRt) < std::abs(nearest->rt - targetRt))
+            nearest = &*previous;
+        }
+        if (nearest)
+        {
+          const QPointF position(mapX(nearest->rt), mapY(nearest->intensity));
+          const double vertical = std::abs(position.y() - hoverY);
+          if (vertical < bestVertical)
+          {
+            bestVertical = vertical;
+            bestPoint = nearest;
+            bestPos = position;
+            bestColor = colors[static_cast<std::size_t>(traceColor) % colors.size()];
+            bestLabel = record.nativeId;
+          }
+        }
+        ++traceColor;
+      }
+      if (bestPoint)
+      {
+        painter.setPen(QPen(bestColor, 1.6));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawEllipse(bestPos, 3.5, 3.5);
+        QString text = tr("RT %1 %2 · I %3")
+          .arg(bestPoint->rt / factor, 0, 'f', rtInMinutes_ ? 3 : 2)
+          .arg(rtInMinutes_ ? tr("min") : tr("s"))
+          .arg(bestPoint->intensity, 0, 'g', 4);
+        if (selectedIndices_.size() > 1 && !bestLabel.isEmpty())
+          text = painter.fontMetrics().elidedText(bestLabel, Qt::ElideMiddle, 120)
+                 + QStringLiteral(" · ") + text;
+        const double textWidth = std::min<double>(
+          painter.fontMetrics().horizontalAdvance(text) + 12.0, area.width());
+        const QRectF box(std::clamp<double>(bestPos.x() + 8, area.left(),
+                                            std::max<double>(area.left(), area.right() - textWidth)),
+                         area.top() + 2, textWidth, 18);
+        const QColor baseColor = palette().color(QPalette::Base);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(baseColor.red(), baseColor.green(), baseColor.blue(), 220));
+        painter.drawRoundedRect(box, 3, 3);
+        painter.setPen(palette().color(QPalette::Text));
+        painter.drawText(box.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft, text);
+      }
+    }
   }
 
   void ChromatogramPlotWidget::mousePressEvent(QMouseEvent* event)
@@ -324,6 +398,20 @@ namespace OpenMSViewer
       emit rtActivated(bounds->first + fraction * (bounds->second - bounds->first));
     }
     QWidget::mousePressEvent(event);
+  }
+
+  void ChromatogramPlotWidget::mouseMoveEvent(QMouseEvent* event)
+  {
+    hoverPos_ = event->pos();
+    update();
+    QWidget::mouseMoveEvent(event);
+  }
+
+  void ChromatogramPlotWidget::leaveEvent(QEvent* event)
+  {
+    hoverPos_.reset();
+    update();
+    QWidget::leaveEvent(event);
   }
 
   ChromatogramPanelWidget::ChromatogramPanelWidget(QWidget* parent) : QWidget(parent)

@@ -26,6 +26,15 @@ private slots:
     QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("y15++")), QStringLiteral("y₁₅²⁺"));
     QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("y7-H2O+2")), QStringLiteral("y₇-H₂O²⁺"));
     QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[alpha|ci$y3]")), QStringLiteral("[alpha|ci$y3]"));
+    // Bracketed precursor/adduct labels keep their stoichiometry verbatim and
+    // only superscript the trailing charge.
+    QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[M+2H]2+")), QStringLiteral("[M+2H]²⁺"));
+    QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[M+H]+")), QStringLiteral("[M+H]⁺"));
+    QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[M-H]-")), QStringLiteral("[M-H]⁻"));
+    QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[M+H")), QStringLiteral("[M+H"));
+    // Charge magnitude is parsed order-independently: "+2", "2+" and "++" all mean 2+.
+    QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[M+H]+2")), QStringLiteral("[M+H]²⁺"));
+    QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[M+H]++")), QStringLiteral("[M+H]²⁺"));
   }
 
   void prioritizesExternalPeakAnnotations()

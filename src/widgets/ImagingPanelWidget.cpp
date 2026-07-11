@@ -41,6 +41,29 @@ namespace OpenMSViewer
       };
       return qRgb(blend(low.r, high.r), blend(low.g, high.g), blend(low.b, high.b));
     }
+
+    // Robust normalization scale: the `percentile`-th value of the positive,
+    // in-mask intensities, so a single hot matrix pixel can't dim the whole image.
+    // Returns 0 when there is no usable (finite, positive, in-mask) sample.
+    double robustMaximum(const std::vector<double>& values, const std::vector<bool>& mask,
+                         double percentile)
+    {
+      const bool useMask = !mask.empty() && mask.size() == values.size();
+      std::vector<double> positive;
+      positive.reserve(values.size());
+      for (std::size_t index = 0; index < values.size(); ++index)
+        if ((!useMask || mask[index]) && std::isfinite(values[index]) && values[index] > 0.0)
+          positive.push_back(values[index]);
+      if (positive.empty()) return 0.0;
+      // Nearest-rank percentile (ceil(p·n)-1) so e.g. the 99th percentile of
+      // [1,100] is 100, not the truncated lower value.
+      const auto rank = static_cast<std::size_t>(std::clamp(
+        std::ceil(percentile * static_cast<double>(positive.size())) - 1.0,
+        0.0, static_cast<double>(positive.size() - 1)));
+      std::nth_element(positive.begin(),
+                       positive.begin() + static_cast<std::ptrdiff_t>(rank), positive.end());
+      return positive[rank];
+    }
   }
 
   ImagingImageWidget::ImagingImageWidget(QWidget* parent) : QWidget(parent)
@@ -73,18 +96,24 @@ namespace OpenMSViewer
     intensities_ = intensities;
     mask_ = mask;
     title_ = title;
+    composite_ = false;
+    legend_.clear();
     rebuildImage();
   }
 
   void ImagingImageWidget::setCompositeImage(QImage image,
                                              const std::vector<double>& intensities,
                                              const std::vector<bool>& mask,
-                                             const QString& title)
+                                             const QString& title,
+                                             std::vector<std::pair<QColor, QString>> legend)
   {
     image_ = std::move(image);
     intensities_ = intensities;
     mask_ = mask;
     title_ = title;
+    composite_ = true;
+    legend_ = std::move(legend);
+    displayMax_ = 0.0;
     update();
   }
 
@@ -96,6 +125,9 @@ namespace OpenMSViewer
     spectrumByPixel_.clear();
     title_.clear();
     image_ = {};
+    composite_ = false;
+    displayMax_ = 0.0;
+    legend_.clear();
     selectedSpectrum_.reset();
     update();
   }
@@ -151,17 +183,19 @@ namespace OpenMSViewer
     image_ = QImage(static_cast<int>(summary_.width), static_cast<int>(summary_.height),
                     QImage::Format_RGB32);
     image_.fill(QColor(20, 20, 24));
-    double maximum = 0.0;
-    for (std::size_t index = 0; index < intensities_.size(); ++index)
-      if (mask_.empty() || mask_[index]) maximum = std::max(maximum, intensities_[index]);
-    if (maximum <= 0.0) maximum = 1.0;
-    const double logMaximum = std::log1p(maximum);
+    // Robust 99th-percentile scale (not the raw max) so one hot pixel doesn't dim
+    // the whole image; values above it clamp to the top of the colormap. displayMax_
+    // is the honest label (0 when there is no positive signal).
+    displayMax_ = robustMaximum(intensities_, mask_, 0.99);
+    const double divisor = displayMax_ > 0.0 ? displayMax_ : 1.0;
+    const double logMaximum = std::log1p(divisor);
+    const bool useMask = !mask_.empty() && mask_.size() == intensities_.size();
     for (std::uint32_t y = 0; y < summary_.height; ++y)
     {
       for (std::uint32_t x = 0; x < summary_.width; ++x)
       {
         const std::size_t index = static_cast<std::size_t>(y) * summary_.width + x;
-        if (!mask_.empty() && !mask_[index]) continue;
+        if (useMask && !mask_[index]) continue;
         const double normalized = std::log1p(std::max(0.0, intensities_[index])) / logMaximum;
         image_.setPixel(static_cast<int>(x), static_cast<int>(y), viridis(normalized));
       }
@@ -208,6 +242,64 @@ namespace OpenMSViewer
     painter.drawText(QRect(-area.height() / 2, -10, area.height(), 20), Qt::AlignCenter,
                      tr("Pixel y (0–%1)").arg(summary_.height - 1));
     painter.restore();
+
+    // Scale drawn as an overlay inside the top-right of the image (like the peak
+    // map colorbar) so the image stays centred: a per-channel colour+m/z legend
+    // for a multi-ion overlay, or a viridis intensity colorbar otherwise.
+    const QColor backing(0, 0, 0, 150);
+    const bool roomForScale = area.width() >= 90 && area.height() >= 80;
+    if (roomForScale && composite_ && !legend_.empty())
+    {
+      int textWidth = 0;
+      for (const auto& [color, label] : legend_)
+        textWidth = std::max(textWidth, painter.fontMetrics().horizontalAdvance(label));
+      const int rows = std::min(static_cast<int>(legend_.size()),
+                                std::max(1, (area.height() - 12) / 18));   // cap to what fits
+      const int boxWidth = std::clamp(29 + textWidth, 40, area.width() - 12);
+      const int boxHeight = rows * 18 + 6;
+      const QRect box(area.right() - boxWidth - 6, area.top() + 6, boxWidth, boxHeight);
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(backing);
+      painter.drawRoundedRect(box, 4, 4);
+      int legendY = box.top() + 6;
+      for (int row = 0; row < rows; ++row)
+      {
+        const auto& [color, label] = legend_[static_cast<std::size_t>(row)];
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(color);
+        painter.drawRect(QRect(box.left() + 6, legendY, 11, 11));
+        painter.setPen(QColor(235, 235, 240));
+        painter.drawText(QRect(box.left() + 23, legendY - 2, boxWidth - 27, 15),
+                         Qt::AlignLeft | Qt::AlignVCenter, label);
+        legendY += 18;
+      }
+    }
+    else if (roomForScale && !composite_ && !image_.isNull() && displayMax_ > 0.0)
+    {
+      const int barHeight = std::min(150, std::max(60, area.height() / 3));
+      const QRect bar(area.right() - 18, area.top() + 22, 11, barHeight);
+      const QString maxLabel = QString::number(displayMax_, 'g', 3);
+      const int labelWidth = painter.fontMetrics().horizontalAdvance(maxLabel);
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(backing);
+      painter.drawRoundedRect(QRect(bar.left() - std::max(18, labelWidth) - 6, bar.top() - 18,
+                                    bar.width() + std::max(18, labelWidth) + 12, bar.height() + 34),
+                              4, 4);
+      for (int row = 0; row < bar.height(); ++row)
+      {
+        const double value = 1.0 - row / static_cast<double>(std::max(1, bar.height() - 1));
+        painter.setPen(QColor::fromRgb(viridis(value)));
+        painter.drawLine(bar.left(), bar.top() + row, bar.right(), bar.top() + row);
+      }
+      painter.setPen(QColor(220, 220, 228));
+      painter.setBrush(Qt::NoBrush);
+      painter.drawRect(bar);
+      painter.setPen(QColor(235, 235, 240));
+      painter.drawText(QRect(bar.left() - labelWidth - 4, bar.top() - 16, labelWidth + bar.width() + 4, 14),
+                       Qt::AlignRight | Qt::AlignVCenter, maxLabel);
+      painter.drawText(QRect(bar.left() - labelWidth - 4, bar.bottom() + 2, labelWidth + bar.width() + 4, 14),
+                       Qt::AlignRight | Qt::AlignVCenter, QStringLiteral("0"));
+    }
   }
 
   void ImagingImageWidget::mousePressEvent(QMouseEvent* event)
@@ -393,6 +485,13 @@ namespace OpenMSViewer
       info_->setText(tr("Ion-image extraction failed: %1").arg(result.error));
       return;
     }
+    // Ignore a stale extraction (e.g. one that finished after a new dataset loaded):
+    // its dimensions must match the current geometry.
+    if (result.intensities.size() != ticImage_.size())
+    {
+      info_->setText(tr("Ion-image extraction did not match the current dataset"));
+      return;
+    }
     currentIonImage_ = std::move(result);
     displayMode_->setCurrentIndex(1);
     image_->setImage(currentIonImage_->intensities, currentIonImage_->mask,
@@ -405,8 +504,8 @@ namespace OpenMSViewer
 
   void ImagingPanelWidget::addOverlay()
   {
-    if (!currentIonImage_) return;
-    overlays_.push_back({currentIonImage_->intensities,
+    if (!currentIonImage_ || currentIonImage_->intensities.size() != ticImage_.size()) return;
+    overlays_.push_back({currentIonImage_->intensities, currentIonImage_->mask,
                          currentIonImage_->mz, currentIonImage_->tolerancePpm});
     displayMode_->setCurrentIndex(2);
     showOverlay();
@@ -446,9 +545,19 @@ namespace OpenMSViewer
                       QImage::Format_RGB32);
     colorImage.fill(QColor(20, 20, 24));
     std::vector<double> maxima(overlays_.size(), 1.0);
+    std::vector<std::pair<QColor, QString>> legend;
     for (std::size_t channel = 0; channel < overlays_.size(); ++channel)
-      maxima[channel] = std::max(1.0, *std::max_element(overlays_[channel].intensities.begin(),
-                                                        overlays_[channel].intensities.end()));
+    {
+      // Robust per-channel scale (using that channel's own mask) so one channel's
+      // hot pixel can't blank the others; fall back to 1.0 only if it has no signal.
+      const double channelMax = robustMaximum(overlays_[channel].intensities,
+                                              overlays_[channel].mask, 0.99);
+      maxima[channel] = channelMax > 0.0 ? channelMax : 1.0;
+      const auto& hue = hues[channel % hues.size()];
+      legend.emplace_back(QColor::fromRgbF(static_cast<float>(hue[0]), static_cast<float>(hue[1]),
+                                           static_cast<float>(hue[2])),
+                          tr("m/z %1").arg(overlays_[channel].mz, 0, 'f', 4));
+    }
     for (std::size_t index = 0; index < composite.size(); ++index)
     {
       double red = 0.0;
@@ -477,7 +586,8 @@ namespace OpenMSViewer
       }
     }
     image_->setCompositeImage(std::move(colorImage), composite, mask_,
-                              tr("Multi-ion overlay · %1 channels").arg(overlays_.size()));
+                              tr("Multi-ion overlay · %1 channels").arg(overlays_.size()),
+                              std::move(legend));
   }
 
   void ImagingPanelWidget::updateControls()

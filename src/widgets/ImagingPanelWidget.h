@@ -2,13 +2,16 @@
 
 #include "model/ImagingDocument.h"
 
+#include <QColor>
 #include <QFutureWatcher>
 #include <QImage>
+#include <QString>
 #include <QWidget>
 
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 class QComboBox;
@@ -44,7 +47,8 @@ namespace OpenMSViewer
     void setCompositeImage(QImage image,
                            const std::vector<double>& intensities,
                            const std::vector<bool>& mask,
-                           const QString& title);
+                           const QString& title,
+                           std::vector<std::pair<QColor, QString>> legend);
     void clear();
     void setSelectedSpectrum(std::optional<std::size_t> spectrumIndex);
     [[nodiscard]] const QImage& renderedImage() const noexcept;
@@ -70,6 +74,9 @@ namespace OpenMSViewer
     std::vector<std::optional<std::size_t>> spectrumByPixel_;
     QString title_;
     QImage image_;
+    bool composite_{false};
+    double displayMax_{0.0};   // robust (99th-percentile) intensity for the colorbar
+    std::vector<std::pair<QColor, QString>> legend_;   // overlay channel colour + m/z
     std::optional<std::size_t> selectedSpectrum_;
   };
 
@@ -106,6 +113,7 @@ namespace OpenMSViewer
     struct OverlayEntry
     {
       std::vector<double> intensities;
+      std::vector<bool> mask;
       double mz{0.0};
       double tolerancePpm{0.0};
     };

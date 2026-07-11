@@ -1,0 +1,7 @@
+/build*/
+/.cache/
+/.qt/
+compile_commands.json
+*.user
+*.swp
+

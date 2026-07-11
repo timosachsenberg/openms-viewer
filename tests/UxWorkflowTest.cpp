@@ -1,0 +1,278 @@
+#include "TestData.h"
+
+#include "MainWindow.h"
+#include "widgets/LoadingOverlayWidget.h"
+#include "widgets/PeakMapWidget.h"
+#include "widgets/WelcomeWidget.h"
+
+#include <OpenMS/FORMAT/MzMLFile.h>
+
+#include <QAction>
+#include <QApplication>
+#include <QComboBox>
+#include <QDockWidget>
+#include <QLabel>
+#include <QListWidget>
+#include <QMouseEvent>
+#include <QSettings>
+#include <QSignalSpy>
+#include <QSpinBox>
+#include <QStackedWidget>
+#include <QTemporaryDir>
+#include <QTest>
+#include <QToolButton>
+
+class UxWorkflowTest final : public QObject
+{
+  Q_OBJECT
+
+private slots:
+  void welcomeNavigationRecentFilesAndDockPreference()
+  {
+    QSettings().clear();
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("ux-small.mzML"));
+    OpenMS::MzMLFile().store(path.toStdString(), OpenMSViewer::TestData::experiment());
+
+    OpenMSViewer::MainWindow window;
+    window.resize(1280, 820);
+    window.show();
+
+    auto* stack = window.findChild<QStackedWidget*>(QStringLiteral("centralStack"));
+    auto* welcome = window.findChild<OpenMSViewer::WelcomeWidget*>();
+    auto* peakMap = window.findChild<OpenMSViewer::PeakMapWidget*>();
+    auto* interaction = window.findChild<QComboBox*>(QStringLiteral("peakMapInteractionMode"));
+    auto* level = window.findChild<QComboBox*>(QStringLiteral("spectrumLevelFilter"));
+    auto* scan = window.findChild<QSpinBox*>(QStringLiteral("spectrumIndex"));
+    auto* runContext = window.findChild<QLabel*>(QStringLiteral("runContext"));
+    auto* loading = window.findChild<OpenMSViewer::LoadingOverlayWidget*>();
+    auto* ticDock = window.findChild<QDockWidget*>(QStringLiteral("ticDock"));
+    QVERIFY(stack && welcome && peakMap && interaction && level && scan && runContext && loading && ticDock);
+    QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(welcome));
+    QVERIFY(!ticDock->toggleViewAction()->isEnabled());
+    QCOMPARE(interaction->count(), 3);
+    QCOMPARE(level->count(), 3);
+    QVERIFY(!interaction->isVisible());
+    QVERIFY(!peakMap->accessibleName().isEmpty());
+    auto* peakMapPanel = window.findChild<QWidget*>(QStringLiteral("peakMapPanel"));
+    QVERIFY(peakMapPanel != nullptr);
+    QCOMPARE(peakMap->parentWidget(), peakMapPanel);
+    window.loadFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(peakMap->hasExperiment(), 5000);
+    QCOMPARE(stack->currentWidget(), peakMapPanel);
+    QCOMPARE(scan->maximum(), 3);
+    QCOMPARE(scan->text(), QStringLiteral("Scan 1"));
+    QVERIFY(interaction->isVisible());
+    QVERIFY(runContext->text().contains(QStringLiteral("3 spectra")));
+    QVERIFY(!loading->isVisible());
+    auto* recent = welcome->findChild<QListWidget*>(QStringLiteral("recentFiles"));
+    QVERIFY(recent != nullptr);
+    QCOMPARE(recent->count(), 1);
+    QCOMPARE(recent->item(0)->data(Qt::UserRole).toString(), path);
+
+    QVERIFY(ticDock->toggleViewAction()->isEnabled());
+    if (!ticDock->isVisible()) ticDock->toggleViewAction()->trigger();
+    QTRY_VERIFY(ticDock->isVisible());
+
+    const auto requiredFeatures = QDockWidget::DockWidgetClosable
+      | QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable;
+    QCOMPARE(ticDock->features() & requiredFeatures, requiredFeatures);
+    QVERIFY(ticDock->titleBarWidget() != nullptr);
+    auto* dockButton = ticDock->titleBarWidget()->findChild<QToolButton*>(
+      QStringLiteral("ticDockDockButton"));
+    QVERIFY(dockButton != nullptr);
+
+    ticDock->setFloating(true);
+    QTRY_VERIFY(ticDock->isFloating());
+    QCOMPARE(ticDock->titleBarWidget()->cursor().shape(), Qt::SizeAllCursor);
+    const QPoint originalPosition = ticDock->pos();
+    QWidget* titleBar = ticDock->titleBarWidget();
+    const QPoint titleCenter = titleBar->rect().center();
+    const QPoint globalCenter = titleBar->mapToGlobal(titleCenter);
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(titleCenter), QPointF(globalCenter),
+                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(titleBar, &press);
+    const QPoint delta(35, 25);
+    QMouseEvent move(QEvent::MouseMove, QPointF(titleCenter + delta),
+                     QPointF(globalCenter + delta), Qt::NoButton, Qt::LeftButton,
+                     Qt::NoModifier);
+    QApplication::sendEvent(titleBar, &move);
+    QMouseEvent release(QEvent::MouseButtonRelease, QPointF(titleCenter + delta),
+                        QPointF(globalCenter + delta), Qt::LeftButton, Qt::NoButton,
+                        Qt::NoModifier);
+    QApplication::sendEvent(titleBar, &release);
+    QTRY_VERIFY(ticDock->pos() != originalPosition);
+
+    QTest::mouseClick(dockButton, Qt::LeftButton);
+    QTRY_VERIFY(!ticDock->isFloating());
+    QCOMPARE(ticDock->titleBarWidget()->cursor().shape(), Qt::ArrowCursor);
+    ticDock->toggleViewAction()->trigger();
+    QTRY_VERIFY(!ticDock->isVisible());
+
+    window.loadFile(path);
+    QTest::qWait(300);
+    QVERIFY(peakMap->hasExperiment());
+    QVERIFY(!ticDock->isVisible());
+
+    QAction* resetLayout = nullptr;
+    for (QAction* action : window.findChildren<QAction*>())
+      if (action->text() == QStringLiteral("Reset panel layout")) resetLayout = action;
+    QVERIFY(resetLayout != nullptr);
+    resetLayout->trigger();
+    QTRY_VERIFY(ticDock->isVisible());
+
+    QAction* closeData = nullptr;
+    for (QAction* action : window.findChildren<QAction*>())
+      if (action->text() == QStringLiteral("Close data")) closeData = action;
+    QVERIFY(closeData != nullptr);
+    closeData->trigger();
+    QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(welcome));
+  }
+
+  void spectrumDockClosesAndDockedDragUndocks()
+  {
+    QSettings().clear();
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("ux-dock.mzML"));
+    OpenMS::MzMLFile().store(path.toStdString(), OpenMSViewer::TestData::experiment());
+
+    OpenMSViewer::MainWindow window;
+    window.resize(1280, 820);
+    window.show();
+    auto* peakMap = window.findChild<OpenMSViewer::PeakMapWidget*>();
+    QVERIFY(peakMap != nullptr);
+    window.loadFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(peakMap->hasExperiment(), 5000);
+
+    auto* spectrumDock = window.findChild<QDockWidget*>(QStringLiteral("spectrumDock"));
+    QVERIFY(spectrumDock != nullptr);
+    if (!spectrumDock->isVisible()) spectrumDock->toggleViewAction()->trigger();
+    QTRY_VERIFY(spectrumDock->isVisible());
+    QVERIFY(!spectrumDock->isFloating());
+
+    // The title-bar close button must actually hide the panel.
+    auto* closeButton = spectrumDock->titleBarWidget()->findChild<QToolButton*>(
+      QStringLiteral("spectrumDockCloseButton"));
+    QVERIFY(closeButton != nullptr);
+    QTest::mouseClick(closeButton, Qt::LeftButton);
+    QTRY_VERIFY(!spectrumDock->isVisible());
+
+    // Bring it back, still docked, and drag its title bar: it must tear off.
+    spectrumDock->toggleViewAction()->trigger();
+    QTRY_VERIFY(spectrumDock->isVisible());
+    QVERIFY(!spectrumDock->isFloating());
+
+    QWidget* titleBar = spectrumDock->titleBarWidget();
+    const QPoint start = titleBar->rect().center();
+    const QPoint globalStart = titleBar->mapToGlobal(start);
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(start), QPointF(globalStart),
+                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(titleBar, &press);
+    const QPoint delta(60, 50);
+    QMouseEvent move(QEvent::MouseMove, QPointF(start + delta), QPointF(globalStart + delta),
+                     Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(titleBar, &move);
+    QMouseEvent release(QEvent::MouseButtonRelease, QPointF(start + delta),
+                        QPointF(globalStart + delta), Qt::LeftButton, Qt::NoButton,
+                        Qt::NoModifier);
+    QApplication::sendEvent(titleBar, &release);
+    QTRY_VERIFY(spectrumDock->isFloating());
+
+    // The title-bar context menu offers an always-reachable dock/close path.
+    auto* floatMenuAction = spectrumDock->titleBarWidget()->findChild<QAction*>(
+      QStringLiteral("spectrumDockFloatMenuAction"));
+    auto* closeMenuAction = spectrumDock->titleBarWidget()->findChild<QAction*>(
+      QStringLiteral("spectrumDockCloseMenuAction"));
+    QVERIFY(floatMenuAction != nullptr);
+    QVERIFY(closeMenuAction != nullptr);
+    QCOMPARE(floatMenuAction->text(), QStringLiteral("Dock panel"));
+    floatMenuAction->trigger();
+    QTRY_VERIFY(!spectrumDock->isFloating());
+    QCOMPARE(floatMenuAction->text(), QStringLiteral("Float panel"));
+    closeMenuAction->trigger();
+    QTRY_VERIFY(!spectrumDock->isVisible());
+  }
+
+  void restoredFloatingPanelComesBackDocked()
+  {
+    QSettings().clear();
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("ux-float.mzML"));
+    OpenMS::MzMLFile().store(path.toStdString(), OpenMSViewer::TestData::experiment());
+
+    // Session 1: float the Spectrum panel and persist that layout.
+    {
+      OpenMSViewer::MainWindow w;
+      w.resize(1280, 820);
+      w.show();
+      auto* pm = w.findChild<OpenMSViewer::PeakMapWidget*>();
+      w.loadFile(path);
+      QTRY_VERIFY_WITH_TIMEOUT(pm->hasExperiment(), 5000);
+      auto* spec = w.findChild<QDockWidget*>(QStringLiteral("spectrumDock"));
+      QVERIFY(spec != nullptr);
+      spec->setFloating(true);
+      QTRY_VERIFY(spec->isFloating());
+      QSettings s;
+      s.setValue(QStringLiteral("main/geometry"), w.saveGeometry());
+      s.setValue(QStringLiteral("main/state"), w.saveState());
+    }
+
+    // Session 2: a floating top-level dock is unresponsive on some platforms
+    // (WSLg/Wayland), so startup must re-dock it rather than restore it floating.
+    {
+      OpenMSViewer::MainWindow w2;
+      w2.resize(1280, 820);
+      w2.show();
+      auto* spec = w2.findChild<QDockWidget*>(QStringLiteral("spectrumDock"));
+      QVERIFY(spec != nullptr);
+      QVERIFY(!spec->isFloating());
+      for (QDockWidget* d : w2.findChildren<QDockWidget*>())
+        QVERIFY(!d->isFloating());
+    }
+    // Do not leak persisted window state into later suites' MainWindow instances.
+    QSettings().clear();
+  }
+
+  void keyboardModeSwitchSyncsToolbarCombo()
+  {
+    OpenMSViewer::MainWindow window;
+    window.show();
+
+    auto* peakMap = window.findChild<OpenMSViewer::PeakMapWidget*>();
+    auto* interaction =
+      window.findChild<QComboBox*>(QStringLiteral("peakMapInteractionMode"));
+    QVERIFY(peakMap != nullptr);
+    QVERIFY(interaction != nullptr);
+    QCOMPARE(interaction->currentIndex(), 0);
+
+    // Keyboard mode changes on the plot must keep the toolbar combo in sync.
+    QSignalSpy modeSpy(peakMap, &OpenMSViewer::PeakMapWidget::interactionModeChanged);
+    peakMap->setFocus();
+    QTest::keyClick(peakMap, Qt::Key_P);
+    QCOMPARE(interaction->currentIndex(), 1);
+    QTest::keyClick(peakMap, Qt::Key_M);
+    QCOMPARE(interaction->currentIndex(), 2);
+    QTest::keyClick(peakMap, Qt::Key_Z);
+    QCOMPARE(interaction->currentIndex(), 0);
+    QCOMPARE(modeSpy.count(), 3);
+
+    // Selecting the same mode again must not re-emit or loop.
+    peakMap->setInteractionMode(0);
+    QCOMPARE(modeSpy.count(), 3);
+
+    // The combo still drives the plot in the other direction.
+    interaction->setCurrentIndex(2);
+    QCOMPARE(modeSpy.count(), 4);
+  }
+};
+
+int runUxWorkflowTests(int argc, char** argv)
+{
+  UxWorkflowTest test;
+  return QTest::qExec(&test, argc, argv);
+}
+
+#include "UxWorkflowTest.moc"

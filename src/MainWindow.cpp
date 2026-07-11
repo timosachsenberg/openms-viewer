@@ -622,6 +622,14 @@ namespace OpenMSViewer
     connect(showMinimapAction_, &QAction::toggled,
             peakMap_, &PeakMapWidget::setShowMinimap);
 
+    // Single RT-unit control shared by every RT panel (always reachable, unlike a
+    // per-panel checkbox that hides with the chromatogram dock), so units can't diverge.
+    rtInMinutesAction_ = new QAction(tr("RT in minutes"), this);
+    rtInMinutesAction_->setCheckable(true);
+    connect(rtInMinutesAction_, &QAction::toggled, tic_, &TicWidget::setRtInMinutes);
+    connect(rtInMinutesAction_, &QAction::toggled,
+            chromatograms_->plot(), &ChromatogramPlotWidget::setRtInMinutes);
+
     relativeIntensityAction_ = new QAction(tr("Relative spectrum intensity"), this);
     relativeIntensityAction_->setCheckable(true);
     relativeIntensityAction_->setChecked(true);
@@ -805,6 +813,7 @@ namespace OpenMSViewer
     // the peak-map / spectrum panel control bars.
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
     viewMenu->addAction(darkThemeAction_);
+    viewMenu->addAction(rtInMinutesAction_);
     viewMenu->addAction(tr("Reset panel layout"), this, &MainWindow::resetDockLayout);
     viewMenu->addSeparator();
     viewMenu->addAction(ticDock_->toggleViewAction());

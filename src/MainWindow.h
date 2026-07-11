@@ -184,6 +184,7 @@ namespace OpenMSViewer
     QAction* swapAxesAction_{nullptr};
     QAction* darkThemeAction_{nullptr};
     QAction* showMinimapAction_{nullptr};
+    QAction* rtInMinutesAction_{nullptr};
     QAction* relativeIntensityAction_{nullptr};
     QAction* autoYScaleAction_{nullptr};
     QAction* showCentroidsAction_{nullptr};

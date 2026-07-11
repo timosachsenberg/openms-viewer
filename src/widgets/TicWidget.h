@@ -24,6 +24,7 @@ namespace OpenMSViewer
     void setSelectedSpectrum(std::size_t spectrumIndex);
     void setSelectedRt(double rt);
     void setPeakMapRange(const PlotRange& range);
+    void setRtInMinutes(bool minutes);
     void clear();
     [[nodiscard]] const std::optional<double>& selectedRt() const noexcept;
 
@@ -42,6 +43,7 @@ namespace OpenMSViewer
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void leaveEvent(QEvent* event) override;
 
   private:
     [[nodiscard]] QRect plotRect() const;
@@ -53,8 +55,10 @@ namespace OpenMSViewer
     std::optional<double> selectedRt_;
     PlotRange peakMapRange_;
     bool hasPeakMapRange_{false};
+    bool rtInMinutes_{false};
     bool dragging_{false};
     QPoint dragStart_;
     QPoint dragCurrent_;
+    std::optional<QPoint> hoverPos_;
   };
 }

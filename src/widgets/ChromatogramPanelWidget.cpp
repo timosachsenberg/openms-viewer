@@ -343,9 +343,6 @@ namespace OpenMSViewer
     countLabel_ = new QLabel(this);
     countLabel_->setObjectName(QStringLiteral("chromatogramCountLabel"));
     controls->addWidget(countLabel_);
-    minutes_ = new QCheckBox(tr("RT in minutes"), this);
-    minutes_->setObjectName(QStringLiteral("chromatogramMinutes"));
-    controls->addWidget(minutes_);
     auto* clearButton = new QPushButton(tr("Clear selection"), this);
     controls->addWidget(clearButton);
     auto* exportButton = new QPushButton(tr("Export TSV…"), this);
@@ -379,7 +376,6 @@ namespace OpenMSViewer
             this, &ChromatogramPanelWidget::updateSelection);
     connect(search_, &QLineEdit::textChanged, proxy_, &QSortFilterProxyModel::setFilterFixedString);
     connect(search_, &QLineEdit::textChanged, this, &ChromatogramPanelWidget::updateCountLabel);
-    connect(minutes_, &QCheckBox::toggled, plot_, &ChromatogramPlotWidget::setRtInMinutes);
     connect(clearButton, &QPushButton::clicked, this, &ChromatogramPanelWidget::clearSelection);
     connect(exportButton, &QPushButton::clicked, this, &ChromatogramPanelWidget::exportTsv);
     connect(plot_, &ChromatogramPlotWidget::rtActivated, this, &ChromatogramPanelWidget::rtActivated);

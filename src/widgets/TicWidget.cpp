@@ -1,5 +1,7 @@
 #include "widgets/TicWidget.h"
 
+#include "plot/PlotAxis.h"
+
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QWheelEvent>
@@ -59,6 +61,13 @@ namespace OpenMSViewer
     update();
   }
 
+  void TicWidget::setRtInMinutes(bool minutes)
+  {
+    if (rtInMinutes_ == minutes) return;
+    rtInMinutes_ = minutes;
+    update();
+  }
+
   void TicWidget::clear()
   {
     points_.clear();
@@ -76,7 +85,7 @@ namespace OpenMSViewer
 
   QRect TicWidget::plotRect() const
   {
-    return rect().adjusted(54, 30, -16, -35);
+    return rect().adjusted(62, 30, -16, -35);
   }
 
   std::optional<std::size_t> TicWidget::pointAtX(double x) const
@@ -130,6 +139,23 @@ namespace OpenMSViewer
       return area.bottom() - intensity / intensityMax * area.height() * 0.95;
     };
 
+    // Nice numeric ticks + gridlines so RT and intensity are actually readable.
+    const double rtFactor = rtInMinutes_ ? 60.0 : 1.0;
+    const auto rtTicks = PlotAxis::niceTicks(rtMin / rtFactor, rtMax / rtFactor, 6);
+    const auto intensityTicks = PlotAxis::niceTicks(0.0, intensityMax, 5);
+    painter.setPen(QPen(palette().color(QPalette::Mid), 1.0, Qt::DotLine));
+    for (const double tick : rtTicks)
+    {
+      const double x = xForRt(tick * rtFactor);
+      if (x >= area.left() - 0.5 && x <= area.right() + 0.5)
+        painter.drawLine(QPointF(x, area.top()), QPointF(x, area.bottom()));
+    }
+    for (const double tick : intensityTicks)
+    {
+      const double y = yForIntensity(tick);
+      painter.drawLine(QPointF(area.left(), y), QPointF(area.right(), y));
+    }
+
     if (hasPeakMapRange_)
     {
       const double left = std::clamp(xForRt(peakMapRange_.rtMin), static_cast<double>(area.left()), static_cast<double>(area.right()));
@@ -173,9 +199,57 @@ namespace OpenMSViewer
       painter.drawRect(selection.normalized());
     }
 
+    // Numeric tick marks + labels. RT label precision follows the tick spacing so
+    // closely-spaced ticks (or large RT offsets) never render as the same text.
+    const double rtStep = rtTicks.size() > 1 ? std::abs(rtTicks[1] - rtTicks[0]) : 1.0;
+    const int rtDecimals = rtStep >= 1.0
+      ? 0 : std::min(6, static_cast<int>(std::ceil(-std::log10(rtStep))));
     painter.setPen(palette().color(QPalette::Text));
-    painter.drawText(QRect(area.left(), area.bottom() + 10, area.width(), 20), Qt::AlignCenter,
-                     tr("Retention time (s)"));
+    for (const double tick : rtTicks)
+    {
+      const double x = xForRt(tick * rtFactor);
+      if (x < area.left() - 0.5 || x > area.right() + 0.5) continue;
+      painter.drawLine(QPointF(x, area.bottom()), QPointF(x, area.bottom() + 4));
+      painter.drawText(QRectF(x - 42, area.bottom() + 4, 84, 13), Qt::AlignHCenter | Qt::AlignTop,
+                       QString::number(tick, 'f', rtDecimals));
+    }
+    for (const double tick : intensityTicks)
+    {
+      const double y = yForIntensity(tick);
+      painter.drawLine(QPointF(area.left() - 4, y), QPointF(area.left(), y));
+      painter.drawText(QRectF(0, y - 8, area.left() - 6.0, 16), Qt::AlignRight | Qt::AlignVCenter,
+                       QString::number(tick, 'g', 3));
+    }
+    painter.drawText(QRect(area.left(), area.bottom() + 18, area.width(), 14), Qt::AlignCenter,
+                     rtInMinutes_ ? tr("Retention time (min)") : tr("Retention time (s)"));
+
+    // Hover readout: the nearest scan's RT + intensity, tracking the cursor.
+    if (hoverPos_ && !dragging_ && area.contains(*hoverPos_))
+    {
+      if (const auto index = pointAtX(hoverPos_->x()))
+      {
+        const TicPoint& point = points_[*index];
+        const QPointF marker(xForRt(point.rt), yForIntensity(point.intensity));
+        painter.setPen(QPen(QColor(40, 170, 255), 1.5));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawEllipse(marker, 3.5, 3.5);
+        const QString text = tr("RT %1 %2 · I %3")
+          .arg(point.rt / rtFactor, 0, 'f', rtInMinutes_ ? 3 : 1)
+          .arg(rtInMinutes_ ? tr("min") : tr("s"))
+          .arg(point.intensity, 0, 'g', 4);
+        const double textWidth = std::min<double>(
+          painter.fontMetrics().horizontalAdvance(text) + 12.0, area.width());
+        const QRectF box(std::clamp<double>(marker.x() + 8, area.left(),
+                                            std::max<double>(area.left(), area.right() - textWidth)),
+                         area.top() + 2, textWidth, 18);
+        const QColor base = palette().color(QPalette::Base);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(base.red(), base.green(), base.blue(), 220));
+        painter.drawRoundedRect(box, 3, 3);
+        painter.setPen(palette().color(QPalette::Text));
+        painter.drawText(box.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft, text);
+      }
+    }
   }
 
   void TicWidget::mousePressEvent(QMouseEvent* event)
@@ -194,8 +268,14 @@ namespace OpenMSViewer
 
   void TicWidget::mouseMoveEvent(QMouseEvent* event)
   {
-    if (!dragging_) return;
-    dragCurrent_ = event->pos();
+    hoverPos_ = event->pos();
+    if (dragging_) dragCurrent_ = event->pos();
+    update();
+  }
+
+  void TicWidget::leaveEvent(QEvent*)
+  {
+    hoverPos_.reset();
     update();
   }
 
@@ -238,10 +318,12 @@ namespace OpenMSViewer
     const double currentMax = hasPeakMapRange_ ? peakMapRange_.rtMax : fullMax;
     const double fraction = std::clamp((event->position().x() - plotRect().left())
       / plotRect().width(), 0.0, 1.0);
-    const double cursor = currentMin + fraction * (currentMax - currentMin);
+    // The trace is drawn across the full RT range, so the cursor's RT comes from
+    // the full axis; zoom the current window around that RT.
+    const double cursorRt = fullMin + fraction * (fullMax - fullMin);
     const double span = (currentMax - currentMin) * (event->angleDelta().y() > 0 ? 0.8 : 1.25);
-    emit rtRangeSelected(std::max(fullMin, cursor - fraction * span),
-                         std::min(fullMax, cursor + (1.0 - fraction) * span));
+    emit rtRangeSelected(std::max(fullMin, cursorRt - span / 2.0),
+                         std::min(fullMax, cursorRt + span / 2.0));
     event->accept();
   }
 

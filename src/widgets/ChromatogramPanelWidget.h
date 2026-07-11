@@ -79,7 +79,6 @@ namespace OpenMSViewer
     QTableView* table_{nullptr};
     QLineEdit* search_{nullptr};
     ChromatogramPlotWidget* plot_{nullptr};
-    QCheckBox* minutes_{nullptr};
     QLabel* countLabel_{nullptr};
   };
 }

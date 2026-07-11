@@ -1,5 +1,6 @@
 #include "TestData.h"
 
+#include "plot/PlotAxis.h"
 #include "widgets/PeakMapWidget.h"
 #include "widgets/SpectrumWidget.h"
 #include "widgets/TicWidget.h"
@@ -236,6 +237,76 @@ private slots:
     QVERIFY(std::abs(widget.measurements().front().firstMz - 500.0) < 1e-6);  // the other one survives
   }
 
+  void niceTicksAreRoundAndCoverRange()
+  {
+    using OpenMSViewer::PlotAxis::niceTicks;
+    const auto ticks = niceTicks(0.0, 1000.0, 5);
+    QVERIFY(ticks.size() >= 4);
+    QCOMPARE(ticks.front(), 0.0);
+    QVERIFY(ticks.back() <= 1000.0 + 1e-9);
+    const double step = ticks[1] - ticks[0];
+    QVERIFY(qAbs(step - 200.0) < 1e-6);   // "nice" step for [0,1000] with ~5 ticks
+    for (std::size_t i = 1; i < ticks.size(); ++i)
+      QVERIFY(qAbs((ticks[i] - ticks[i - 1]) - step) < 1e-6);   // evenly spaced
+
+    // A non-zero-based range still yields round values inside the range.
+    const auto rtTicks = niceTicks(1501.0, 1999.0, 6);
+    QVERIFY(!rtTicks.empty());
+    for (const double tick : rtTicks)
+    {
+      QVERIFY(tick >= 1501.0 - 1e-9 && tick <= 1999.0 + 1e-9);
+      QVERIFY(qAbs(tick - std::round(tick / 100.0) * 100.0) < 1e-6);   // multiples of 100
+    }
+
+    // Degenerate / non-finite ranges return no ticks.
+    QVERIFY(niceTicks(5.0, 5.0, 5).empty());
+    QVERIFY(niceTicks(10.0, 0.0, 5).empty());
+  }
+
+  void ticRendersNumericAxesUnitsAndHover()
+  {
+    OpenMSViewer::TicWidget tic;
+    tic.resize(700, 260);
+    tic.show();
+    tic.setTrace({{100.0, 10.0, 0}, {200.0, 90.0, 1}, {300.0, 40.0, 2}, {400.0, 70.0, 3}},
+                 QStringLiteral("MS1 TIC"));
+    QVERIFY(!tic.grab().isNull());       // seconds axis + gridlines render
+    tic.setRtInMinutes(true);
+    QVERIFY(!tic.grab().isNull());       // minutes axis renders
+
+    const QRect plot = tic.rect().adjusted(62, 30, -16, -35);
+    QTest::mouseMove(&tic, plot.center());
+    QVERIFY(!tic.grab().isNull());       // hover readout path renders without crashing
+  }
+
+  void ticWheelZoomAnchorsOnCursorRt()
+  {
+    OpenMSViewer::TicWidget tic;
+    tic.resize(700, 260);
+    tic.show();
+    std::vector<OpenMSViewer::TicPoint> points;
+    for (int i = 0; i <= 10; ++i) points.push_back({10.0 + i, 50.0, static_cast<std::size_t>(i)});
+    tic.setTrace(points, QStringLiteral("MS1 TIC"));                      // full RT [10,20]
+    tic.setPeakMapRange(OpenMSViewer::PlotRange{12.0, 18.0, 0.0, 1.0});   // current 6 s window
+
+    std::optional<std::pair<double, double>> emitted;
+    connect(&tic, &OpenMSViewer::TicWidget::rtRangeSelected, &tic,
+            [&](double low, double high) { emitted = {low, high}; });
+
+    const QRect plot = tic.rect().adjusted(62, 30, -16, -35);
+    const QPointF pos(plot.left() + plot.width() * 0.25, plot.center().y());
+    QWheelEvent wheel(pos, tic.mapToGlobal(pos.toPoint()), {}, {0, 120},
+                      Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false);
+    QApplication::sendEvent(&tic, &wheel);
+
+    QVERIFY(emitted.has_value());
+    // Cursor at 25% of the FULL [10,20] axis is RT 12.5; the zoom centres there
+    // (the old code anchored inside the sub-range and drifted).
+    const double mid = (emitted->first + emitted->second) / 2.0;
+    QVERIFY(qAbs(mid - 12.5) < 0.2);
+    QVERIFY(emitted->second - emitted->first < 6.0);   // zoomed in from the 6 s window
+  }
+
   void ticClickAndDragDriveSelectionAndPeakMapRange()
   {
     OpenMSViewer::TicWidget tic;
@@ -248,7 +319,7 @@ private slots:
     tic.setSelectedSpectrum(99);
     tic.setSelectedRt(17.25);
     QCOMPARE(tic.selectedRt().value(), 17.25);
-    const QRect plot = tic.rect().adjusted(54, 30, -16, -35);
+    const QRect plot = tic.rect().adjusted(62, 30, -16, -35);
     std::optional<std::size_t> selected;
     connect(&tic, &OpenMSViewer::TicWidget::spectrumActivated, &tic,
             [&](std::size_t index) { selected = index; });

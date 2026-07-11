@@ -148,7 +148,7 @@ private slots:
     QTRY_VERIFY(peakMap->viewRange().rtMin > 4.0);
 
     peakMap->setRtRange(10.0, 14.0);
-    const QRect ticPlot = tic->rect().adjusted(54, 30, -16, -35);
+    const QRect ticPlot = tic->rect().adjusted(62, 30, -16, -35);
     QTest::mouseClick(tic, Qt::LeftButton, Qt::NoModifier,
                       QPoint(ticPlot.right() - 1, ticPlot.center().y()));
     QTRY_COMPARE(spectrum->spectrumIndex(), std::size_t{2});

@@ -22,6 +22,16 @@ namespace OpenMSViewer
     double tic{0.0};
   };
 
+  // Aggregate (whole-image) spectrum: for each m/z bin, the mean intensity across
+  // all pixels and the max ("skyline") intensity in any pixel. Only occupied bins
+  // are kept. Scanning this and clicking peaks is the core MSI discovery workflow.
+  struct AggregateSpectrum
+  {
+    std::vector<double> mz;
+    std::vector<double> mean;
+    std::vector<double> maxIntensity;
+  };
+
   struct ImagingSummary
   {
     QString sourcePath;
@@ -46,6 +56,7 @@ namespace OpenMSViewer
     [[nodiscard]] std::size_t spectrumCount() const noexcept;
     [[nodiscard]] OpenMS::MSSpectrum spectrum(std::size_t index) const;
     [[nodiscard]] OpenMS::IonImage extractIonImage(double mz, double tolerancePpm) const;
+    [[nodiscard]] AggregateSpectrum aggregateSpectrum(double mzMin, double mzMax, int bins) const;
 
     OpenMS::OnDiscImzMLExperiment& experiment() noexcept;
     const OpenMS::OnDiscImzMLExperiment& experiment() const noexcept;

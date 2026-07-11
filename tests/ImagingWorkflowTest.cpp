@@ -18,6 +18,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <optional>
+
 namespace
 {
   QString writeImagingFixture(const QString& directory)
@@ -126,6 +128,56 @@ private slots:
     QTest::mouseClick(panel.imageWidget(), Qt::LeftButton, Qt::NoModifier,
                       panel.imageWidget()->rect().center());
     QVERIFY(selected.has_value());
+  }
+
+  void computesAggregateSpectrum()
+  {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = writeImagingFixture(directory.path());
+    auto result = OpenMSViewer::ImagingDocument::readImzML(path);
+    QVERIFY(result.succeeded());
+
+    // Fixture: 4 pixels, m/z 100 intensities {10,20,30,40}, m/z 200 {20,15,10,5}.
+    const auto aggregate =
+      result.store->aggregateSpectrum(result.summary.mzMin, result.summary.mzMax, 2000);
+    QCOMPARE(aggregate.mz.size(), std::size_t{2});
+    QCOMPARE(aggregate.mean.size(), std::size_t{2});
+    QCOMPARE(aggregate.maxIntensity.size(), std::size_t{2});
+    // Representative m/z is the intensity-weighted peak location (exactly 100/200),
+    // NOT the bin centre (~100.025) — a ppm extraction around it must hit the peak.
+    QVERIFY(qAbs(aggregate.mz.front() - 100.0) < 1e-3);
+    QVERIFY(qAbs(aggregate.mean.front() - 25.0) < 1e-6);        // (10+20+30+40)/4
+    QVERIFY(qAbs(aggregate.maxIntensity.front() - 40.0) < 1e-6);
+    QVERIFY(qAbs(aggregate.mz.back() - 200.0) < 1e-3);
+    QVERIFY(qAbs(aggregate.mean.back() - 12.5) < 1e-6);         // (20+15+10+5)/4
+    QVERIFY(qAbs(aggregate.maxIntensity.back() - 20.0) < 1e-6);
+
+    // End-to-end: the reported m/z round-trips through a 10 ppm extraction (a bin
+    // centre would sit outside the ppm window and extract an empty image).
+    const OpenMS::IonImage image = result.store->extractIonImage(aggregate.mz.front(), 10.0);
+    double total = 0.0;
+    for (const double value : image.getData()) total += value;
+    QVERIFY(total > 0.0);
+  }
+
+  void aggregateSpectrumClickBrowsesToPeak()
+  {
+    OpenMSViewer::AggregateSpectrumWidget widget;
+    widget.resize(600, 200);
+    widget.show();
+    widget.setSpectrum({150.0, 500.0, 850.0}, {10.0, 90.0, 40.0}, QStringLiteral("agg"));
+
+    std::optional<double> selected;
+    connect(&widget, &OpenMSViewer::AggregateSpectrumWidget::peakSelected, &widget,
+            [&](double mz) { selected = mz; });
+
+    const QRect plot = widget.rect().adjusted(58, 20, -12, -34);
+    const int x = plot.left() + static_cast<int>((500.0 - 150.0) / (850.0 - 150.0) * plot.width());
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier, QPoint(x, plot.center().y()));
+
+    QVERIFY(selected.has_value());   // clicking the middle peak emits its m/z
+    QVERIFY(qAbs(*selected - 500.0) < 1.0);
   }
 
   void loadsAndSynchronizesMainWindow()

@@ -4,6 +4,8 @@
 
 #include <QtConcurrent/QtConcurrentRun>
 
+#include "plot/PlotAxis.h"
+
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
@@ -11,8 +13,10 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QSplitter>
 #include <QToolTip>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <array>
@@ -314,6 +318,232 @@ namespace OpenMSViewer
         .arg(intensities_[offset], 0, 'g', 6), this);
   }
 
+  // ---------------------------------------------------------------------------
+  //  AggregateSpectrumWidget — whole-image spectrum with click-to-browse.
+  // ---------------------------------------------------------------------------
+  AggregateSpectrumWidget::AggregateSpectrumWidget(QWidget* parent) : QWidget(parent)
+  {
+    setObjectName(QStringLiteral("imagingAggregateSpectrum"));
+    setMinimumHeight(140);
+    setMouseTracking(true);
+    setFocusPolicy(Qt::StrongFocus);
+    setAccessibleName(tr("Aggregate mass spectrum"));
+    setAccessibleDescription(
+      tr("Whole-image aggregate spectrum. Click a peak to image that m/z; wheel to zoom."));
+  }
+
+  void AggregateSpectrumWidget::setSpectrum(std::vector<double> mz, std::vector<double> intensity,
+                                            QString title, bool keepView)
+  {
+    mz_ = std::move(mz);
+    intensity_ = std::move(intensity);
+    if (intensity_.size() != mz_.size()) intensity_.resize(mz_.size(), 0.0);   // keep paired
+    title_ = std::move(title);
+    intensityMax_ = 0.0;
+    for (const double value : intensity_) intensityMax_ = std::max(intensityMax_, value);
+    if (!keepView) view_.reset();   // keepView lets a Mean/Max swap stay at the same zoom
+    hoverPos_.reset();
+    update();
+  }
+
+  void AggregateSpectrumWidget::setMarkerMz(std::optional<double> mz) { markerMz_ = mz; update(); }
+
+  void AggregateSpectrumWidget::clear()
+  {
+    mz_.clear();
+    intensity_.clear();
+    title_.clear();
+    intensityMax_ = 0.0;
+    view_.reset();
+    markerMz_.reset();
+    hoverPos_.reset();
+    update();
+  }
+
+  QRect AggregateSpectrumWidget::plotRect() const { return rect().adjusted(58, 20, -12, -34); }
+
+  std::pair<double, double> AggregateSpectrumWidget::viewRange() const
+  {
+    if (view_) return *view_;
+    if (mz_.empty()) return {0.0, 1.0};
+    return {mz_.front(), std::max(mz_.back(), mz_.front() + 1.0)};
+  }
+
+  std::optional<std::size_t> AggregateSpectrumWidget::peakAt(double x) const
+  {
+    if (mz_.empty()) return std::nullopt;
+    const QRect area = plotRect();
+    const auto [low, high] = viewRange();
+    const double target = low + std::clamp((x - area.left()) / std::max(1, area.width()), 0.0, 1.0)
+                                  * (high - low);
+    auto it = std::lower_bound(mz_.begin(), mz_.end(), target);
+    std::size_t best = 0;
+    if (it == mz_.end()) best = mz_.size() - 1;
+    else if (it == mz_.begin()) best = 0;
+    else
+    {
+      const auto previous = it - 1;
+      best = std::abs(*it - target) < std::abs(*previous - target)
+               ? static_cast<std::size_t>(it - mz_.begin())
+               : static_cast<std::size_t>(previous - mz_.begin());
+    }
+    const double px = area.left() + (mz_[best] - low) / (high - low) * area.width();
+    return std::abs(px - x) > 8.0 ? std::nullopt : std::optional<std::size_t>(best);
+  }
+
+  void AggregateSpectrumWidget::paintEvent(QPaintEvent*)
+  {
+    QPainter painter(this);
+    painter.fillRect(rect(), palette().window());
+    const QRect area = plotRect();
+    if (area.width() <= 0 || area.height() <= 0) return;   // too small to draw safely
+    painter.setPen(palette().color(QPalette::Text));
+    painter.drawText(QRect(area.left(), 2, area.width(), 16), Qt::AlignLeft | Qt::AlignVCenter,
+                     title_.isEmpty() ? tr("Aggregate spectrum") : title_);
+    painter.setPen(palette().color(QPalette::Mid));
+    painter.drawLine(area.bottomLeft(), area.bottomRight());
+    painter.drawLine(area.topLeft(), area.bottomLeft());
+    if (mz_.empty())
+    {
+      painter.setPen(palette().color(QPalette::PlaceholderText));
+      painter.drawText(area, Qt::AlignCenter, tr("Computing aggregate spectrum…"));
+      return;
+    }
+
+    const auto [low, high] = viewRange();
+    const double span = high - low;
+    double viewMax = 0.0;
+    for (std::size_t i = 0; i < mz_.size(); ++i)
+      if (mz_[i] >= low && mz_[i] <= high) viewMax = std::max(viewMax, intensity_[i]);
+    if (viewMax <= 0.0) viewMax = intensityMax_ > 0.0 ? intensityMax_ : 1.0;
+    const auto xFor = [&](double mz) { return area.left() + (mz - low) / span * area.width(); };
+    const auto yFor = [&](double value) { return area.bottom() - value / viewMax * area.height() * 0.9; };
+
+    const auto mzTicks = PlotAxis::niceTicks(low, high, 6);
+    const auto intensityTicks = PlotAxis::niceTicks(0.0, viewMax, 4);
+    painter.setPen(QPen(palette().color(QPalette::Mid), 1.0, Qt::DotLine));
+    for (const double tick : mzTicks)
+    {
+      const double x = xFor(tick);
+      if (x >= area.left() && x <= area.right()) painter.drawLine(QPointF(x, area.top()), QPointF(x, area.bottom()));
+    }
+    for (const double tick : intensityTicks)
+      painter.drawLine(QPointF(area.left(), yFor(tick)), QPointF(area.right(), yFor(tick)));
+
+    // Per-pixel-column max envelope so dense aggregates render without gaps.
+    const bool darkTheme = palette().color(QPalette::Window).lightnessF() < 0.5;
+    std::vector<double> envelope(static_cast<std::size_t>(area.width()) + 1, 0.0);
+    for (std::size_t i = 0; i < mz_.size(); ++i)
+    {
+      if (mz_[i] < low || mz_[i] > high) continue;
+      const int bin = std::clamp(static_cast<int>(xFor(mz_[i])) - area.left(), 0, area.width());
+      envelope[static_cast<std::size_t>(bin)] = std::max(envelope[static_cast<std::size_t>(bin)], intensity_[i]);
+    }
+    painter.setPen(QPen(darkTheme ? QColor(35, 190, 225) : QColor(15, 110, 150), 1));
+    for (int bin = 0; bin <= area.width(); ++bin)
+    {
+      if (envelope[static_cast<std::size_t>(bin)] <= 0.0) continue;
+      const int x = area.left() + bin;
+      painter.drawLine(x, area.bottom(), x, static_cast<int>(yFor(envelope[static_cast<std::size_t>(bin)])));
+    }
+
+    if (markerMz_ && *markerMz_ >= low && *markerMz_ <= high)
+    {
+      painter.setPen(QPen(QColor(255, 140, 40), 1.5, Qt::DashLine));
+      const double x = xFor(*markerMz_);
+      painter.drawLine(QPointF(x, area.top()), QPointF(x, area.bottom()));
+    }
+
+    painter.setPen(palette().color(QPalette::Text));
+    for (const double tick : mzTicks)
+    {
+      const double x = xFor(tick);
+      if (x < area.left() - 0.5 || x > area.right() + 0.5) continue;
+      painter.drawText(QRectF(x - 40, area.bottom() + 3, 80, 13), Qt::AlignHCenter | Qt::AlignTop,
+                       QString::number(tick, 'f', 1));
+    }
+    for (const double tick : intensityTicks)
+      painter.drawText(QRectF(0, yFor(tick) - 8, area.left() - 6.0, 16), Qt::AlignRight | Qt::AlignVCenter,
+                       QString::number(tick, 'g', 3));
+    painter.drawText(QRect(area.left(), area.bottom() + 16, area.width(), 14), Qt::AlignCenter, tr("m/z"));
+
+    if (hoverPos_ && area.contains(*hoverPos_))
+    {
+      if (const auto index = peakAt(hoverPos_->x()))
+      {
+        const double x = xFor(mz_[*index]);
+        const double y = yFor(intensity_[*index]);
+        painter.setPen(QPen(QColor(40, 170, 255), 1.5));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawEllipse(QPointF(x, y), 3.5, 3.5);
+        const QString text = tr("m/z %1 · %2").arg(mz_[*index], 0, 'f', 4).arg(intensity_[*index], 0, 'g', 4);
+        const double textWidth = std::min<double>(
+          painter.fontMetrics().horizontalAdvance(text) + 12.0, area.width());
+        const QRectF box(std::clamp<double>(x + 8, area.left(),
+                                            std::max<double>(area.left(), area.right() - textWidth)),
+                         area.top() + 2, textWidth, 18);
+        const QColor base = palette().color(QPalette::Base);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(base.red(), base.green(), base.blue(), 220));
+        painter.drawRoundedRect(box, 3, 3);
+        painter.setPen(palette().color(QPalette::Text));
+        painter.drawText(box.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft, text);
+      }
+    }
+  }
+
+  void AggregateSpectrumWidget::mousePressEvent(QMouseEvent* event)
+  {
+    if (event->button() == Qt::LeftButton && plotRect().contains(event->position().toPoint()))
+    {
+      if (const auto index = peakAt(event->position().x()))
+      {
+        emit peakSelected(mz_[*index]);
+        event->accept();
+        return;
+      }
+    }
+    QWidget::mousePressEvent(event);
+  }
+
+  void AggregateSpectrumWidget::mouseMoveEvent(QMouseEvent* event)
+  {
+    hoverPos_ = event->pos();
+    update();
+  }
+
+  void AggregateSpectrumWidget::wheelEvent(QWheelEvent* event)
+  {
+    if (mz_.empty() || !plotRect().contains(event->position().toPoint())) return;
+    const double fullLow = mz_.front();
+    const double fullHigh = std::max(mz_.back(), fullLow + 1.0);
+    const auto [low, high] = viewRange();
+    const double fraction = std::clamp((event->position().x() - plotRect().left())
+      / plotRect().width(), 0.0, 1.0);
+    const double cursor = low + fraction * (high - low);
+    const double newSpan = (high - low) * (event->angleDelta().y() > 0 ? 0.8 : 1.25);
+    const double newLow = std::max(fullLow, cursor - fraction * newSpan);
+    const double newHigh = std::min(fullHigh, cursor + (1.0 - fraction) * newSpan);
+    if (newHigh - newLow < (fullHigh - fullLow) * 1e-4) return;
+    if (newLow <= fullLow && newHigh >= fullHigh) view_.reset();
+    else view_ = std::pair{newLow, newHigh};
+    update();
+    event->accept();
+  }
+
+  void AggregateSpectrumWidget::mouseDoubleClickEvent(QMouseEvent*)
+  {
+    view_.reset();
+    update();
+  }
+
+  void AggregateSpectrumWidget::leaveEvent(QEvent*)
+  {
+    hoverPos_.reset();
+    update();
+  }
+
+  // ---------------------------------------------------------------------------
   ImagingPanelWidget::ImagingPanelWidget(QWidget* parent) : QWidget(parent)
   {
     auto* layout = new QVBoxLayout(this);
@@ -346,13 +576,28 @@ namespace OpenMSViewer
     controls->addWidget(addOverlay_);
     clearOverlay_ = new QPushButton(tr("Clear overlay"), this);
     controls->addWidget(clearOverlay_);
+    controls->addSpacing(12);
+    controls->addWidget(new QLabel(tr("Aggregate"), this));
+    aggregateMode_ = new QComboBox(this);
+    aggregateMode_->setObjectName(QStringLiteral("imagingAggregateMode"));
+    aggregateMode_->addItems({tr("Mean"), tr("Max (skyline)")});
+    controls->addWidget(aggregateMode_);
     controls->addStretch();
     layout->addLayout(controls);
     info_ = new QLabel(tr("No imaging dataset loaded"), this);
     info_->setObjectName(QStringLiteral("imagingInfo"));
     layout->addWidget(info_);
+
+    // Image on top, aggregate spectrum below (resizable), so a peak clicked in the
+    // aggregate spectrum can be imaged above it.
+    auto* splitter = new QSplitter(Qt::Vertical, this);
     image_ = new ImagingImageWidget(this);
-    layout->addWidget(image_, 1);
+    splitter->addWidget(image_);
+    aggregate_ = new AggregateSpectrumWidget(this);
+    splitter->addWidget(aggregate_);
+    splitter->setStretchFactor(0, 3);
+    splitter->setStretchFactor(1, 1);
+    layout->addWidget(splitter, 1);
 
     connect(displayMode_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int mode)
     {
@@ -375,12 +620,19 @@ namespace OpenMSViewer
     });
     connect(&extractionWatcher_, &QFutureWatcher<ImagingImageResult>::finished,
             this, &ImagingPanelWidget::finishExtraction);
+    connect(&aggregateWatcher_, &QFutureWatcher<AggregateSpectrum>::finished,
+            this, &ImagingPanelWidget::finishAggregate);
+    connect(aggregate_, &AggregateSpectrumWidget::peakSelected,
+            this, &ImagingPanelWidget::browseToPeak);
+    connect(aggregateMode_, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int) { updateAggregateDisplay(true); });   // keep zoom on a Mean/Max swap
     updateControls();
   }
 
   ImagingPanelWidget::~ImagingPanelWidget()
   {
     if (extractionWatcher_.isRunning()) extractionWatcher_.waitForFinished();
+    if (aggregateWatcher_.isRunning()) aggregateWatcher_.waitForFinished();
   }
 
   void ImagingPanelWidget::setData(std::shared_ptr<ImagingStore> store,
@@ -409,7 +661,31 @@ namespace OpenMSViewer
       .arg(summary_.pixels.size()).arg(summary_.width).arg(summary_.height)
       .arg(summary_.imagingMode.isEmpty() ? tr("unknown") : summary_.imagingMode)
       .arg(summary_.mzMin, 0, 'f', 4).arg(summary_.mzMax, 0, 'f', 4));
+
+    // Compute the whole-image aggregate spectrum in the background.
+    aggregateData_ = {};
+    extractionPending_ = false;
+    aggregate_->clear();
+    launchAggregate();
     updateControls();
+  }
+
+  void ImagingPanelWidget::launchAggregate()
+  {
+    // Serialize: if a scan from a previous dataset is still running, don't start a
+    // second full-dataset scan — finishAggregate() relaunches for the current data.
+    if (!store_ || aggregateWatcher_.isRunning()) return;
+    activeAggregate_ = dataGeneration_;
+    const auto store = store_;
+    const double low = summary_.mzMin;
+    const double high = summary_.mzMax;
+    const int bins = std::clamp(static_cast<int>((high - low) * 20.0), 2000, 12000);
+    aggregateWatcher_.setFuture(QtConcurrent::run([store, low, high, bins]
+    {
+      // Never let an I/O exception rethrow through QFuture::result() on the GUI thread.
+      try { return store->aggregateSpectrum(low, high, bins); }
+      catch (...) { return AggregateSpectrum{}; }
+    }));
   }
 
   void ImagingPanelWidget::clear()
@@ -421,7 +697,10 @@ namespace OpenMSViewer
     mask_.clear();
     currentIonImage_.reset();
     overlays_.clear();
+    aggregateData_ = {};
+    extractionPending_ = false;
     image_->clear();
+    aggregate_->clear();
     info_->setText(tr("No imaging dataset loaded"));
     updateControls();
   }
@@ -438,7 +717,9 @@ namespace OpenMSViewer
 
   void ImagingPanelWidget::extractIonImage()
   {
-    if (!store_ || extractionWatcher_.isRunning()) return;
+    if (!store_) return;
+    if (extractionWatcher_.isRunning()) { extractionPending_ = true; return; }  // coalesce to latest
+    extractionPending_ = false;
     activeExtraction_ = dataGeneration_;
     const auto store = store_;
     const double mz = mz_->value();
@@ -474,6 +755,7 @@ namespace OpenMSViewer
     // a same-pixel-count dataset would otherwise pass the size check below.
     if (activeExtraction_ != dataGeneration_)
     {
+      extractionPending_ = false;   // the queued click was for the old dataset
       updateControls();
       return;
     }
@@ -481,23 +763,57 @@ namespace OpenMSViewer
     if (!result.error.isEmpty())
     {
       info_->setText(tr("Ion-image extraction failed: %1").arg(result.error));
-      updateControls();
-      return;
     }
-    if (result.intensities.size() != ticImage_.size())   // defensive geometry check
+    else if (result.intensities.size() != ticImage_.size())   // defensive geometry check
     {
       info_->setText(tr("Ion-image extraction did not match the current dataset"));
-      updateControls();
+    }
+    else
+    {
+      currentIonImage_ = std::move(result);
+      displayMode_->setCurrentIndex(1);
+      image_->setImage(currentIonImage_->intensities, currentIonImage_->mask,
+        tr("Ion image · m/z %1 ± %2 ppm").arg(currentIonImage_->mz, 0, 'f', 5)
+                                              .arg(currentIonImage_->tolerancePpm, 0, 'f', 1));
+      info_->setText(tr("Extracted m/z %1 ± %2 ppm")
+        .arg(currentIonImage_->mz, 0, 'f', 5).arg(currentIonImage_->tolerancePpm, 0, 'f', 1));
+      aggregate_->setMarkerMz(currentIonImage_->mz);   // show which m/z is imaged
+    }
+    updateControls();
+    if (extractionPending_) extractIonImage();   // run the most recent queued click
+  }
+
+  void ImagingPanelWidget::finishAggregate()
+  {
+    if (activeAggregate_ != dataGeneration_)
+    {
+      launchAggregate();   // dataset changed while scanning; recompute for the current one
       return;
     }
-    currentIonImage_ = std::move(result);
-    displayMode_->setCurrentIndex(1);
-    image_->setImage(currentIonImage_->intensities, currentIonImage_->mask,
-      tr("Ion image · m/z %1 ± %2 ppm").arg(currentIonImage_->mz, 0, 'f', 5)
-                                            .arg(currentIonImage_->tolerancePpm, 0, 'f', 1));
-    info_->setText(tr("Extracted m/z %1 ± %2 ppm")
-      .arg(currentIonImage_->mz, 0, 'f', 5).arg(currentIonImage_->tolerancePpm, 0, 'f', 1));
-    updateControls();
+    aggregateData_ = aggregateWatcher_.result();
+    updateAggregateDisplay(false);
+  }
+
+  void ImagingPanelWidget::updateAggregateDisplay(bool keepView)
+  {
+    if (!aggregate_) return;
+    const bool useMax = aggregateMode_ && aggregateMode_->currentIndex() == 1;
+    const std::vector<double>& values = useMax ? aggregateData_.maxIntensity : aggregateData_.mean;
+    aggregate_->setSpectrum(aggregateData_.mz, values,
+      useMax ? tr("Aggregate spectrum (max / skyline) — click a peak to image it")
+             : tr("Aggregate spectrum (mean) — click a peak to image it"),
+      keepView);
+    // The marker reflects the ion image actually displayed, not the raw spinbox value.
+    aggregate_->setMarkerMz(currentIonImage_
+      ? std::optional<double>(currentIonImage_->mz) : std::nullopt);
+  }
+
+  void ImagingPanelWidget::browseToPeak(double mz)
+  {
+    if (!store_) return;
+    mz_->setValue(mz);
+    aggregate_->setMarkerMz(mz);
+    extractIonImage();
   }
 
   void ImagingPanelWidget::addOverlay()

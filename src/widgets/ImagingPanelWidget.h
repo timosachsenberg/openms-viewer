@@ -19,6 +19,7 @@ class QDoubleSpinBox;
 class QLabel;
 class QMouseEvent;
 class QPushButton;
+class QWheelEvent;
 
 namespace OpenMSViewer
 {
@@ -80,6 +81,45 @@ namespace OpenMSViewer
     std::optional<std::size_t> selectedSpectrum_;
   };
 
+  // Whole-image mean/skyline spectrum with click-to-browse: clicking a peak sets
+  // the ion-image m/z and extracts it, which is how MSI data is explored.
+  class AggregateSpectrumWidget final : public QWidget
+  {
+    Q_OBJECT
+
+  public:
+    explicit AggregateSpectrumWidget(QWidget* parent = nullptr);
+
+    void setSpectrum(std::vector<double> mz, std::vector<double> intensity, QString title,
+                     bool keepView = false);
+    void setMarkerMz(std::optional<double> mz);
+    void clear();
+
+  signals:
+    void peakSelected(double mz);
+
+  protected:
+    void paintEvent(QPaintEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void leaveEvent(QEvent* event) override;
+
+  private:
+    [[nodiscard]] QRect plotRect() const;
+    [[nodiscard]] std::pair<double, double> viewRange() const;
+    [[nodiscard]] std::optional<std::size_t> peakAt(double x) const;
+
+    std::vector<double> mz_;          // occupied-bin centres, ascending
+    std::vector<double> intensity_;
+    QString title_;
+    double intensityMax_{0.0};
+    std::optional<std::pair<double, double>> view_;   // zoomed m/z range
+    std::optional<double> markerMz_;                  // the currently-imaged m/z
+    std::optional<QPoint> hoverPos_;
+  };
+
   class ImagingPanelWidget final : public QWidget
   {
     Q_OBJECT
@@ -102,6 +142,7 @@ namespace OpenMSViewer
   private slots:
     void extractIonImage();
     void finishExtraction();
+    void finishAggregate();
     void addOverlay();
     void clearOverlay();
 
@@ -109,6 +150,9 @@ namespace OpenMSViewer
     void showTicImage();
     void showOverlay();
     void updateControls();
+    void launchAggregate();
+    void updateAggregateDisplay(bool keepView);
+    void browseToPeak(double mz);
 
     struct OverlayEntry
     {
@@ -132,8 +176,14 @@ namespace OpenMSViewer
     QPushButton* clearOverlay_{nullptr};
     QLabel* info_{nullptr};
     ImagingImageWidget* image_{nullptr};
+    AggregateSpectrumWidget* aggregate_{nullptr};
+    QComboBox* aggregateMode_{nullptr};    // Mean vs Max (skyline)
+    AggregateSpectrum aggregateData_;
     QFutureWatcher<ImagingImageResult> extractionWatcher_;
+    QFutureWatcher<AggregateSpectrum> aggregateWatcher_;
     std::uint64_t dataGeneration_{0};      // bumped whenever the dataset changes
     std::uint64_t activeExtraction_{0};    // dataGeneration_ the in-flight extraction was launched for
+    std::uint64_t activeAggregate_{0};     // dataGeneration_ the in-flight aggregate was launched for
+    bool extractionPending_{false};        // a click arrived while an extraction was running
   };
 }

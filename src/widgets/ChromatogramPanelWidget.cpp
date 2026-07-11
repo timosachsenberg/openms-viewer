@@ -332,7 +332,9 @@ namespace OpenMSViewer
       {
         if (index >= chromatograms_.size()) continue;
         const auto& record = chromatograms_[index];
-        if (record.points.empty()) continue;
+        // Empty records still consume a colour slot in the draw/legend loops, so
+        // advance here too (skipping without advancing would offset the palette).
+        if (record.points.empty()) { ++traceColor; continue; }
         // Points are RT-sorted, so map the cursor x back to a target RT and binary
         // search the nearest sample (O(log n)) rather than rescanning every point.
         const double targetRt = rtMinimum

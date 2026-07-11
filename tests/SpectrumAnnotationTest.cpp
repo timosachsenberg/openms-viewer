@@ -35,6 +35,14 @@ private slots:
     // Charge magnitude is parsed order-independently: "+2", "2+" and "++" all mean 2+.
     QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[M+H]+2")), QStringLiteral("[M+H]²⁺"));
     QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[M+H]++")), QStringLiteral("[M+H]²⁺"));
+    QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[M+2H]2-")), QStringLiteral("[M+2H]²⁻"));
+    // Non-charge suffixes (mixed/interleaved signs, no charge, trailing text) stay verbatim.
+    QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[M]+-")), QStringLiteral("[M]+-"));
+    QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[M+H]")), QStringLiteral("[M+H]"));
+    QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[M+H]+extra")), QStringLiteral("[M+H]+extra"));
+    QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[M]2+3")), QStringLiteral("[M]2+3"));
+    QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[M]+++2")), QStringLiteral("[M]+++2"));
+    QCOMPARE(OpenMSViewer::formatIonLabel(QStringLiteral("[M+H]0")), QStringLiteral("[M+H]0"));
   }
 
   void prioritizesExternalPeakAnnotations()

@@ -3,6 +3,8 @@
 #include <OpenMS/CHEMISTRY/AASequence.h>
 #include <OpenMS/CHEMISTRY/TheoreticalSpectrumGenerator.h>
 
+#include <QRegularExpression>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -104,27 +106,34 @@ namespace OpenMSViewer
       // The trailing charge may be written as "2+", "+2", "+", or "++"; parse the
       // sign and magnitude order-independently so it renders like the fragment-ion
       // path (superscript magnitude then sign, magnitude 1 hidden).
+      // A clean trailing charge is exactly one of: digits then a single sign
+      // ("2+"), a single sign then digits ("+2"), or a run of identical signs
+      // ("+", "++"). Anything else — mixed signs, interleaved/split digits,
+      // trailing text — is not a charge token, so keep the label verbatim.
       const QString suffix = name.mid(close + 1);
+      // \A…\z (not ^…$) so a stray trailing newline can't slip past the anchor.
+      static const QRegularExpression digitsThenSign(QStringLiteral("\\A(\\d+)([+-])\\z"));
+      static const QRegularExpression signThenDigits(QStringLiteral("\\A([+-])(\\d+)\\z"));
+      static const QRegularExpression signRun(QStringLiteral("\\A([+-])\\1*\\z"));
+      QString magnitude;
       QChar sign;
-      QString digits;
-      int signCount = 0;
-      bool onlyChargeChars = !suffix.isEmpty();
-      for (const QChar character : suffix)
+      if (const auto match = digitsThenSign.match(suffix); match.hasMatch())
       {
-        if (character == QLatin1Char('+') || character == QLatin1Char('-'))
-        {
-          sign = character;
-          ++signCount;
-        }
-        else if (character.isDigit())
-          digits += character;
-        else
-          onlyChargeChars = false;
+        magnitude = match.captured(1);
+        sign = match.captured(2).at(0);
       }
-      // Not a clean charge token (e.g. "[alpha|ci$y3]") — keep the label verbatim.
-      if (!onlyChargeChars || signCount == 0) return name;
-      const QString magnitude = !digits.isEmpty() ? digits
-        : (signCount > 1 ? QString::number(signCount) : QString());
+      else if (const auto match = signThenDigits.match(suffix); match.hasMatch())
+      {
+        sign = match.captured(1).at(0);
+        magnitude = match.captured(2);
+      }
+      else if (const auto match = signRun.match(suffix); match.hasMatch())
+      {
+        sign = match.captured(1).at(0);
+        if (suffix.size() > 1) magnitude = QString::number(suffix.size());
+      }
+      else
+        return name;
       QString charge;
       for (const QChar digit : magnitude) charge += superscript(digit);
       charge += sign == QLatin1Char('+') ? QStringLiteral("⁺") : QStringLiteral("⁻");

@@ -83,27 +83,20 @@ namespace OpenMSViewer
     card->setGraphicsEffect(effect);
     stack_->addWidget(card);
 
-    // Evict the oldest live toasts once the stack is full so the corner stays
-    // tidy. dismiss() marks a card as "dismissing" synchronously (its removal is
-    // deferred behind a fade), so counting only non-dismissing cards guarantees
-    // this loop terminates.
-    while (activeToastCount() > kMaxVisibleToasts)
+    // Bound the TOTAL number of cards in the layout — including any still mid
+    // fade-out — so a burst (or four toasts expiring just as four more arrive)
+    // can never overflow the corner. The oldest card is item 0; hard-remove it
+    // (no fade), cutting any in-flight fade short to make room. removeWidget is
+    // synchronous, so the loop always terminates.
+    while (stack_->count() > kMaxVisibleToasts)
     {
-      QWidget* oldest = nullptr;
-      for (int index = 0; index < stack_->count(); ++index)
-      {
-        const QLayoutItem* item = stack_->itemAt(index);
-        if (item && item->widget() && !item->widget()->property("dismissing").toBool())
-        {
-          oldest = item->widget();
-          break;
-        }
-      }
+      QLayoutItem* item = stack_->itemAt(0);
+      QWidget* oldest = item ? item->widget() : nullptr;
       if (!oldest) break;
-      // Hard-remove immediately (no fade). A synchronous burst never spins the
-      // event loop, so an animated dismiss would leave evicted cards parked in
-      // the layout and the overlay would balloon past the cap.
       oldest->setProperty("dismissing", true);
+      // hide() first: removeWidget alone leaves the card painted at its old
+      // geometry until the deferred deleteLater runs (never, within a burst).
+      oldest->hide();
       stack_->removeWidget(oldest);
       oldest->deleteLater();
     }

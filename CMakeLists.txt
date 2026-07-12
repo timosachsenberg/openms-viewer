@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.24)
 
 project(OpenMSViewer VERSION 0.1.0 LANGUAGES CXX)
 
+# Dual build modes. Standalone (top-level) resolves OpenMS/Qt and owns its own
+# packaging. Embedded — added via add_subdirectory() from a parent build such as
+# OpenMS's release pipeline — reuses the parent's already-configured OpenMS/Qt
+# targets and lets the parent own install layout, deployment, signing and CPack.
+set(OPENMS_VIEWER_STANDALONE ${PROJECT_IS_TOP_LEVEL})
+
 if(POLICY CMP0167)
   cmake_policy(SET CMP0167 NEW)
 endif()
@@ -13,15 +19,23 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+if(OPENMS_VIEWER_STANDALONE)
+  if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+  endif()
+
+  # Development OpenMS exports commonly provide only a Release location.
+  set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release)
+  set(CMAKE_MAP_IMPORTED_CONFIG_DEBUG Release)
 endif()
 
-# Development OpenMS exports commonly provide only a Release location.
-set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release)
-set(CMAKE_MAP_IMPORTED_CONFIG_DEBUG Release)
-
-find_package(OpenMS CONFIG REQUIRED)
+# OpenMS is already a target when embedded in the OpenMS build tree; only resolve
+# it for standalone builds. Pin to the 3.6 series as a range (OpenMS has no
+# cross-minor ABI). Embedded builds link whatever OpenMS the parent provides.
+if(NOT TARGET OpenMS)
+  find_package(OpenMS 3.6...<3.7 CONFIG REQUIRED)
+endif()
+# Qt is needed in both modes; find_package is idempotent if the parent already ran it.
 find_package(Qt6 6.4 REQUIRED COMPONENTS Concurrent Gui Widgets)
 
 add_library(openms_viewer_core STATIC
@@ -114,15 +128,39 @@ set_target_properties(openms-viewer PROPERTIES
   MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
 )
 
-include(GNUInstallDirs)
-install(TARGETS openms-viewer
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  BUNDLE DESTINATION .
-)
-install(FILES README.md LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
-install(DIRECTORY docs/ DESTINATION ${CMAKE_INSTALL_DOCDIR})
+if(OPENMS_VIEWER_STANDALONE)
+  # GNUInstallDirs is included here (not in embedded mode): it seeds global
+  # CMAKE_INSTALL_* cache entries — including CMAKE_INSTALL_DOCDIR derived from
+  # PROJECT_NAME — which would otherwise leak into the parent build.
+  include(GNUInstallDirs)
+  install(TARGETS openms-viewer
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    BUNDLE DESTINATION .
+  )
+  install(FILES README.md LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
+  install(DIRECTORY docs/ DESTINATION ${CMAKE_INSTALL_DOCDIR})
+else()
+  # Embedded: install into the parent's tree under a component it packages (the
+  # parent owns Qt/OpenMS deployment, bundling and signing). Default matches the
+  # OpenMS "applications" component; the parent may override. Reuse the parent's
+  # bindir if it set one, else fall back to "bin" without pulling in
+  # GNUInstallDirs (which would pollute the parent's install-path cache).
+  set(OPENMS_VIEWER_INSTALL_COMPONENT "applications" CACHE STRING
+      "Install component for openms-viewer when embedded in a parent build")
+  if(DEFINED CMAKE_INSTALL_BINDIR)
+    set(_openms_viewer_bindir "${CMAKE_INSTALL_BINDIR}")
+  else()
+    set(_openms_viewer_bindir "bin")
+  endif()
+  # COMPONENT must be attached per artifact kind — a single trailing COMPONENT
+  # binds only to the block it follows (e.g. BUNDLE), leaving RUNTIME Unspecified.
+  install(TARGETS openms-viewer
+    RUNTIME DESTINATION ${_openms_viewer_bindir} COMPONENT ${OPENMS_VIEWER_INSTALL_COMPONENT}
+    BUNDLE DESTINATION . COMPONENT ${OPENMS_VIEWER_INSTALL_COMPONENT}
+  )
+endif()
 
-option(OPENMS_VIEWER_BUILD_TESTS "Build OpenMS Viewer tests" ON)
+option(OPENMS_VIEWER_BUILD_TESTS "Build OpenMS Viewer tests" ${OPENMS_VIEWER_STANDALONE})
 if(OPENMS_VIEWER_BUILD_TESTS)
   enable_testing()
   find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
@@ -156,25 +194,29 @@ if(OPENMS_VIEWER_BUILD_TESTS)
   )
 endif()
 
-set(CPACK_PACKAGE_NAME "OpenMSViewer")
-set(CPACK_PACKAGE_VENDOR "OpenMS")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Standalone OpenMS mass-spectrometry data viewer")
-set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
-set(CPACK_PACKAGE_INSTALL_DIRECTORY "OpenMSViewer")
-set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
-set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
-set(CPACK_STRIP_FILES TRUE)
-if(WIN32)
-  set(CPACK_GENERATOR "ZIP;NSIS")
-  set(CPACK_NSIS_DISPLAY_NAME "OpenMS Viewer")
-  set(CPACK_NSIS_PACKAGE_NAME "OpenMS Viewer")
-elseif(APPLE)
-  set(CPACK_GENERATOR "DragNDrop;TGZ")
-  set(CPACK_DMG_VOLUME_NAME "OpenMS Viewer")
-else()
-  set(CPACK_GENERATOR "TGZ;DEB")
-  set(CPACK_DEBIAN_PACKAGE_MAINTAINER "OpenMS developers")
-  set(CPACK_DEBIAN_PACKAGE_SECTION "science")
-  set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+# Standalone packaging only. When embedded, the parent build (e.g. OpenMS) owns
+# CPack; running include(CPack) here would clash with the parent's generators.
+if(OPENMS_VIEWER_STANDALONE)
+  set(CPACK_PACKAGE_NAME "OpenMSViewer")
+  set(CPACK_PACKAGE_VENDOR "OpenMS")
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Standalone OpenMS mass-spectrometry data viewer")
+  set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+  set(CPACK_PACKAGE_INSTALL_DIRECTORY "OpenMSViewer")
+  set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+  set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
+  set(CPACK_STRIP_FILES TRUE)
+  if(WIN32)
+    set(CPACK_GENERATOR "ZIP;NSIS")
+    set(CPACK_NSIS_DISPLAY_NAME "OpenMS Viewer")
+    set(CPACK_NSIS_PACKAGE_NAME "OpenMS Viewer")
+  elseif(APPLE)
+    set(CPACK_GENERATOR "DragNDrop;TGZ")
+    set(CPACK_DMG_VOLUME_NAME "OpenMS Viewer")
+  else()
+    set(CPACK_GENERATOR "TGZ;DEB")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "OpenMS developers")
+    set(CPACK_DEBIAN_PACKAGE_SECTION "science")
+    set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+  endif()
+  include(CPack)
 endif()
-include(CPack)

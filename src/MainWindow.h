@@ -223,6 +223,7 @@ namespace OpenMSViewer
     QAction* showIdentificationsAction_{nullptr};
     QAction* showIdentificationSequencesAction_{nullptr};
     QAction* showConsensusAction_{nullptr};
+    QAction* showPrecursorsAction_{nullptr};
     QAction* clearFeatureOverlayAction_{nullptr};
     QAction* clearIdentificationOverlayAction_{nullptr};
     QAction* annotateSpectrumAction_{nullptr};

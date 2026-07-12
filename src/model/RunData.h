@@ -22,6 +22,8 @@ namespace OpenMSViewer
     std::optional<double> compensationVoltage;
     std::optional<double> precursorMz;
     int precursorCharge{0};
+    double isolationLowerOffset{0.0};  ///< precursorMz - offset = isolation window low m/z
+    double isolationUpperOffset{0.0};  ///< precursorMz + offset = isolation window high m/z
     std::optional<std::size_t> identificationIndex;
   };
 

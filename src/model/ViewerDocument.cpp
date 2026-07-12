@@ -171,8 +171,11 @@ namespace OpenMSViewer
         record.compensationVoltage = compensationVoltage(spectrum);
         if (level > 1 && !spectrum.getPrecursors().empty())
         {
-          record.precursorMz = spectrum.getPrecursors().front().getMZ();
-          record.precursorCharge = spectrum.getPrecursors().front().getCharge();
+          const auto& precursor = spectrum.getPrecursors().front();
+          record.precursorMz = precursor.getMZ();
+          record.precursorCharge = precursor.getCharge();
+          record.isolationLowerOffset = precursor.getIsolationWindowLowerOffset();
+          record.isolationUpperOffset = precursor.getIsolationWindowUpperOffset();
         }
         if (!spectrum.empty())
         {

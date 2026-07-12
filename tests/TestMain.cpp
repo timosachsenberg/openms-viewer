@@ -6,6 +6,7 @@ int runFormatRegistryTests(int argc, char** argv);
 int runRichFormatsTests(int argc, char** argv);
 int runOswStoreTests(int argc, char** argv);
 int runChromatogramSourceTests(int argc, char** argv);
+int runPrecursorOverlayTests(int argc, char** argv);
 int runTraceSmoothingTests(int argc, char** argv);
 int runOswPanelTests(int argc, char** argv);
 int runConsensusDocumentTests(int argc, char** argv);
@@ -37,6 +38,7 @@ int main(int argc, char** argv)
   status |= runRichFormatsTests(argc, argv);
   status |= runOswStoreTests(argc, argv);
   status |= runChromatogramSourceTests(argc, argv);
+  status |= runPrecursorOverlayTests(argc, argv);
   status |= runTraceSmoothingTests(argc, argv);
   status |= runOswPanelTests(argc, argv);
   status |= runConsensusDocumentTests(argc, argv);

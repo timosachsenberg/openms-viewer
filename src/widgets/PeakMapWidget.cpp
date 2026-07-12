@@ -378,6 +378,20 @@ namespace OpenMSViewer
     update();
   }
 
+  void PeakMapWidget::setPrecursorMarkers(std::vector<PrecursorMarker> markers)
+  {
+    precursorMarkers_ = std::move(markers);
+    hoveredPrecursor_.reset();
+    update();
+  }
+
+  void PeakMapWidget::setShowPrecursors(bool show)
+  {
+    showPrecursors_ = show;
+    if (!show) hoveredPrecursor_.reset();
+    update();
+  }
+
   void PeakMapWidget::zoomToConsensus(std::size_t consensusIndex)
   {
     if (!experiment_ || consensusIndex >= consensusFeatures_.size()) return;
@@ -649,6 +663,7 @@ namespace OpenMSViewer
     }
 
     drawConsensus(painter);  // approximate multi-run context, under the precise overlays
+    drawPrecursors(painter);
     drawFeatures(painter);
     drawIdentifications(painter);
     drawLegend(painter, area);
@@ -923,6 +938,90 @@ namespace OpenMSViewer
     painter.restore();
   }
 
+  void PeakMapWidget::drawPrecursors(QPainter& painter) const
+  {
+    if (!showPrecursors_ || precursorMarkers_.empty()) return;
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setClipRect(plotRect());
+    std::size_t drawn = 0;
+    for (std::size_t index = 0; index < precursorMarkers_.size(); ++index)
+    {
+      if (drawn >= 20000) break;
+      const PrecursorMarker& marker = precursorMarkers_[index];
+      if (!std::isfinite(marker.rt) || !std::isfinite(marker.mz)) continue;
+      if (marker.rt < view_.rtMin || marker.rt > view_.rtMax
+          || marker.upperMz < view_.mzMin || marker.lowerMz > view_.mzMax) continue;
+      ++drawn;
+
+      const bool hovered = hoveredPrecursor_ && *hoveredPrecursor_ == index;
+      // Magenta so it reads against the viridis raster and stays distinct from the
+      // green/orange/amber feature/id/consensus overlays.
+      const QColor color = hovered ? QColor(255, 120, 220) : QColor(214, 90, 190);
+
+      // Dashed isolation window: an m/z segment (low..high) at the scan RT. Its
+      // screen orientation depends on the axis swap, so caps are drawn perpendicular
+      // to the segment rather than assuming it is vertical.
+      const bool hasWindow = marker.upperMz > marker.lowerMz;
+      if (hasWindow)
+      {
+        const QPointF low = pixelFor(marker.rt, marker.lowerMz);
+        const QPointF high = pixelFor(marker.rt, marker.upperMz);
+        QColor windowColor = color;
+        windowColor.setAlpha(hovered ? 230 : 150);
+        painter.setPen(QPen(windowColor, hovered ? 1.6 : 1.0, Qt::DashLine));
+        painter.drawLine(low, high);
+        const QPointF along = high - low;
+        const double length = std::hypot(along.x(), along.y());
+        if (length > 1e-6)
+        {
+          const QPointF cap(-along.y() / length * 3.0, along.x() / length * 3.0);
+          painter.drawLine(low - cap, low + cap);
+          painter.drawLine(high - cap, high + cap);
+        }
+      }
+
+      // Precursor position: a small filled circle at (RT, precursor m/z).
+      const QPointF centre = pixelFor(marker.rt, marker.mz);
+      const double radius = hovered ? 4.0 : 2.6;
+      painter.setPen(QPen(Qt::white, hovered ? 2 : 1));
+      painter.setBrush(color);
+      painter.drawEllipse(centre, radius, radius);
+    }
+    painter.restore();
+  }
+
+  std::optional<std::size_t> PeakMapWidget::nearestPrecursor(const QPointF& position) const
+  {
+    if (!showPrecursors_ || precursorMarkers_.empty() || !plotRect().contains(position.toPoint()))
+      return std::nullopt;
+    double bestSquaredDistance = 14.0 * 14.0;
+    std::optional<std::size_t> best;
+    // Mirror drawPrecursors' iteration + cull + cap exactly so the hittable set is
+    // always identical to the drawn set (drawn == clickable).
+    std::size_t visible = 0;
+    for (std::size_t index = 0; index < precursorMarkers_.size(); ++index)
+    {
+      if (visible >= 20000) break;
+      const PrecursorMarker& marker = precursorMarkers_[index];
+      if (!std::isfinite(marker.rt) || !std::isfinite(marker.mz)) continue;
+      if (marker.rt < view_.rtMin || marker.rt > view_.rtMax
+          || marker.upperMz < view_.mzMin || marker.lowerMz > view_.mzMax) continue;
+      ++visible;
+      const QPointF pixel = pixelFor(marker.rt, marker.mz);
+      const double dx = position.x() - pixel.x();
+      const double dy = position.y() - pixel.y();
+      const double squaredDistance = dx * dx + dy * dy;
+      if (squaredDistance < bestSquaredDistance)
+      {
+        bestSquaredDistance = squaredDistance;
+        best = index;
+      }
+    }
+    return best;
+  }
+
   std::optional<std::size_t> PeakMapWidget::nearestFeature(const QPointF& position) const
   {
     if (!showFeatureCentroids_ || features_.empty() || !plotRect().contains(position.toPoint()))
@@ -1042,6 +1141,14 @@ namespace OpenMSViewer
                << QPointF(center.x() - 4.5, center.y() + 4);
       painter.drawPolygon(triangle);
       painter.drawText(area.left() + 28, legendY + 12, tr("Consensus (dashed = envelope)"));
+      legendY += 18;
+    }
+    if (showPrecursors_ && !precursorMarkers_.empty())
+    {
+      painter.setPen(QPen(Qt::white, 1));
+      painter.setBrush(QColor(214, 90, 190));
+      painter.drawEllipse(QPointF(area.left() + 17, legendY + 6), 3, 3);
+      painter.drawText(area.left() + 28, legendY + 12, tr("MS/MS precursor (dashed = isolation)"));
     }
 
     const int barHeight = std::min(120, std::max(70, area.height() / 4));
@@ -1202,10 +1309,14 @@ namespace OpenMSViewer
     {
       const auto nearest = nearestFeature(event->position());
       const auto nearestId = nearest ? std::optional<std::size_t>{} : nearestIdentification(event->position());
-      if (nearest != hoveredFeature_ || nearestId != hoveredIdentification_)
+      const auto nearestPre = (nearest || nearestId) ? std::optional<std::size_t>{}
+                                                     : nearestPrecursor(event->position());
+      if (nearest != hoveredFeature_ || nearestId != hoveredIdentification_
+          || nearestPre != hoveredPrecursor_)
       {
         hoveredFeature_ = nearest;
         hoveredIdentification_ = nearestId;
+        hoveredPrecursor_ = nearestPre;
         if (nearest && *nearest < features_.size())
         {
           const FeatureRecord& feature = features_[*nearest];
@@ -1226,6 +1337,21 @@ namespace OpenMSViewer
                        .arg(identification.rt, 0, 'f', 2)
                        .arg(identification.mz, 0, 'f', 4)
                        .arg(sequence));
+          setCursor(Qt::PointingHandCursor);
+        }
+        else if (nearestPre && *nearestPre < precursorMarkers_.size())
+        {
+          const PrecursorMarker& marker = precursorMarkers_[*nearestPre];
+          QString window = tr("no isolation window");
+          if (marker.upperMz > marker.lowerMz)
+            window = tr("window %1–%2").arg(marker.lowerMz, 0, 'f', 2).arg(marker.upperMz, 0, 'f', 2);
+          setToolTip(tr("MS%1 precursor · scan #%2\nRT %3 s · m/z %4 · charge %5\n%6")
+                       .arg(marker.msLevel)
+                       .arg(marker.spectrumIndex + 1)
+                       .arg(marker.rt, 0, 'f', 2)
+                       .arg(marker.mz, 0, 'f', 4)
+                       .arg(marker.charge)
+                       .arg(window));
           setCursor(Qt::PointingHandCursor);
         }
         else
@@ -1287,7 +1413,7 @@ namespace OpenMSViewer
       }
       else if ((dragCurrent_ - dragStart_).manhattanLength() < 6)
       {
-        bool identificationWasActivated = false;
+        bool specificNavigation = false;
         if (const auto feature = nearestFeature(dragCurrent_))
         {
           selectedFeature_ = feature;
@@ -1297,12 +1423,17 @@ namespace OpenMSViewer
         {
           selectedIdentification_ = identification;
           emit identificationActivated(*identification);
-          identificationWasActivated = true;
+          specificNavigation = true;
         }
-        // Identification activation already navigates to its specifically linked
-        // MS/MS spectrum. A generic nearest-RT activation would often replace it
-        // with an adjacent MS1 scan.
-        if (!identificationWasActivated) emit rtActivated(dataAt(dragCurrent_).x());
+        else if (const auto precursor = nearestPrecursor(dragCurrent_))
+        {
+          emit precursorActivated(precursorMarkers_[*precursor].spectrumIndex);
+          specificNavigation = true;
+        }
+        // Identification / precursor activation already navigates to a specific MS/MS
+        // scan. A generic nearest-RT activation would often replace it with an
+        // adjacent MS1 scan.
+        if (!specificNavigation) emit rtActivated(dataAt(dragCurrent_).x());
       }
     }
     update();
@@ -1324,6 +1455,7 @@ namespace OpenMSViewer
   {
     hoveredFeature_.reset();
     hoveredIdentification_.reset();
+    hoveredPrecursor_.reset();
     setToolTip({});
     unsetCursor();
     emit cursorLeft();

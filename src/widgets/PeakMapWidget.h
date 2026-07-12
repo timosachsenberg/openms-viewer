@@ -23,6 +23,19 @@ namespace OpenMSViewer
 {
   enum class PeakMapInteractionMode { Zoom, Pan, Measure };
 
+  // One MS/MS precursor as an overlay marker: the isolation window (m/z low..high)
+  // at the fragmentation scan's RT, plus the selected precursor m/z and charge.
+  struct PrecursorMarker
+  {
+    std::size_t spectrumIndex{0};
+    double rt{0.0};
+    double mz{0.0};
+    double lowerMz{0.0};  ///< isolation window low edge (== mz when no window defined)
+    double upperMz{0.0};  ///< isolation window high edge
+    int charge{0};
+    unsigned int msLevel{2};
+  };
+
   class PeakMapWidget final : public QWidget
   {
     Q_OBJECT
@@ -45,6 +58,7 @@ namespace OpenMSViewer
     // (dashed envelope + diamond) from single-run features to signal the approximation.
     void setConsensusFeatures(const std::vector<ConsensusFeatureRecord>& features);
     void setSelectedConsensus(std::optional<std::size_t> consensusIndex);
+    void setPrecursorMarkers(std::vector<PrecursorMarker> markers);
 
     [[nodiscard]] bool axesSwapped() const noexcept;
     [[nodiscard]] PeakMapColorMap colorMap() const noexcept;
@@ -84,12 +98,14 @@ namespace OpenMSViewer
     void zoomToIdentification(std::size_t identificationIndex);
     void setShowConsensus(bool show);
     void zoomToConsensus(std::size_t consensusIndex);
+    void setShowPrecursors(bool show);
 
   signals:
     void viewRangeChanged(const OpenMSViewer::PlotRange& range);
     void rtActivated(double rt);
     void featureActivated(std::size_t featureIndex);
     void identificationActivated(std::size_t identificationIndex);
+    void precursorActivated(std::size_t spectrumIndex);
     void zoomHistoryChanged(bool canGoBack);
     void interactionModeChanged(int modeIndex);
     void cursorPositionChanged(double rt, double mz, double intensity);
@@ -123,10 +139,12 @@ namespace OpenMSViewer
     void drawFeatures(QPainter& painter) const;
     void drawIdentifications(QPainter& painter) const;
     void drawConsensus(QPainter& painter) const;
+    void drawPrecursors(QPainter& painter) const;
     void drawLegend(QPainter& painter, const QRect& area) const;
     void updateInteractionCursor();
     [[nodiscard]] std::optional<std::size_t> nearestFeature(const QPointF& position) const;
     [[nodiscard]] std::optional<std::size_t> nearestIdentification(const QPointF& position) const;
+    [[nodiscard]] std::optional<std::size_t> nearestPrecursor(const QPointF& position) const;
     [[nodiscard]] double nearestIntensity(double rt, double mz) const;
 
     std::shared_ptr<const OpenMS::MSExperiment> experiment_;
@@ -156,6 +174,9 @@ namespace OpenMSViewer
     std::vector<ConsensusFeatureRecord> consensusFeatures_;
     std::optional<std::size_t> selectedConsensus_;
     bool showConsensus_{true};
+    std::vector<PrecursorMarker> precursorMarkers_;
+    std::optional<std::size_t> hoveredPrecursor_;  // index into precursorMarkers_
+    bool showPrecursors_{false};
 
     QTimer renderTimer_;
     QFutureWatcher<QImage> renderWatcher_;

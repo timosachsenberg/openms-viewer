@@ -194,6 +194,7 @@ if(OPENMS_VIEWER_BUILD_TESTS)
     tests/RichFormatsTest.cpp
     tests/OswStoreTest.cpp
     tests/ChromatogramSourceTest.cpp
+    tests/PrecursorOverlayTest.cpp
     tests/TraceSmoothingTest.cpp
     tests/OswPanelTest.cpp
     tests/ConsensusDocumentTest.cpp

@@ -328,6 +328,7 @@ namespace OpenMSViewer
     {
       selectIdentification(index, 0);
     });
+    connect(peakMap_, &PeakMapWidget::precursorActivated, this, &MainWindow::selectSpectrum);
     // SelectionController is the single source of truth: its signals drive the
     // per-panel leaf appliers, so any selection source updates every panel.
     connect(&selection_, &SelectionController::spectrumChanged,
@@ -733,6 +734,13 @@ namespace OpenMSViewer
     connect(showConsensusAction_, &QAction::toggled,
             peakMap_, &PeakMapWidget::setShowConsensus);
 
+    showPrecursorsAction_ = new QAction(tr("MS/MS precursors + isolation windows"), this);
+    showPrecursorsAction_->setCheckable(true);
+    showPrecursorsAction_->setChecked(false);
+    showPrecursorsAction_->setEnabled(false);
+    connect(showPrecursorsAction_, &QAction::toggled,
+            peakMap_, &PeakMapWidget::setShowPrecursors);
+
     clearFeatureOverlayAction_ = new QAction(tr("Clear feature overlay"), this);
     connect(clearFeatureOverlayAction_, &QAction::triggered, this, [this]
     {
@@ -991,6 +999,7 @@ namespace OpenMSViewer
     overlayMenu->addAction(showIdentificationsAction_);
     overlayMenu->addAction(showIdentificationSequencesAction_);
     overlayMenu->addSeparator();
+    overlayMenu->addAction(showPrecursorsAction_);
     overlayMenu->addAction(showConsensusAction_);
     overlayMenu->addSeparator();
     overlayMenu->addAction(clearFeatureOverlayAction_);
@@ -1295,6 +1304,8 @@ namespace OpenMSViewer
     consensusSourcePath_.clear();
     if (peakMap_) peakMap_->setConsensusFeatures({});
     if (showConsensusAction_) showConsensusAction_->setEnabled(false);
+    if (peakMap_) peakMap_->setPrecursorMarkers({});
+    if (showPrecursorsAction_) showPrecursorsAction_->setEnabled(false);
   }
 
   void MainWindow::showDataPage()
@@ -2259,6 +2270,8 @@ namespace OpenMSViewer
     document_.clear();
     closeSurface3D();
     peakMap_->clear();
+    peakMap_->setPrecursorMarkers({});  // the imaging run has no MS/MS precursors
+    showPrecursorsAction_->setEnabled(false);
     tic_->clear();
     spectrum_->clear();
     spectra_->clear();
@@ -2309,6 +2322,25 @@ namespace OpenMSViewer
     const auto experiment = document_.experimentHandle();
     closeSurface3D();   // the previous run's surface no longer applies
     peakMap_->setExperiment(experiment, document_.bounds());
+
+    // MS/MS precursor + isolation-window overlay markers (one per MS2+ scan).
+    std::vector<PrecursorMarker> precursorMarkers;
+    for (const SpectrumRecord& spectrum : document_.spectra())
+    {
+      if (spectrum.msLevel <= 1 || !spectrum.precursorMz) continue;
+      PrecursorMarker marker;
+      marker.spectrumIndex = spectrum.index;
+      marker.rt = spectrum.rt;
+      marker.mz = *spectrum.precursorMz;
+      marker.lowerMz = *spectrum.precursorMz - spectrum.isolationLowerOffset;
+      marker.upperMz = *spectrum.precursorMz + spectrum.isolationUpperOffset;
+      marker.charge = spectrum.precursorCharge;
+      marker.msLevel = spectrum.msLevel;
+      precursorMarkers.push_back(marker);
+    }
+    const bool hasPrecursors = !precursorMarkers.empty();
+    peakMap_->setPrecursorMarkers(std::move(precursorMarkers));
+    showPrecursorsAction_->setEnabled(hasPrecursors);
     setPeakMapControlsEnabled(experiment != nullptr);
     tic_->setTrace(document_.tic(), document_.ticLabel());
     tic_->setPeakMapRange(document_.bounds());

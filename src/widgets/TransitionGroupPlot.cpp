@@ -129,7 +129,11 @@ namespace OpenMSViewer
       if (std::isfinite(group.leftWidth)) rtMin = std::min(rtMin, group.leftWidth);
       if (std::isfinite(group.rightWidth)) rtMax = std::max(rtMax, group.rightWidth);
     }
-    if (!std::isfinite(rtMin) || !std::isfinite(rtMax) || rtMax <= rtMin) { rtMin = 0.0; rtMax = 1.0; }
+    // Keep a degenerate-but-finite RT range (single-point or all-identical-RT
+    // traces) centred on its value instead of collapsing to [0,1], which would
+    // push a real RT (e.g. 305 s) far off-screen.
+    if (!std::isfinite(rtMin) || !std::isfinite(rtMax)) { rtMin = 0.0; rtMax = 1.0; }
+    else if (rtMax <= rtMin) { rtMin -= 0.5; rtMax += 0.5; }
     if (!(intensityMax > 0.0)) intensityMax = 1.0;
 
     const auto mapX = [&](double rt)

@@ -151,6 +151,12 @@ namespace OpenMSViewer
     void clearFeatures();
     void clearIdentifications();
 
+    // Write the currently loaded feature map / identifications back to a native
+    // OpenMS format (featureXML / idXML). Returns false with @p error set on failure
+    // or when there is nothing to save. The in-memory maps carry any edits.
+    [[nodiscard]] bool saveFeatures(const QString& path, QString& error) const;
+    [[nodiscard]] bool saveIdentifications(const QString& path, QString& error) const;
+
     [[nodiscard]] bool isEmpty() const noexcept;
     [[nodiscard]] const QString& sourcePath() const noexcept;
     [[nodiscard]] const PlotRange& bounds() const noexcept;

@@ -124,4 +124,23 @@ namespace OpenMSViewer::ConsensusDocument
                          handle.getCharge()});
     return handles;
   }
+
+  bool save(const OpenMS::ConsensusMap& map, const QString& path, QString& error)
+  {
+    try
+    {
+      OpenMS::FileHandler().storeConsensusFeatures(path.toStdString(), map);
+      return true;
+    }
+    catch (const std::exception& exception)
+    {
+      error = QStringLiteral("Could not save consensus map: %1")
+                .arg(QString::fromLocal8Bit(exception.what()));
+    }
+    catch (...)
+    {
+      error = QStringLiteral("Could not save consensus map (unknown error).");
+    }
+    return false;
+  }
 }

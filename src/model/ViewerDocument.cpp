@@ -809,6 +809,55 @@ namespace OpenMSViewer
     emit identificationsChanged();
   }
 
+  bool ViewerDocument::saveFeatures(const QString& path, QString& error) const
+  {
+    if (!featureMap_)
+    {
+      error = QStringLiteral("No feature map is loaded.");
+      return false;
+    }
+    try
+    {
+      OpenMS::FeatureXMLFile().store(path.toStdString(), *featureMap_);
+      return true;
+    }
+    catch (const std::exception& exception)
+    {
+      error = QStringLiteral("Could not save features: %1")
+                .arg(QString::fromLocal8Bit(exception.what()));
+    }
+    catch (...)
+    {
+      error = QStringLiteral("Could not save features (unknown error).");
+    }
+    return false;
+  }
+
+  bool ViewerDocument::saveIdentifications(const QString& path, QString& error) const
+  {
+    if (!identificationStore_)
+    {
+      error = QStringLiteral("No identifications are loaded.");
+      return false;
+    }
+    try
+    {
+      OpenMS::IdXMLFile().store(path.toStdString(), identificationStore_->proteinIdentifications,
+                                identificationStore_->peptideIdentifications);
+      return true;
+    }
+    catch (const std::exception& exception)
+    {
+      error = QStringLiteral("Could not save identifications: %1")
+                .arg(QString::fromLocal8Bit(exception.what()));
+    }
+    catch (...)
+    {
+      error = QStringLiteral("Could not save identifications (unknown error).");
+    }
+    return false;
+  }
+
   bool ViewerDocument::isEmpty() const noexcept { return experiment_ == nullptr; }
   const QString& ViewerDocument::sourcePath() const noexcept { return sourcePath_; }
   const PlotRange& ViewerDocument::bounds() const noexcept { return bounds_; }

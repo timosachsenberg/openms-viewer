@@ -103,6 +103,12 @@ namespace OpenMSViewer
     void showDataPage();
     void updateRunContext();
     void updateWindowTitle();
+    void saveFeatures();
+    void saveIdentifications();
+    void saveConsensus();
+    void updateSaveActions();
+    [[nodiscard]] QString askSavePath(const QString& title, const QString& sourcePath,
+                                      const QString& fallbackStem, const QString& suffix);
     // Consensus peak-map overlay: highlight on selection, and on activation drill
     // from a consensus feature down to the source scan in the loaded raw run.
     void onConsensusFeatureActivated(qint64 index);
@@ -206,6 +212,9 @@ namespace OpenMSViewer
     QAction* reloadAction_{nullptr};
     QAction* closeDataAction_{nullptr};
     QAction* exportMzMLAction_{nullptr};
+    QAction* saveFeaturesAction_{nullptr};
+    QAction* saveIdentificationsAction_{nullptr};
+    QAction* saveConsensusAction_{nullptr};
     QAction* zoomBackAction_{nullptr};
     QAction* resetViewAction_{nullptr};
     QAction* spectrumFirstAction_{nullptr};

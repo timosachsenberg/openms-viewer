@@ -620,6 +620,16 @@ namespace OpenMSViewer
     exportMzMLAction_->setEnabled(false);
     connect(exportMzMLAction_, &QAction::triggered, this, &MainWindow::exportMzML);
 
+    saveFeaturesAction_ = new QAction(tr("Save features as…"), this);
+    saveFeaturesAction_->setEnabled(false);
+    connect(saveFeaturesAction_, &QAction::triggered, this, &MainWindow::saveFeatures);
+    saveIdentificationsAction_ = new QAction(tr("Save identifications as…"), this);
+    saveIdentificationsAction_->setEnabled(false);
+    connect(saveIdentificationsAction_, &QAction::triggered, this, &MainWindow::saveIdentifications);
+    saveConsensusAction_ = new QAction(tr("Save consensus map as…"), this);
+    saveConsensusAction_->setEnabled(false);
+    connect(saveConsensusAction_, &QAction::triggered, this, &MainWindow::saveConsensus);
+
     auto* quitAction = new QAction(tr("Quit"), this);
     quitAction->setShortcut(QKeySequence::Quit);
     connect(quitAction, &QAction::triggered, this, &QWidget::close);
@@ -864,6 +874,11 @@ namespace OpenMSViewer
     fileMenu->addAction(reloadAction_);
     recentFilesMenu_ = fileMenu->addMenu(tr("Open recent"));
     fileMenu->addAction(closeDataAction_);
+    fileMenu->addSeparator();
+    fileMenu->addSeparator();
+    fileMenu->addAction(saveFeaturesAction_);
+    fileMenu->addAction(saveIdentificationsAction_);
+    fileMenu->addAction(saveConsensusAction_);
     fileMenu->addSeparator();
     auto* exportMenu = fileMenu->addMenu(tr("Export"));
     exportMenu->addAction(exportMzMLAction_);
@@ -1294,6 +1309,9 @@ namespace OpenMSViewer
     centralStack_->setCurrentWidget(welcome_);
     setPeakMapControlsEnabled(false);
     closeDataAction_->setEnabled(false);
+    if (saveFeaturesAction_) saveFeaturesAction_->setEnabled(false);
+    if (saveIdentificationsAction_) saveIdentificationsAction_->setEnabled(false);
+    if (saveConsensusAction_) saveConsensusAction_->setEnabled(false);
     setDockAvailable(ticDock_, false);
     setDockAvailable(spectrumDock_, false);
     setDockAvailable(featuresDock_, false);
@@ -1536,7 +1554,18 @@ namespace OpenMSViewer
       setDockAvailable(metadataDock_, document_.experimentHandle() != nullptr);
     }
     setDockAvailable(logDock_, true);
+    // Re-sync the save actions to the actual data: resetDockLayout can route through
+    // showWelcomePage (which disables them) even when only an overlay — no raw run —
+    // is loaded, which would otherwise leave a loaded map unsaveable.
+    updateSaveActions();
     statusBar()->showMessage(tr("Panel layout reset"), 3000);
+  }
+
+  void MainWindow::updateSaveActions()
+  {
+    saveFeaturesAction_->setEnabled(document_.hasFeatures());
+    saveIdentificationsAction_->setEnabled(document_.hasIdentifications());
+    saveConsensusAction_->setEnabled(hasConsensusData_);
   }
 
   void MainWindow::updateRunContext()
@@ -2025,6 +2054,7 @@ namespace OpenMSViewer
     consensus_->setData(std::move(result.map), std::move(result.features),
                         std::move(result.columns), result.experimentType);
     hasConsensusData_ = true;
+    saveConsensusAction_->setEnabled(true);
     lastPrimaryPath_ = sourcePath;
     rememberRecentFile(sourcePath);
     showDataPage();
@@ -2419,6 +2449,7 @@ namespace OpenMSViewer
     showCentroidsAction_->setEnabled(available);
     showFeatureBoundsAction_->setEnabled(available);
     showFeatureHullsAction_->setEnabled(available);
+    saveFeaturesAction_->setEnabled(available);
     setDockAvailable(featuresDock_, available);
     updateRunContext();
   }
@@ -2433,6 +2464,7 @@ namespace OpenMSViewer
     selection_.setIdentification(std::nullopt);
     showIdentificationsAction_->setEnabled(available);
     showIdentificationSequencesAction_->setEnabled(available);
+    saveIdentificationsAction_->setEnabled(available);
     setDockAvailable(identificationsDock_, available);
     updateRunContext();
     reconcileSelection();  // re-link the current spectrum to newly loaded IDs
@@ -2489,6 +2521,73 @@ namespace OpenMSViewer
       return MzMLExporter::write(experiment, outputPath, settings);
     }));
     updateLoadingUi();
+  }
+
+  // Ask for a save path, ensuring the native suffix is present (OpenMS writers pick
+  // the format from the extension, so a path without one would fail).
+  QString MainWindow::askSavePath(const QString& title, const QString& sourcePath,
+                                  const QString& fallbackStem, const QString& suffix)
+  {
+    const QFileInfo source(sourcePath);
+    const QString stem = source.completeBaseName().isEmpty() ? fallbackStem : source.completeBaseName();
+    const QString suggested = source.dir().filePath(stem + suffix);
+    const QString filter = tr("%1 (*%2);;All files (*)").arg(suffix.mid(1), suffix);
+    QString path = QFileDialog::getSaveFileName(this, title, suggested, filter);
+    if (!path.isEmpty() && !path.endsWith(suffix, Qt::CaseInsensitive)) path += suffix;
+    return path;
+  }
+
+  void MainWindow::saveFeatures()
+  {
+    if (!document_.hasFeatures()) return;
+    const QString path = askSavePath(tr("Save features"), document_.featuresPath(),
+                                     QStringLiteral("features"), QStringLiteral(".featureXML"));
+    if (path.isEmpty()) return;
+    statusBar()->showMessage(tr("Saving features…"));
+    QApplication::setOverrideCursor(Qt::WaitCursor);  // large maps write on the GUI thread
+    QString error;
+    const bool saved = document_.saveFeatures(path, error);
+    QApplication::restoreOverrideCursor();
+    if (saved)
+      notify(tr("Saved features to %1").arg(QFileInfo(path).fileName()), ToastLevel::Success);
+    else
+      showOperationError(tr("Could not save features"), tr("Writing the feature map failed."), error);
+  }
+
+  void MainWindow::saveIdentifications()
+  {
+    if (!document_.hasIdentifications()) return;
+    const QString path = askSavePath(tr("Save identifications"), document_.identificationsPath(),
+                                     QStringLiteral("identifications"), QStringLiteral(".idXML"));
+    if (path.isEmpty()) return;
+    statusBar()->showMessage(tr("Saving identifications…"));
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    QString error;
+    const bool saved = document_.saveIdentifications(path, error);
+    QApplication::restoreOverrideCursor();
+    if (saved)
+      notify(tr("Saved identifications to %1").arg(QFileInfo(path).fileName()), ToastLevel::Success);
+    else
+      showOperationError(tr("Could not save identifications"),
+                         tr("Writing the identifications failed."), error);
+  }
+
+  void MainWindow::saveConsensus()
+  {
+    if (!consensusMap_) return;
+    const QString path = askSavePath(tr("Save consensus map"), consensusSourcePath_,
+                                     QStringLiteral("consensus"), QStringLiteral(".consensusXML"));
+    if (path.isEmpty()) return;
+    statusBar()->showMessage(tr("Saving consensus map…"));
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    QString error;
+    const bool saved = ConsensusDocument::save(*consensusMap_, path, error);
+    QApplication::restoreOverrideCursor();
+    if (saved)
+      notify(tr("Saved consensus map to %1").arg(QFileInfo(path).fileName()), ToastLevel::Success);
+    else
+      showOperationError(tr("Could not save consensus map"),
+                         tr("Writing the consensus map failed."), error);
   }
 
   void MainWindow::finishMzMLExport()

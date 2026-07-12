@@ -75,5 +75,7 @@ namespace OpenMSViewer
     // Per-map handles of one consensus feature, computed on demand from the map.
     [[nodiscard]] std::vector<ConsensusHandle> handlesFor(const OpenMS::ConsensusMap& map,
                                                           std::size_t index);
+    // Write a consensus map back to consensusXML. Returns false with @p error set.
+    [[nodiscard]] bool save(const OpenMS::ConsensusMap& map, const QString& path, QString& error);
   }
 }

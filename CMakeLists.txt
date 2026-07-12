@@ -198,6 +198,7 @@ if(OPENMS_VIEWER_BUILD_TESTS)
     tests/ChromatogramSourceTest.cpp
     tests/PrecursorOverlayTest.cpp
     tests/MetadataBrowserTest.cpp
+    tests/WriteBackTest.cpp
     tests/TraceSmoothingTest.cpp
     tests/OswPanelTest.cpp
     tests/ConsensusDocumentTest.cpp

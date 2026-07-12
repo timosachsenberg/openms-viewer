@@ -55,6 +55,9 @@ add_library(openms_viewer_core STATIC
   src/model/SelectionController.h
   src/model/ViewerDocument.cpp
   src/model/ViewerDocument.h
+  src/model/OswStore.cpp
+  src/model/OswStore.h
+  src/model/Sqlite3Api.h
   src/plot/PeakMapRasterizer.cpp
   src/plot/PeakMapRasterizer.h
   src/plot/PlotAxis.cpp
@@ -171,6 +174,7 @@ if(OPENMS_VIEWER_BUILD_TESTS)
     tests/TestMain.cpp
     tests/FormatRegistryTest.cpp
     tests/RichFormatsTest.cpp
+    tests/OswStoreTest.cpp
     tests/PeakMapRasterizerTest.cpp
     tests/FeatureDocumentTest.cpp
     tests/IdentificationDocumentTest.cpp

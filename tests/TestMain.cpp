@@ -5,6 +5,7 @@ int runPeakMapRasterizerTests(int argc, char** argv);
 int runFormatRegistryTests(int argc, char** argv);
 int runRichFormatsTests(int argc, char** argv);
 int runOswStoreTests(int argc, char** argv);
+int runChromatogramSourceTests(int argc, char** argv);
 int runFeatureDocumentTests(int argc, char** argv);
 int runMainWindowFeatureWorkflowTests(int argc, char** argv);
 int runIdentificationDocumentTests(int argc, char** argv);
@@ -29,6 +30,7 @@ int main(int argc, char** argv)
   status |= runFormatRegistryTests(argc, argv);
   status |= runRichFormatsTests(argc, argv);
   status |= runOswStoreTests(argc, argv);
+  status |= runChromatogramSourceTests(argc, argv);
   status |= runFeatureDocumentTests(argc, argv);
   status |= runMainWindowFeatureWorkflowTests(argc, argv);
   status |= runIdentificationDocumentTests(argc, argv);

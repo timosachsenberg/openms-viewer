@@ -1,16 +1,21 @@
 #include "TestData.h"
 
 #include "MainWindow.h"
+#include "model/ChromatogramSource.h"
+#include "model/OswStore.h"
 #include "widgets/ChromatogramPanelWidget.h"
 #include "widgets/LoadingOverlayWidget.h"
 #include "widgets/PeakMapWidget.h"
 #include "widgets/ToastOverlay.h"
+#include "widgets/TransitionGroupPlot.h"
 #include "widgets/WelcomeWidget.h"
 
 #include <OpenMS/FORMAT/MzMLFile.h>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <vector>
 
 #include <QAction>
 #include <QApplication>
@@ -297,6 +302,43 @@ private slots:
 
     toasts->clearToasts();
     QCOMPARE(toasts->activeToastCount(), 0);
+  }
+
+  void transitionGroupPlotRendersWithoutCrash()
+  {
+    OpenMSViewer::TransitionGroupPlot plot;
+    plot.resize(520, 300);
+    QVERIFY(!plot.grab().isNull());  // empty data → "select a precursor" placeholder
+
+    std::vector<OpenMSViewer::TransitionChromatogram> transitions;
+    OpenMSViewer::TransitionChromatogram ms1;
+    ms1.msLevel = 1;
+    OpenMSViewer::TransitionChromatogram fragment;
+    fragment.msLevel = 2;
+    fragment.transitionId = 7;
+    fragment.annotation = QStringLiteral("y5");
+    const double infinity = std::numeric_limits<double>::infinity();
+    for (int step = 0; step <= 40; ++step)
+    {
+      const double rt = 100.0 + step;
+      const double value = 1000.0 * std::exp(-((rt - 120.0) * (rt - 120.0)) / 60.0);
+      ms1.rt.push_back(rt);
+      ms1.intensity.push_back(value * 0.5);
+      fragment.rt.push_back(rt);
+      // Inject a non-finite sample to exercise the finite-guard path.
+      fragment.intensity.push_back(step == 20 ? infinity : value);
+    }
+    transitions.push_back(ms1);
+    transitions.push_back(fragment);
+
+    OpenMSViewer::OswPeakGroup group;
+    group.apexRt = 120.0;
+    group.leftWidth = 112.0;
+    group.rightWidth = 128.0;
+    plot.setData(transitions, {group}, 0, 118.0);
+    QVERIFY(!plot.grab().isNull());
+    plot.setShowAllTransitions(true);
+    QVERIFY(!plot.grab().isNull());
   }
 
   void chromatogramHoverReadoutRendersWithoutCrash()

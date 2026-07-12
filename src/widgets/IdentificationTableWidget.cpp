@@ -366,10 +366,17 @@ namespace OpenMSViewer
           << tr("Score type: %1 (%2 is better)").arg(identification->scoreType,
                identification->higherScoreBetter ? tr("higher") : tr("lower"));
     if (identification->spectrumIndex)
-      lines << tr("Linked spectrum #%1 · ΔRT %2 s · Δm/z %3 Da")
-        .arg(*identification->spectrumIndex + 1)
-        .arg(identification->linkRtError, 0, 'f', 3)
-        .arg(identification->linkMzError, 0, 'f', 5);
+    {
+      if (identification->linkMode == LinkMode::NativeId)
+        lines << tr("Linked spectrum #%1 · by scan reference \"%2\"")
+          .arg(*identification->spectrumIndex + 1)
+          .arg(identification->spectrumReference);
+      else
+        lines << tr("Linked spectrum #%1 · by RT/m·z (ΔRT %2 s · Δm/z %3 Da)")
+          .arg(*identification->spectrumIndex + 1)
+          .arg(identification->linkRtError, 0, 'f', 3)
+          .arg(identification->linkMzError, 0, 'f', 5);
+    }
     for (const auto& [key, value] : identification->metaValues)
       lines << QStringLiteral("PID:%1 = %2").arg(key, value);
     if (hit)

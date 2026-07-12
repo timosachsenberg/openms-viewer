@@ -20,6 +20,8 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <string>
+#include <unordered_map>
 #include <utility>
 
 namespace OpenMSViewer
@@ -423,6 +425,7 @@ namespace OpenMSViewer
         identification.scoreType = QString::fromStdString(source.getScoreType());
         identification.higherScoreBetter = source.isHigherScoreBetter();
         identification.identifier = QString::fromStdString(source.getIdentifier());
+        identification.spectrumReference = QString::fromStdString(source.getSpectrumReference());
         identification.metaValues = collectMetaValues(source);
         identification.hits.reserve(source.getHits().size());
         for (std::size_t hitIndex = 0; hitIndex < source.getHits().size(); ++hitIndex)
@@ -967,65 +970,177 @@ namespace OpenMSViewer
     return std::nullopt;
   }
 
-  void ViewerDocument::relinkIdentifications()
+  ViewerDocument::IdentificationLinks ViewerDocument::linkIdentifications(
+    const OpenMS::MSExperiment& experiment,
+    std::vector<IdentificationRecord>& identifications)
   {
-    for (SpectrumRecord& spectrum : spectra_) spectrum.identificationIndex.reset();
-    for (IdentificationRecord& identification : identifications_)
+    constexpr double kRtTolerance = 5.0;   // seconds
+    constexpr double kMzTolerance = 0.5;   // Da (precursor)
+
+    const std::size_t spectrumCount = experiment.size();
+    IdentificationLinks links;
+    links.bestBySpectrum.assign(spectrumCount, std::nullopt);
+    links.allBySpectrum.assign(spectrumCount, {});
+
+    for (IdentificationRecord& identification : identifications)
     {
       identification.spectrumIndex.reset();
+      identification.linkMode = LinkMode::None;
       identification.linkRtError = 0.0;
       identification.linkMzError = 0.0;
     }
-    identificationBySpectrum_.clear();
-    identificationsBySpectrum_.clear();
-    if (!experiment_ || identifications_.empty()) return;
+    if (spectrumCount == 0 || identifications.empty()) return links;
 
-    identificationBySpectrum_.resize(experiment_->size());
-    identificationsBySpectrum_.resize(experiment_->size());
-    std::vector<double> assignedRtError(experiment_->size(), std::numeric_limits<double>::infinity());
-    std::vector<double> assignedMzError(experiment_->size(), std::numeric_limits<double>::infinity());
-
-    for (std::size_t identificationIndex = 0;
-         identificationIndex < identifications_.size(); ++identificationIndex)
+    // One pass over the experiment builds both indices: a native-ID → spectrum
+    // map for exact spectrum_reference links, and an RT-sorted list of MS2
+    // candidates for the fallback window search. Empty native IDs are skipped;
+    // on the rare duplicate the lowest spectrum position wins (emplace keeps it).
+    std::unordered_map<std::string, std::size_t> byNativeId;
+    byNativeId.reserve(spectrumCount * 2);
+    struct Candidate { double rt; double precursorMz; std::size_t index; };
+    std::vector<Candidate> candidates;
+    candidates.reserve(spectrumCount);
+    for (std::size_t s = 0; s < spectrumCount; ++s)
     {
-      IdentificationRecord& identification = identifications_[identificationIndex];
-      if (identification.hits.empty() || !std::isfinite(identification.rt)
-          || !std::isfinite(identification.mz)) continue;
-
-      std::optional<std::size_t> bestSpectrum;
-      double bestRtError = std::numeric_limits<double>::infinity();
-      double bestMzError = std::numeric_limits<double>::infinity();
-      for (std::size_t spectrumIndex = 0; spectrumIndex < experiment_->size(); ++spectrumIndex)
+      const auto& spectrum = experiment[s];
+      const std::string& native = spectrum.getNativeID();
+      if (!native.empty()) byNativeId.emplace(native, s);
+      if (spectrum.getMSLevel() > 1 && !spectrum.getPrecursors().empty())
       {
-        const auto& spectrum = (*experiment_)[spectrumIndex];
-        if (spectrum.getMSLevel() <= 1 || spectrum.getPrecursors().empty()) continue;
-        const double rtError = std::abs(spectrum.getRT() - identification.rt);
-        const double mzError = std::abs(spectrum.getPrecursors().front().getMZ() - identification.mz);
-        if (rtError > 5.0 || mzError > 0.5) continue;
-        if (rtError < bestRtError || (rtError == bestRtError && mzError < bestMzError))
+        const double rt = spectrum.getRT();
+        const double precursorMz = spectrum.getPrecursors().front().getMZ();
+        // Non-finite RT/m-z would violate std::sort's strict-weak-ordering and
+        // poison the window search, so such spectra are excluded from the fallback.
+        if (std::isfinite(rt) && std::isfinite(precursorMz))
+          candidates.push_back({rt, precursorMz, s});
+      }
+    }
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& a, const Candidate& b)
+              { return a.rt != b.rt ? a.rt < b.rt : a.index < b.index; });
+
+    // Preferred-id contest per spectrum: a native-ID link always outranks an
+    // RT/m-z link; within a mode, lowest RT error then m-z error then id position
+    // (making the outcome deterministic and load-order independent).
+    struct Best { LinkMode mode; double rtError; double mzError; std::size_t idPos; };
+    const auto beats = [](const Best& contender, const Best& incumbent)
+    {
+      if (contender.mode == LinkMode::NativeId && incumbent.mode != LinkMode::NativeId) return true;
+      if (contender.mode != LinkMode::NativeId && incumbent.mode == LinkMode::NativeId) return false;
+      if (contender.rtError != incumbent.rtError) return contender.rtError < incumbent.rtError;
+      if (contender.mzError != incumbent.mzError) return contender.mzError < incumbent.mzError;
+      return contender.idPos < incumbent.idPos;
+    };
+    std::vector<std::optional<Best>> best(spectrumCount);
+
+    for (std::size_t idPos = 0; idPos < identifications.size(); ++idPos)
+    {
+      IdentificationRecord& identification = identifications[idPos];
+      if (identification.hits.empty()) continue;
+
+      std::optional<std::size_t> target;
+      LinkMode mode = LinkMode::None;
+      double rtError = 0.0;         // displayed (0 when the id carries no coordinate)
+      double mzError = 0.0;
+      // Contest keys separate an *unknown* coordinate (ranks last, +inf) from a
+      // genuine 0.0 error, so a coordinate-bearing native link is preferred over a
+      // scan-reference-only one that maps to the same spectrum.
+      double contestRt = std::numeric_limits<double>::infinity();
+      double contestMz = std::numeric_limits<double>::infinity();
+
+      // 1) Exact native-ID link when the id carries a resolvable spectrum_reference.
+      if (!identification.spectrumReference.isEmpty())
+      {
+        const auto it = byNativeId.find(identification.spectrumReference.toStdString());
+        if (it != byNativeId.end())
         {
-          bestSpectrum = spectrumIndex;
-          bestRtError = rtError;
-          bestMzError = mzError;
+          target = it->second;
+          mode = LinkMode::NativeId;
+          const auto& spectrum = experiment[*target];
+          // Errors are informational for native-ID links (an idparquet id may have
+          // no RT/m-z at all, leaving the displayed error at 0 and the contest key
+          // at +inf so it ranks behind a link with real coordinates).
+          if (std::isfinite(identification.rt))
+            contestRt = rtError = std::abs(spectrum.getRT() - identification.rt);
+          if (std::isfinite(identification.mz) && spectrum.getMSLevel() > 1
+              && !spectrum.getPrecursors().empty())
+            contestMz = mzError = std::abs(spectrum.getPrecursors().front().getMZ() - identification.mz);
         }
       }
 
-      if (!bestSpectrum) continue;
-      const std::size_t spectrumIndex = *bestSpectrum;
-      identification.spectrumIndex = spectrumIndex;
-      identification.linkRtError = bestRtError;
-      identification.linkMzError = bestMzError;
-      identificationsBySpectrum_[spectrumIndex].push_back(identificationIndex);
+      // 2) RT/m-z window fallback: binary-search the ±tolerance RT band and keep
+      //    the closest precursor within the m-z tolerance. Ties fall through to the
+      //    lowest spectrum index so the result matches the former full-scan order.
+      //    The binary-search bounds are a conservative superset (widened by a slack
+      //    that dwarfs any FP rounding); the authoritative filter is the exact
+      //    |dRt| <= tol / |dMz| <= tol test below, bit-identical to the old scan.
+      if (!target && std::isfinite(identification.rt) && std::isfinite(identification.mz))
+      {
+        constexpr double kRtSlack = 1e-6;  // seconds; only widens the search range
+        const double lo = identification.rt - kRtTolerance - kRtSlack;
+        const double hi = identification.rt + kRtTolerance + kRtSlack;
+        const auto begin = std::lower_bound(candidates.begin(), candidates.end(), lo,
+          [](const Candidate& candidate, double value) { return candidate.rt < value; });
+        double bestRt = std::numeric_limits<double>::infinity();
+        double bestMz = std::numeric_limits<double>::infinity();
+        for (auto it = begin; it != candidates.end() && it->rt <= hi; ++it)
+        {
+          const double dRt = std::abs(it->rt - identification.rt);
+          if (dRt > kRtTolerance) continue;
+          const double dMz = std::abs(it->precursorMz - identification.mz);
+          if (dMz > kMzTolerance) continue;
+          if (!target || dRt < bestRt
+              || (dRt == bestRt && (dMz < bestMz
+                  || (dMz == bestMz && it->index < *target))))
+          {
+            target = it->index;
+            bestRt = dRt;
+            bestMz = dMz;
+          }
+        }
+        if (target) { mode = LinkMode::RtMz; contestRt = rtError = bestRt; contestMz = mzError = bestMz; }
+      }
 
-      const bool replacesExisting = bestRtError < assignedRtError[spectrumIndex]
-        || (bestRtError == assignedRtError[spectrumIndex] && bestMzError < assignedMzError[spectrumIndex]);
-      if (!replacesExisting) continue;
+      if (!target) continue;
+      identification.spectrumIndex = target;
+      identification.linkMode = mode;
+      identification.linkRtError = rtError;
+      identification.linkMzError = mzError;
 
-      identificationBySpectrum_[spectrumIndex] = identificationIndex;
-      if (spectrumIndex < spectra_.size())
-        spectra_[spectrumIndex].identificationIndex = identificationIndex;
-      assignedRtError[spectrumIndex] = bestRtError;
-      assignedMzError[spectrumIndex] = bestMzError;
+      links.allBySpectrum[*target].push_back(idPos);
+      const Best contender{mode, contestRt, contestMz, idPos};
+      auto& slot = best[*target];
+      if (!slot || beats(contender, *slot)) slot = contender;
     }
+
+    for (std::size_t s = 0; s < spectrumCount; ++s)
+      if (best[s]) links.bestBySpectrum[s] = best[s]->idPos;
+    return links;
+  }
+
+  void ViewerDocument::relinkIdentifications()
+  {
+    for (SpectrumRecord& spectrum : spectra_) spectrum.identificationIndex.reset();
+    identificationBySpectrum_.clear();
+    identificationsBySpectrum_.clear();
+    if (!experiment_ || identifications_.empty())
+    {
+      for (IdentificationRecord& identification : identifications_)
+      {
+        identification.spectrumIndex.reset();
+        identification.linkMode = LinkMode::None;
+        identification.linkRtError = 0.0;
+        identification.linkMzError = 0.0;
+      }
+      return;
+    }
+
+    IdentificationLinks links = linkIdentifications(*experiment_, identifications_);
+    identificationBySpectrum_ = std::move(links.bestBySpectrum);
+    identificationsBySpectrum_ = std::move(links.allBySpectrum);
+    for (std::size_t spectrumIndex = 0;
+         spectrumIndex < identificationBySpectrum_.size() && spectrumIndex < spectra_.size();
+         ++spectrumIndex)
+      spectra_[spectrumIndex].identificationIndex = identificationBySpectrum_[spectrumIndex];
   }
 }

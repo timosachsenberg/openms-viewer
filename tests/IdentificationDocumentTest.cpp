@@ -8,6 +8,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <limits>
+
 class IdentificationDocumentTest final : public QObject
 {
   Q_OBJECT
@@ -79,6 +81,119 @@ private slots:
     document.clearIdentifications();
     QCOMPARE(changed.count(), 3);
     QVERIFY(!document.hasIdentifications());
+  }
+
+  // Exact spectrum_reference (native-ID) matches win over any RT/m-z proximity,
+  // and an unresolvable reference falls back to the RT/m-z window search.
+  void nativeIdLinkOverridesRtMzProximity()
+  {
+    OpenMS::MSExperiment experiment;
+    for (int i = 0; i < 3; ++i)
+    {
+      OpenMS::MSSpectrum spectrum;
+      spectrum.setRT(100.0 + i);
+      spectrum.setMSLevel(2);
+      spectrum.setNativeID("scan=" + std::to_string(i));
+      OpenMS::Precursor precursor;
+      precursor.setMZ(500.0);
+      spectrum.setPrecursors({precursor});
+      experiment.addSpectrum(spectrum);
+    }
+
+    std::vector<OpenMSViewer::IdentificationRecord> ids(3);
+    // (a) spectrum_reference "scan=2" is exact even though its RT/m-z sits closest
+    //     to spectrum #0 — the native-ID link must still resolve to #2.
+    ids[0].index = 0;
+    ids[0].rt = 100.0;
+    ids[0].mz = 500.0;
+    ids[0].spectrumReference = QStringLiteral("scan=2");
+    ids[0].hits.push_back({});
+    // (b) a reference that matches no spectrum falls back to RT/m-z → spectrum #1.
+    ids[1].index = 1;
+    ids[1].rt = 101.0;
+    ids[1].mz = 500.0;
+    ids[1].spectrumReference = QStringLiteral("scan=does-not-exist");
+    ids[1].hits.push_back({});
+    // (c) no reference at all → RT/m-z fallback → spectrum #0.
+    ids[2].index = 2;
+    ids[2].rt = 100.0;
+    ids[2].mz = 500.0;
+    ids[2].hits.push_back({});
+
+    const auto links = OpenMSViewer::ViewerDocument::linkIdentifications(experiment, ids);
+
+    QCOMPARE(ids[0].spectrumIndex.value(), std::size_t{2});
+    QCOMPARE(ids[0].linkMode, OpenMSViewer::LinkMode::NativeId);
+    QCOMPARE(ids[1].spectrumIndex.value(), std::size_t{1});
+    QCOMPARE(ids[1].linkMode, OpenMSViewer::LinkMode::RtMz);
+    QCOMPARE(ids[2].spectrumIndex.value(), std::size_t{0});
+    QCOMPARE(ids[2].linkMode, OpenMSViewer::LinkMode::RtMz);
+
+    QVERIFY(links.bestBySpectrum[2].has_value());
+    QCOMPARE(links.bestBySpectrum[2].value(), std::size_t{0});  // id position 0
+    QCOMPARE(links.allBySpectrum[0].size(), std::size_t{1});
+    QCOMPARE(links.allBySpectrum[0][0], std::size_t{2});
+  }
+
+  // On a full RT/m-z-error tie the lowest spectrum index must win, matching the
+  // former full-scan order — even though the candidate list is RT-sorted and the
+  // equidistant spectra sit on opposite sides of the identification.
+  void rtMzTieBreaksToLowestSpectrumIndex()
+  {
+    OpenMS::MSExperiment experiment;
+    for (const double rt : {101.0, 99.0})  // spectrum 0 above, spectrum 1 below
+    {
+      OpenMS::MSSpectrum spectrum;
+      spectrum.setRT(rt);
+      spectrum.setMSLevel(2);
+      OpenMS::Precursor precursor;
+      precursor.setMZ(500.0);
+      spectrum.setPrecursors({precursor});
+      experiment.addSpectrum(spectrum);
+    }
+
+    std::vector<OpenMSViewer::IdentificationRecord> ids(1);
+    ids[0].rt = 100.0;  // equidistant (ΔRT 1.0) from both spectra
+    ids[0].mz = 500.0;
+    ids[0].hits.push_back({});
+
+    OpenMSViewer::ViewerDocument::linkIdentifications(experiment, ids);
+    QCOMPARE(ids[0].spectrumIndex.value(), std::size_t{0});
+    QCOMPARE(ids[0].linkMode, OpenMSViewer::LinkMode::RtMz);
+  }
+
+  // Two ids share a scan reference; the one carrying real coordinates is preferred
+  // over a reference-only id whose missing coordinates must rank last, not as 0.
+  void coordinateBearingNativeLinkWinsOverReferenceOnly()
+  {
+    OpenMS::MSExperiment experiment;
+    OpenMS::MSSpectrum spectrum;
+    spectrum.setRT(100.0);
+    spectrum.setMSLevel(2);
+    spectrum.setNativeID("scan=7");
+    OpenMS::Precursor precursor;
+    precursor.setMZ(500.0);
+    spectrum.setPrecursors({precursor});
+    experiment.addSpectrum(spectrum);
+
+    std::vector<OpenMSViewer::IdentificationRecord> ids(2);
+    // id 0: reference-only, no coordinates (contest error must be +inf, not 0).
+    ids[0].rt = std::numeric_limits<double>::quiet_NaN();
+    ids[0].mz = std::numeric_limits<double>::quiet_NaN();
+    ids[0].spectrumReference = QStringLiteral("scan=7");
+    ids[0].hits.push_back({});
+    // id 1: same reference, with a real (small-error) coordinate.
+    ids[1].rt = 100.2;
+    ids[1].mz = 500.05;
+    ids[1].spectrumReference = QStringLiteral("scan=7");
+    ids[1].hits.push_back({});
+
+    const auto links = OpenMSViewer::ViewerDocument::linkIdentifications(experiment, ids);
+    QCOMPARE(ids[0].spectrumIndex.value(), std::size_t{0});
+    QCOMPARE(ids[1].spectrumIndex.value(), std::size_t{0});
+    QVERIFY(links.bestBySpectrum[0].has_value());
+    QCOMPARE(links.bestBySpectrum[0].value(), std::size_t{1});  // coordinate-bearing id
+    QCOMPARE(links.allBySpectrum[0].size(), std::size_t{2});
   }
 };
 

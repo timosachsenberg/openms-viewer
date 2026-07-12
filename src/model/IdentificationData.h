@@ -29,6 +29,11 @@ namespace OpenMSViewer
     std::vector<PeakAnnotationRecord> peakAnnotations;
   };
 
+  // How an identification was tied to its spectrum. Native-ID (spectrum_reference)
+  // links are exact; RtMz links are an approximate ±5 s / ±0.5 Da window match and
+  // are labelled as such in the UI so the distinction is never hidden.
+  enum class LinkMode { None, NativeId, RtMz };
+
   struct IdentificationRecord
   {
     std::size_t index{0};
@@ -37,9 +42,11 @@ namespace OpenMSViewer
     QString scoreType;
     bool higherScoreBetter{true};
     QString identifier;
+    QString spectrumReference;  // native-ID string of the source spectrum, if any
     MetaValues metaValues;
     std::vector<PeptideHitRecord> hits;
     std::optional<std::size_t> spectrumIndex;
+    LinkMode linkMode{LinkMode::None};
     double linkRtError{0.0};
     double linkMzError{0.0};
 

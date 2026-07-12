@@ -190,6 +190,23 @@ namespace OpenMSViewer
     [[nodiscard]] std::optional<std::size_t> edgeSpectrumIndex(
       bool last, unsigned int msLevel = 0) const noexcept;
 
+    // Per-spectrum link tables produced by linkIdentifications(). Values are
+    // positions into the identifications vector, not IdentificationRecord::index.
+    struct IdentificationLinks
+    {
+      std::vector<std::optional<std::size_t>> bestBySpectrum;  // preferred id per spectrum
+      std::vector<std::vector<std::size_t>> allBySpectrum;     // every id linked to a spectrum
+    };
+
+    // Pure, reentrant identification↔spectrum linker. Mutates each record's
+    // spectrumIndex/linkMode/linkRtError/linkMzError in place and returns the
+    // per-spectrum tables. spectrum_reference (native ID) matches are exact and
+    // authoritative; the rest fall back to an indexed ±5 s / ±0.5 Da window search.
+    // O(N + M log M + N log M) rather than the former O(N·M) full scan.
+    [[nodiscard]] static IdentificationLinks linkIdentifications(
+      const OpenMS::MSExperiment& experiment,
+      std::vector<IdentificationRecord>& identifications);
+
   signals:
     void dataChanged();
     void featuresChanged();

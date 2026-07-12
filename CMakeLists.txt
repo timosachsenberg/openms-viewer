@@ -60,6 +60,8 @@ add_library(openms_viewer_core STATIC
   src/model/Sqlite3Api.h
   src/model/ChromatogramSource.cpp
   src/model/ChromatogramSource.h
+  src/model/OswDocument.cpp
+  src/model/OswDocument.h
   src/plot/PeakMapRasterizer.cpp
   src/plot/PeakMapRasterizer.h
   src/plot/PlotAxis.cpp
@@ -114,6 +116,8 @@ add_library(openms_viewer_ui STATIC
   src/widgets/TicWidget.h
   src/widgets/TransitionGroupPlot.cpp
   src/widgets/TransitionGroupPlot.h
+  src/widgets/OswPanel.cpp
+  src/widgets/OswPanel.h
   src/widgets/ToastOverlay.cpp
   src/widgets/ToastOverlay.h
   src/widgets/WelcomeWidget.cpp
@@ -180,6 +184,7 @@ if(OPENMS_VIEWER_BUILD_TESTS)
     tests/RichFormatsTest.cpp
     tests/OswStoreTest.cpp
     tests/ChromatogramSourceTest.cpp
+    tests/OswPanelTest.cpp
     tests/PeakMapRasterizerTest.cpp
     tests/FeatureDocumentTest.cpp
     tests/IdentificationDocumentTest.cpp

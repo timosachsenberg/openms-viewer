@@ -18,6 +18,7 @@
 #include "widgets/IonMobilityPanelWidget.h"
 #include "widgets/ImagingPanelWidget.h"
 #include "widgets/LogWidget.h"
+#include "widgets/OswPanel.h"
 #include "widgets/LoadingOverlayWidget.h"
 #include "widgets/SpectrumWidget.h"
 #include "widgets/TicWidget.h"
@@ -308,6 +309,8 @@ namespace OpenMSViewer
             this, &MainWindow::finishMzMLExport);
     connect(&imagingLoadWatcher_, &QFutureWatcher<ImagingLoadResult>::finished,
             this, &MainWindow::finishImagingLoad);
+    connect(&oswLoadWatcher_, &QFutureWatcher<OswLoadResult>::finished,
+            this, &MainWindow::finishOswLoad);
     connect(&document_, &ViewerDocument::featuresChanged,
             this, &MainWindow::updateFeatureViews);
     connect(&document_, &ViewerDocument::identificationsChanged,
@@ -403,6 +406,7 @@ namespace OpenMSViewer
     if (identificationLoadWatcher_.isRunning()) identificationLoadWatcher_.waitForFinished();
     if (mzMLExportWatcher_.isRunning()) mzMLExportWatcher_.waitForFinished();
     if (imagingLoadWatcher_.isRunning()) imagingLoadWatcher_.waitForFinished();
+    if (oswLoadWatcher_.isRunning()) oswLoadWatcher_.waitForFinished();
   }
 
   void MainWindow::createPanels()
@@ -487,6 +491,15 @@ namespace OpenMSViewer
     imagingDock_->setMinimumWidth(680);
     addDockWidget(Qt::BottomDockWidgetArea, imagingDock_);
     tabifyDockWidget(ionMobilityDock_, imagingDock_);
+
+    osw_ = new OswPanel(this);
+    oswDock_ = new QDockWidget(tr("OpenSWATH results"), this);
+    oswDock_->setObjectName(QStringLiteral("oswDock"));
+    oswDock_->setWidget(osw_);
+    configureDock(oswDock_);
+    oswDock_->setMinimumWidth(720);
+    addDockWidget(Qt::BottomDockWidgetArea, oswDock_);
+    tabifyDockWidget(imagingDock_, oswDock_);
 
     log_ = new LogWidget(this);
     logDock_ = new QDockWidget(tr("Application log"), this);
@@ -1242,6 +1255,9 @@ namespace OpenMSViewer
     setDockAvailable(ionMobilityDock_, false);
     setDockAvailable(faimsDock_, false);
     setDockAvailable(imagingDock_, false);
+    setDockAvailable(oswDock_, false);
+    if (osw_) osw_->clear();
+    hasOswData_ = false;
   }
 
   void MainWindow::showDataPage()
@@ -1257,12 +1273,13 @@ namespace OpenMSViewer
       {featuresDock_->objectName(), true}, {identificationsDock_->objectName(), true},
       {spectraDock_->objectName(), false}, {chromatogramsDock_->objectName(), true},
       {ionMobilityDock_->objectName(), true}, {faimsDock_->objectName(), true},
-      {imagingDock_->objectName(), true}, {logDock_->objectName(), false}
+      {imagingDock_->objectName(), true}, {oswDock_->objectName(), true},
+      {logDock_->objectName(), false}
     };
     QSettings settings;
     for (QDockWidget* dock : {ticDock_, spectrumDock_, featuresDock_, identificationsDock_,
                               spectraDock_, chromatogramsDock_, ionMobilityDock_, faimsDock_,
-                              imagingDock_, logDock_})
+                              imagingDock_, oswDock_, logDock_})
     {
       const QString key = QStringLiteral("docks/%1/preferredVisible").arg(dock->objectName());
       bool preferred = defaults.value(dock->objectName(), false);
@@ -1417,7 +1434,12 @@ namespace OpenMSViewer
     tabifyDockWidget(featuresDock_, spectraDock_);
     tabifyDockWidget(spectraDock_, faimsDock_);
 
-    if (document_.isEmpty() && !imagingStore_) showWelcomePage();
+    if (document_.isEmpty() && !imagingStore_ && !hasOswData_) showWelcomePage();
+    else if (hasOswData_)
+    {
+      setDockAvailable(oswDock_, true);
+      oswDock_->raise();
+    }
     else if (imagingStore_)
     {
       setDockAvailable(spectrumDock_, true);
@@ -1550,6 +1572,8 @@ namespace OpenMSViewer
       beginOperation(FeatureOperation, tr("Loading feature overlay"), tr("Reading FeatureXML"));
     else if (identificationLoadWatcher_.isRunning())
       beginOperation(IdentificationOperation, tr("Loading identification overlay"), tr("Reading idXML"));
+    else if (oswLoadWatcher_.isRunning())
+      beginOperation(OswOperation, tr("Loading OpenSWATH results"), tr("Reading .osw and .xic"), false);
   }
 
   void MainWindow::cancelCurrentOperation()
@@ -1563,6 +1587,7 @@ namespace OpenMSViewer
       case FeatureOperation: featureCancelled_ = true; break;
       case IdentificationOperation: identificationCancelled_ = true; break;
       case ExportOperation: exportCancelled_ = true; break;
+      case OswOperation: return;  // not cancellable (single blocking read)
       case NoOperation: return;
     }
     statusBar()->showMessage(tr("Cancelling background operation…"));
@@ -1574,11 +1599,12 @@ namespace OpenMSViewer
     const QString startDirectory = settings.value(QStringLiteral("files/lastDirectory")).toString();
     const QStringList paths = QFileDialog::getOpenFileNames(
       this, tr("Open mass-spectrometry data"), startDirectory,
-      tr("OpenMS data (*.mzML *.mzml *.imzML *.imzml *.raw *.mzXML *.mzxml *.mzData *.mzdata *.sqMass *.sqmass *.featureXML *.featurexml *.idXML *.idxml *.mzid *.mzIdentML);;"
+      tr("OpenMS data (*.mzML *.mzml *.imzML *.imzml *.raw *.mzXML *.mzxml *.mzData *.mzdata *.sqMass *.sqmass *.featureXML *.featurexml *.idXML *.idxml *.mzid *.mzIdentML *.osw);;"
          "Spectra (*.mzML *.mzml *.mzXML *.mzxml *.mzData *.mzdata *.sqMass *.sqmass);;"
          "imzML imaging files (*.imzML *.imzml);;Thermo RAW files (*.raw);;"
          "Feature maps (*.featureXML *.featurexml);;"
-         "Identifications (*.idXML *.idxml *.mzid *.mzIdentML);;All files (*)"));
+         "Identifications (*.idXML *.idxml *.mzid *.mzIdentML);;"
+         "OpenSWATH results (*.osw);;All files (*)"));
     if (paths.isEmpty()) return;
     settings.setValue(QStringLiteral("files/lastDirectory"), QFileInfo(paths.front()).absolutePath());
     loadFiles(paths);
@@ -1720,11 +1746,57 @@ namespace OpenMSViewer
         case FormatRegistry::Category::Features:        loadFeatureData(path); return;
         case FormatRegistry::Category::Identifications: loadIdentificationData(path); return;
         case FormatRegistry::Category::Experiment:      loadExperimentData(path, format.type); return;
-        default: break;  // Consensus / OpenSWATH wired in later phases
+        case FormatRegistry::Category::Osw:             loadOswData(path); return;
+        default: break;  // Consensus wired in a later phase
       }
     }
     QMessageBox::warning(this, tr("Unsupported file"),
                          tr("OpenMS Viewer does not yet support '%1'.").arg(QFileInfo(path).fileName()));
+  }
+
+  void MainWindow::loadOswData(const QString& path)
+  {
+    if (oswLoadWatcher_.isRunning())
+    {
+      statusBar()->showMessage(tr("OpenSWATH results are already loading"), 3000);
+      return;
+    }
+    statusBar()->showMessage(tr("Loading OpenSWATH results %1…").arg(QFileInfo(path).fileName()));
+    beginOperation(OswOperation, tr("Loading OpenSWATH results"),
+                   tr("Opening %1 and its .xic chromatograms").arg(QFileInfo(path).fileName()), false);
+    oswLoadWatcher_.setFuture(QtConcurrent::run([path] { return OswDocument::read(path); }));
+    updateLoadingUi();
+  }
+
+  void MainWindow::finishOswLoad()
+  {
+    OswLoadResult result = oswLoadWatcher_.result();
+    endOperation(OswOperation);
+    updateLoadingUi();
+    if (!result.succeeded())
+    {
+      statusBar()->showMessage(tr("OpenSWATH load failed"), 5000);
+      notify(tr("OpenSWATH load failed"), ToastLevel::Error);
+      showOperationError(tr("Could not open OpenSWATH results"),
+                         tr("The .osw results database could not be read."), result.error);
+      return;
+    }
+    const QString sourcePath = result.sourcePath;
+    const bool hasChromatograms = result.chromatograms != nullptr;
+    osw_->setData(std::move(result.store), std::move(result.chromatograms), result.chromatogramNote);
+    hasOswData_ = true;
+    lastPrimaryPath_ = sourcePath;
+    rememberRecentFile(sourcePath);
+    showDataPage();
+    dockVisibilityPreference_[oswDock_->objectName()] = true;
+    setDockAvailable(oswDock_, true);
+    oswDock_->raise();
+    setWindowTitle(tr("%1 — OpenMS Viewer").arg(QFileInfo(sourcePath).fileName()));
+    updateRunContext();
+    statusBar()->showMessage(tr("Loaded OpenSWATH results from %1").arg(QFileInfo(sourcePath).fileName()), 8000);
+    notify(hasChromatograms ? tr("Loaded OpenSWATH results")
+                            : tr("Loaded OpenSWATH results (no .xic chromatograms found)"),
+           hasChromatograms ? ToastLevel::Success : ToastLevel::Warning);
   }
 
   void MainWindow::loadFeatureData(const QString& path)
@@ -2106,7 +2178,7 @@ namespace OpenMSViewer
   {
     const bool busy = loadWatcher_.isRunning() || featureLoadWatcher_.isRunning()
       || identificationLoadWatcher_.isRunning() || mzMLExportWatcher_.isRunning()
-      || imagingLoadWatcher_.isRunning();
+      || imagingLoadWatcher_.isRunning() || oswLoadWatcher_.isRunning();
     openAction_->setEnabled(!busy);
     reloadAction_->setEnabled(!busy && !lastPrimaryPath_.isEmpty()
                               && QFileInfo::exists(lastPrimaryPath_));
@@ -2660,7 +2732,8 @@ namespace OpenMSViewer
       const auto format = FormatRegistry::detect(path);
       return format.supported
         && (format.category == Category::Experiment || format.category == Category::Features
-            || format.category == Category::Identifications || format.category == Category::Imaging);
+            || format.category == Category::Identifications || format.category == Category::Imaging
+            || format.category == Category::Osw);
     }
   }
 

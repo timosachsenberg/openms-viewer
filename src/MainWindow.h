@@ -3,6 +3,7 @@
 #include "model/ViewerDocument.h"
 #include "export/MzMLExporter.h"
 #include "model/ImagingDocument.h"
+#include "model/OswDocument.h"
 #include "model/SelectionController.h"
 
 #include <QFutureWatcher>
@@ -72,6 +73,7 @@ namespace OpenMSViewer
     void finishFeatureLoad();
     void finishIdentificationLoad();
     void finishImagingLoad();
+    void finishOswLoad();
     void selectSpectrum(std::size_t index);
     void selectNearestSpectrum(double rt);
     void selectFeature(std::size_t index);
@@ -112,6 +114,7 @@ namespace OpenMSViewer
     void loadFeatureData(const QString& path);
     void loadIdentificationData(const QString& path);
     void loadExperimentData(const QString& path, int fileType);
+    void loadOswData(const QString& path);
     void beginOperation(int operation, const QString& title, const QString& detail,
                         bool cancellable = true);
     void endOperation(int operation);
@@ -163,6 +166,7 @@ namespace OpenMSViewer
     SpectrumTableWidget* spectra_{nullptr};
     IonMobilityPanelWidget* ionMobility_{nullptr};
     ImagingPanelWidget* imaging_{nullptr};
+    class OswPanel* osw_{nullptr};
     LogWidget* log_{nullptr};
     TicWidget* tic_{nullptr};
     SpectrumWidget* spectrum_{nullptr};
@@ -176,6 +180,7 @@ namespace OpenMSViewer
     QDockWidget* faimsDock_{nullptr};
     QDockWidget* ionMobilityDock_{nullptr};
     QDockWidget* imagingDock_{nullptr};
+    QDockWidget* oswDock_{nullptr};
     QDockWidget* logDock_{nullptr};
     QProgressBar* progress_{nullptr};
     QLabel* runContext_{nullptr};
@@ -228,6 +233,7 @@ namespace OpenMSViewer
     QString lastPrimaryPath_;
     QMap<QString, bool> dockVisibilityPreference_;
     bool updatingSpectrumIndex_{false};
+    bool hasOswData_{false};
 
     enum Operation
     {
@@ -236,7 +242,8 @@ namespace OpenMSViewer
       ImagingOperation,
       FeatureOperation,
       IdentificationOperation,
-      ExportOperation
+      ExportOperation,
+      OswOperation
     };
     Operation overlayOperation_{NoOperation};
     QElapsedTimer operationElapsed_;
@@ -253,5 +260,6 @@ namespace OpenMSViewer
     QFutureWatcher<ViewerDocument::IdentificationLoadResult> identificationLoadWatcher_;
     QFutureWatcher<MzMLExportResult> mzMLExportWatcher_;
     QFutureWatcher<ImagingLoadResult> imagingLoadWatcher_;
+    QFutureWatcher<OswLoadResult> oswLoadWatcher_;
   };
 }

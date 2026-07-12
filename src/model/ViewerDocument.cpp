@@ -3,6 +3,11 @@
 #include <OpenMS/FORMAT/MzMLFile.h>
 #include <OpenMS/FORMAT/FeatureXMLFile.h>
 #include <OpenMS/FORMAT/IdXMLFile.h>
+// Vendor readers self-disable via WITH_THERMO_RAW / WITH_OPENTIMS (OpenMS PUBLIC
+// compile definitions inherited through the OpenMS target), so these are safe to
+// include unconditionally — the classes simply aren't declared when unsupported.
+#include <OpenMS/FORMAT/ThermoRawFile.h>
+#include <OpenMS/FORMAT/BrukerTimsFile.h>
 #include <OpenMS/METADATA/MetaInfoInterface.h>
 #include <OpenMS/IONMOBILITY/IMTypes.h>
 #include <OpenMS/CONCEPT/ProgressLogger.h>
@@ -114,44 +119,18 @@ namespace OpenMSViewer
       }
       return std::nullopt;
     }
-  }
-
-  ViewerDocument::ViewerDocument(QObject* parent) : QObject(parent)
-  {
-  }
-
-  ViewerDocument::LoadResult ViewerDocument::readMzML(const QString& path,
-                                                       ProgressCallback progress,
-                                                       CancellationCheck cancelled)
-  {
-    LoadResult result;
-    result.sourcePath = QFileInfo(path).absoluteFilePath();
-
-    const QFileInfo file(result.sourcePath);
-    if (!file.exists() || !file.isFile())
+    // Shared post-load derivation over an in-memory experiment (mzML, Thermo RAW,
+    // Bruker TDF): sorts, then fills summaries / TIC / chromatograms / ion-mobility
+    // frames / FAIMS channels / bounds on `result`. Sets result.experiment on
+    // success or result.error on a soft failure; throws LoadCancelled if cancelled.
+    void deriveLoadResult(ViewerDocument::LoadResult& result,
+                          std::shared_ptr<OpenMS::MSExperiment> experiment,
+                          const ViewerDocument::CancellationCheck& cancelled)
     {
-      result.error = QStringLiteral("File does not exist: %1").arg(result.sourcePath);
-      return result;
-    }
-    if (file.suffix().compare(QStringLiteral("mzML"), Qt::CaseInsensitive) != 0)
-    {
-      result.error = QStringLiteral("Unsupported file type '%1'. mzML is implemented in this milestone.")
-                       .arg(file.suffix());
-      return result;
-    }
-
-    try
-    {
-      auto experiment = std::make_shared<OpenMS::MSExperiment>();
-      OpenMS::MzMLFile loader;
-      if (progress || cancelled)
-        loader.setLogger(new ViewerProgressLogger(progress, cancelled));
-      loader.load(result.sourcePath.toStdString(), *experiment);
-      if (cancelled && cancelled()) throw LoadCancelled();
       if (experiment->empty() && experiment->getChromatograms().empty())
       {
-        result.error = QStringLiteral("The mzML file contains no spectra or chromatograms.");
-        return result;
+        result.error = QStringLiteral("The file contains no spectra or chromatograms.");
+        return;
       }
 
       // Rasterization and binary RT/m/z searches require sorted input.
@@ -342,8 +321,8 @@ namespace OpenMSViewer
       {
         if (result.chromatograms.empty())
         {
-          result.error = QStringLiteral("The mzML file contains no displayable peaks.");
-          return result;
+          result.error = QStringLiteral("The file contains no displayable peaks.");
+          return;
         }
         minRt = std::isfinite(chromatogramMinRt) ? chromatogramMinRt : 0.0;
         maxRt = std::isfinite(chromatogramMaxRt) ? chromatogramMaxRt : 1.0;
@@ -370,7 +349,43 @@ namespace OpenMSViewer
       }
       result.bounds = {minRt, maxRt, minMz, maxMz};
       result.experiment = std::move(experiment);
+    }
+
+  }
+
+  ViewerDocument::ViewerDocument(QObject* parent) : QObject(parent)
+  {
+  }
+
+  ViewerDocument::LoadResult ViewerDocument::readMzML(const QString& path,
+                                                       ProgressCallback progress,
+                                                       CancellationCheck cancelled)
+  {
+    LoadResult result;
+    result.sourcePath = QFileInfo(path).absoluteFilePath();
+
+    const QFileInfo file(result.sourcePath);
+    if (!file.exists() || !file.isFile())
+    {
+      result.error = QStringLiteral("File does not exist: %1").arg(result.sourcePath);
       return result;
+    }
+    if (file.suffix().compare(QStringLiteral("mzML"), Qt::CaseInsensitive) != 0)
+    {
+      result.error = QStringLiteral("Unsupported file type '%1'. mzML is implemented in this milestone.")
+                       .arg(file.suffix());
+      return result;
+    }
+
+    try
+    {
+      auto experiment = std::make_shared<OpenMS::MSExperiment>();
+      OpenMS::MzMLFile loader;
+      if (progress || cancelled)
+        loader.setLogger(new ViewerProgressLogger(progress, cancelled));
+      loader.load(result.sourcePath.toStdString(), *experiment);
+      if (cancelled && cancelled()) throw LoadCancelled();
+      deriveLoadResult(result, std::move(experiment), cancelled);
     }
     catch (const LoadCancelled&)
     {
@@ -385,6 +400,94 @@ namespace OpenMSViewer
     {
       result.error = QStringLiteral("OpenMS could not read the file (unknown error).");
     }
+    return result;
+  }
+
+  ViewerDocument::LoadResult ViewerDocument::readThermoRaw(const QString& path,
+                                                           ProgressCallback,
+                                                           CancellationCheck cancelled)
+  {
+    LoadResult result;
+    result.sourcePath = QFileInfo(path).absoluteFilePath();
+    const QFileInfo file(result.sourcePath);
+    if (!file.exists() || !file.isFile())
+    {
+      result.error = QStringLiteral("File does not exist: %1").arg(result.sourcePath);
+      return result;
+    }
+#ifdef WITH_THERMO_RAW
+    try
+    {
+      auto experiment = std::make_shared<OpenMS::MSExperiment>();
+      OpenMS::ThermoRawFile reader;
+      reader.setLogType(OpenMS::ProgressLogger::NONE);
+      // The .NET bridge reads in one blocking call (no progress/cancel hook); the
+      // cancellation check still short-circuits the derivation phase below.
+      reader.load(result.sourcePath.toStdString(), *experiment);
+      if (cancelled && cancelled()) throw LoadCancelled();
+      deriveLoadResult(result, std::move(experiment), cancelled);
+    }
+    catch (const LoadCancelled&)
+    {
+      result.error = QStringLiteral("Loading cancelled.");
+    }
+    catch (const std::exception& error)
+    {
+      result.error = QStringLiteral("Could not read the Thermo RAW file: %1")
+                       .arg(QString::fromLocal8Bit(error.what()));
+    }
+    catch (...)
+    {
+      result.error = QStringLiteral("Could not read the Thermo RAW file (unknown error).");
+    }
+#else
+    result.error = QStringLiteral(
+      "This build of OpenMS was compiled without Thermo RAW support (WITH_THERMO_RAW).");
+#endif
+    return result;
+  }
+
+  ViewerDocument::LoadResult ViewerDocument::readBrukerTims(const QString& path,
+                                                            ProgressCallback,
+                                                            CancellationCheck cancelled)
+  {
+    LoadResult result;
+    result.sourcePath = QFileInfo(path).absoluteFilePath();
+    const QFileInfo dataset(result.sourcePath);
+    // A Bruker timsTOF .d dataset is a directory (analysis.tdf + binary blob).
+    if (!dataset.exists() || !dataset.isDir())
+    {
+      result.error = QStringLiteral("Bruker .d dataset not found (expected a directory): %1")
+                       .arg(result.sourcePath);
+      return result;
+    }
+#ifdef WITH_OPENTIMS
+    try
+    {
+      auto experiment = std::make_shared<OpenMS::MSExperiment>();
+      OpenMS::BrukerTimsFile reader;
+      reader.setLogType(OpenMS::ProgressLogger::NONE);
+      reader.load(result.sourcePath.toStdString(), *experiment);
+      if (cancelled && cancelled()) throw LoadCancelled();
+      deriveLoadResult(result, std::move(experiment), cancelled);
+    }
+    catch (const LoadCancelled&)
+    {
+      result.error = QStringLiteral("Loading cancelled.");
+    }
+    catch (const std::exception& error)
+    {
+      result.error = QStringLiteral("Could not read the Bruker .d dataset: %1")
+                       .arg(QString::fromLocal8Bit(error.what()));
+    }
+    catch (...)
+    {
+      result.error = QStringLiteral("Could not read the Bruker .d dataset (unknown error).");
+    }
+#else
+    result.error = QStringLiteral(
+      "This build of OpenMS was compiled without Bruker TDF support (WITH_OPENTIMS).");
+#endif
     return result;
   }
 

@@ -50,6 +50,9 @@ The current vertical slice supports:
 - on-disc OpenMS imzML/IBD imaging with TIC and ppm-window ion images,
   pixel-to-spectrum navigation, lazy spectrum decoding, and additive multi-ion
   RGB overlays without retaining the full imaging experiment in memory;
+- vendor raw-data loading through the OpenMS backends: Thermo `.raw` (needs a
+  .NET runtime for the bridge) and Bruker timsTOF `.d`/TDF (opentims, no vendor
+  SDK), the latter surfacing ion mobility directly into the IM panels;
 - b/y/a fragment-ion annotation using OpenMS theoretical spectra, external
   idXML fragment annotations, configurable Da tolerance, coverage statistics,
   and an optional mirror view with unmatched theoretical ions;
@@ -94,6 +97,13 @@ Run the application with optional mzML, FeatureXML, and idXML files:
 ```bash
 ./build/openms-viewer [sample.mzML] [features.featureXML] [ids.idXML]
 ```
+
+Thermo `.raw` files and Bruker timsTOF `.d` datasets load through the same
+entry points when the linked OpenMS was built with `WITH_THERMO_RAW` /
+`WITH_OPENTIMS`. A `.d` dataset is a directory, so open it via **File → Open
+Bruker .d folder…** (or drag the folder in). Thermo `.raw` additionally needs a
+.NET runtime available (set `DOTNET_ROOT` if it is not auto-detected); without
+it the load fails with a clear message rather than crashing.
 
 During development against the sibling OpenMS checkout in this workspace:
 

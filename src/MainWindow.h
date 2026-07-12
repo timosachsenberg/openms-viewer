@@ -67,6 +67,7 @@ namespace OpenMSViewer
 
   private slots:
     void openFile();
+    void openBrukerFolder();
     void finishLoad();
     void finishFeatureLoad();
     void finishIdentificationLoad();
@@ -179,6 +180,7 @@ namespace OpenMSViewer
     QLabel* viewContext_{nullptr};
 
     QAction* openAction_{nullptr};
+    QAction* openBrukerAction_{nullptr};
     QAction* reloadAction_{nullptr};
     QAction* closeDataAction_{nullptr};
     QAction* exportMzMLAction_{nullptr};

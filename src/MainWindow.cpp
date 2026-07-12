@@ -535,6 +535,11 @@ namespace OpenMSViewer
     openAction_->setShortcut(QKeySequence::Open);
     connect(openAction_, &QAction::triggered, this, &MainWindow::openFile);
 
+    // A Bruker timsTOF .d dataset is a directory, so it needs a folder picker
+    // rather than the file dialog above.
+    openBrukerAction_ = new QAction(tr("Open Bruker .d folder…"), this);
+    connect(openBrukerAction_, &QAction::triggered, this, &MainWindow::openBrukerFolder);
+
     reloadAction_ = new QAction(style()->standardIcon(QStyle::SP_BrowserReload), tr("Reload"), this);
     reloadAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
     reloadAction_->setEnabled(false);
@@ -794,6 +799,7 @@ namespace OpenMSViewer
   {
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
     fileMenu->addAction(openAction_);
+    fileMenu->addAction(openBrukerAction_);
     fileMenu->addAction(reloadAction_);
     recentFilesMenu_ = fileMenu->addMenu(tr("Open recent"));
     fileMenu->addAction(closeDataAction_);
@@ -1168,8 +1174,14 @@ namespace OpenMSViewer
   {
     QStringList valid;
     for (const QString& path : std::as_const(recentFiles_))
-      if (QFileInfo(path).isFile() && !valid.contains(QFileInfo(path).absoluteFilePath()))
-        valid.push_back(QFileInfo(path).absoluteFilePath());
+    {
+      // Bruker .d datasets are directories, so keep those alongside plain files.
+      const QFileInfo info(path);
+      const bool isBrukerDir = info.isDir()
+        && info.suffix().compare(QStringLiteral("d"), Qt::CaseInsensitive) == 0;
+      if ((info.isFile() || isBrukerDir) && !valid.contains(info.absoluteFilePath()))
+        valid.push_back(info.absoluteFilePath());
+    }
     recentFiles_ = valid.mid(0, 10);
     if (welcome_) welcome_->setRecentFiles(recentFiles_);
     if (!recentFilesMenu_) return;
@@ -1558,10 +1570,28 @@ namespace OpenMSViewer
     const QString startDirectory = settings.value(QStringLiteral("files/lastDirectory")).toString();
     const QStringList paths = QFileDialog::getOpenFileNames(
       this, tr("Open mass-spectrometry data"), startDirectory,
-      tr("OpenMS data (*.mzML *.mzml *.imzML *.imzml *.featureXML *.featurexml *.idXML *.idxml);;mzML files (*.mzML *.mzml);;imzML imaging files (*.imzML *.imzml);;FeatureXML files (*.featureXML *.featurexml);;idXML files (*.idXML *.idxml);;All files (*)"));
+      tr("OpenMS data (*.mzML *.mzml *.imzML *.imzml *.raw *.featureXML *.featurexml *.idXML *.idxml);;mzML files (*.mzML *.mzml);;imzML imaging files (*.imzML *.imzml);;Thermo RAW files (*.raw);;FeatureXML files (*.featureXML *.featurexml);;idXML files (*.idXML *.idxml);;All files (*)"));
     if (paths.isEmpty()) return;
     settings.setValue(QStringLiteral("files/lastDirectory"), QFileInfo(paths.front()).absolutePath());
     loadFiles(paths);
+  }
+
+  void MainWindow::openBrukerFolder()
+  {
+    QSettings settings;
+    const QString startDirectory = settings.value(QStringLiteral("files/lastDirectory")).toString();
+    const QString path = QFileDialog::getExistingDirectory(
+      this, tr("Open Bruker timsTOF .d dataset"), startDirectory,
+      QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (path.isEmpty()) return;
+    if (QFileInfo(path).suffix().compare(QStringLiteral("d"), Qt::CaseInsensitive) != 0)
+    {
+      statusBar()->showMessage(tr("Not a Bruker .d dataset: %1").arg(QFileInfo(path).fileName()), 5000);
+      notify(tr("Not a Bruker .d dataset — expected a folder ending in .d"), ToastLevel::Warning);
+      return;
+    }
+    settings.setValue(QStringLiteral("files/lastDirectory"), QFileInfo(path).absolutePath());
+    loadFile(path);
   }
 
   void MainWindow::loadFile(const QString& path)
@@ -1618,6 +1648,50 @@ namespace OpenMSViewer
       updateLoadingUi();
       return;
     }
+    if (suffix.compare(QStringLiteral("raw"), Qt::CaseInsensitive) == 0 && QFileInfo(path).isFile())
+    {
+      if (loadWatcher_.isRunning() || imagingLoadWatcher_.isRunning())
+      {
+        statusBar()->showMessage(tr("A primary data file is already loading"), 3000);
+        return;
+      }
+      statusBar()->showMessage(tr("Loading Thermo RAW %1…").arg(QFileInfo(path).fileName()));
+      mzMLLoadTimer_.start();
+      mzMLCancellation_ = std::make_shared<std::atomic_bool>(false);
+      // The vendor bridge reads in one blocking call with no progress/cancel
+      // hook, so the overlay stays indeterminate and non-cancellable.
+      beginOperation(MzMLOperation, tr("Loading Thermo RAW"),
+                     tr("Opening %1").arg(QFileInfo(path).fileName()), false);
+      const auto cancellation = mzMLCancellation_;
+      loadWatcher_.setFuture(QtConcurrent::run([path, cancellation]
+      {
+        return ViewerDocument::readThermoRaw(path, {},
+          [cancellation] { return cancellation->load(); });
+      }));
+      updateLoadingUi();
+      return;
+    }
+    if (suffix.compare(QStringLiteral("d"), Qt::CaseInsensitive) == 0 && QFileInfo(path).isDir())
+    {
+      if (loadWatcher_.isRunning() || imagingLoadWatcher_.isRunning())
+      {
+        statusBar()->showMessage(tr("A primary data file is already loading"), 3000);
+        return;
+      }
+      statusBar()->showMessage(tr("Loading Bruker .d %1…").arg(QFileInfo(path).fileName()));
+      mzMLLoadTimer_.start();
+      mzMLCancellation_ = std::make_shared<std::atomic_bool>(false);
+      beginOperation(MzMLOperation, tr("Loading Bruker .d"),
+                     tr("Opening %1").arg(QFileInfo(path).fileName()), false);
+      const auto cancellation = mzMLCancellation_;
+      loadWatcher_.setFuture(QtConcurrent::run([path, cancellation]
+      {
+        return ViewerDocument::readBrukerTims(path, {},
+          [cancellation] { return cancellation->load(); });
+      }));
+      updateLoadingUi();
+      return;
+    }
     if (suffix.compare(QStringLiteral("featureXML"), Qt::CaseInsensitive) == 0)
     {
       if (featureLoadWatcher_.isRunning())
@@ -1665,8 +1739,14 @@ namespace OpenMSViewer
         if (startedMzML) continue;
         startedMzML = true;
       }
-      else if (suffix.compare(QStringLiteral("imzML"), Qt::CaseInsensitive) == 0)
+      else if (suffix.compare(QStringLiteral("imzML"), Qt::CaseInsensitive) == 0
+               || (suffix.compare(QStringLiteral("raw"), Qt::CaseInsensitive) == 0
+                   && QFileInfo(path).isFile())
+               || (suffix.compare(QStringLiteral("d"), Qt::CaseInsensitive) == 0
+                   && QFileInfo(path).isDir()))
       {
+        // Only count a genuinely routable primary input, so an invalid .d file
+        // (or .raw directory) never masks a valid sibling in the same batch.
         if (startedMzML) continue;
         startedMzML = true;
       }
@@ -1700,8 +1780,8 @@ namespace OpenMSViewer
     if (!result.succeeded())
     {
       statusBar()->showMessage(tr("Load failed"), 5000);
-      notify(tr("mzML load failed"), ToastLevel::Error);
-      showOperationError(tr("Could not open file"), tr("The mzML file could not be loaded."), result.error);
+      notify(tr("Load failed"), ToastLevel::Error);
+      showOperationError(tr("Could not open file"), tr("The file could not be loaded."), result.error);
       return;
     }
     const QString sourcePath = result.sourcePath;
@@ -2495,16 +2575,27 @@ namespace OpenMSViewer
     QMainWindow::closeEvent(event);
   }
 
+  namespace
+  {
+    // A droppable input: Bruker .d must be a directory; every other supported
+    // format is a regular file.
+    bool isSupportedInputPath(const QString& path)
+    {
+      const QFileInfo info(path);
+      const QString suffix = info.suffix();
+      if (suffix.compare(QStringLiteral("d"), Qt::CaseInsensitive) == 0) return info.isDir();
+      for (const char* extension : {"mzML", "imzML", "raw", "featureXML", "idXML"})
+        if (suffix.compare(QLatin1String(extension), Qt::CaseInsensitive) == 0) return info.isFile();
+      return false;
+    }
+  }
+
   void MainWindow::dragEnterEvent(QDragEnterEvent* event)
   {
     if (!event->mimeData()->hasUrls()) return;
     for (const QUrl& url : event->mimeData()->urls())
     {
-      const QString suffix = QFileInfo(url.toLocalFile()).suffix();
-      if (suffix.compare(QStringLiteral("mzML"), Qt::CaseInsensitive) == 0
-          || suffix.compare(QStringLiteral("imzML"), Qt::CaseInsensitive) == 0
-          || suffix.compare(QStringLiteral("featureXML"), Qt::CaseInsensitive) == 0
-          || suffix.compare(QStringLiteral("idXML"), Qt::CaseInsensitive) == 0)
+      if (isSupportedInputPath(url.toLocalFile()))
       {
         event->acceptProposedAction();
         return;
@@ -2518,11 +2609,7 @@ namespace OpenMSViewer
     for (const QUrl& url : event->mimeData()->urls())
     {
       const QString path = url.toLocalFile();
-      const QString suffix = QFileInfo(path).suffix();
-      if (suffix.compare(QStringLiteral("mzML"), Qt::CaseInsensitive) == 0
-          || suffix.compare(QStringLiteral("imzML"), Qt::CaseInsensitive) == 0
-          || suffix.compare(QStringLiteral("featureXML"), Qt::CaseInsensitive) == 0
-          || suffix.compare(QStringLiteral("idXML"), Qt::CaseInsensitive) == 0)
+      if (isSupportedInputPath(path))
         paths.push_back(path);
     }
     if (!paths.isEmpty())

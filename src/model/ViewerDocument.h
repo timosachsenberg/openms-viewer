@@ -123,6 +123,16 @@ namespace OpenMSViewer
     [[nodiscard]] static LoadResult readMzML(const QString& path,
                                              ProgressCallback progress = {},
                                              CancellationCheck cancelled = {});
+    // Vendor formats via the OpenMS reader backends: Thermo .raw (openms-thermo
+    // bridge) and Bruker timsTOF .d/TDF (opentims). Both yield the same
+    // LoadResult as readMzML; each returns an error result if the linked OpenMS
+    // was built without the corresponding backend.
+    [[nodiscard]] static LoadResult readThermoRaw(const QString& path,
+                                                  ProgressCallback progress = {},
+                                                  CancellationCheck cancelled = {});
+    [[nodiscard]] static LoadResult readBrukerTims(const QString& path,
+                                                   ProgressCallback progress = {},
+                                                   CancellationCheck cancelled = {});
     [[nodiscard]] static FeatureLoadResult readFeatureXML(const QString& path);
     [[nodiscard]] static IdentificationLoadResult readIdXML(const QString& path);
     bool adopt(LoadResult result);

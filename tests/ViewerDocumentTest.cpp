@@ -5,6 +5,7 @@
 
 #include <OpenMS/FORMAT/MzMLFile.h>
 
+#include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -53,6 +54,33 @@ private slots:
       QStringLiteral("/definitely/not/a/real/file.mzML"));
     QVERIFY(!result.succeeded());
     QVERIFY(result.error.contains(QStringLiteral("does not exist")));
+  }
+
+  void vendorReadersValidateInputGracefully()
+  {
+    // Missing Thermo .raw file → graceful error, never a crash.
+    const auto thermo = OpenMSViewer::ViewerDocument::readThermoRaw(
+      QStringLiteral("/definitely/not/a/real/file.raw"));
+    QVERIFY(!thermo.succeeded());
+    QVERIFY(thermo.error.contains(QStringLiteral("does not exist")));
+
+    // A Bruker .d dataset is a directory; a missing path and a plain file both
+    // report the directory expectation rather than reaching the backend.
+    const auto missingDir = OpenMSViewer::ViewerDocument::readBrukerTims(
+      QStringLiteral("/definitely/not/a/real/dataset.d"));
+    QVERIFY(!missingDir.succeeded());
+    QVERIFY(missingDir.error.contains(QStringLiteral("directory")));
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString filePath = directory.filePath(QStringLiteral("not-a-dataset.d"));
+    QFile file(filePath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("not a tdf");
+    file.close();
+    const auto notADir = OpenMSViewer::ViewerDocument::readBrukerTims(filePath);
+    QVERIFY(!notADir.succeeded());
+    QVERIFY(notADir.error.contains(QStringLiteral("directory")));
   }
 
   void loadsSummarizesAndNavigates()

@@ -1,5 +1,7 @@
 #include "widgets/ChromatogramPanelWidget.h"
 
+#include "plot/PlotAxis.h"
+
 #include <QAbstractTableModel>
 #include <QFileDialog>
 #include <QHeaderView>
@@ -233,6 +235,12 @@ namespace OpenMSViewer
       return area.bottom() - intensity / intensityMaximum * area.height();
     };
 
+    // "Nice" numeric ticks (shared with the TIC) so RT and intensity read as
+    // round values instead of arbitrary fractions of the range.
+    const double factor = rtInMinutes_ ? 60.0 : 1.0;
+    const auto rtTicks = PlotAxis::niceTicks(rtMinimum / factor, rtMaximum / factor, 6);
+    const auto intensityTicks = PlotAxis::niceTicks(0.0, intensityMaximum, 5);
+
     if (peakMapRtRange_)
     {
       const double leftRt = std::max(rtMinimum, peakMapRtRange_->first);
@@ -244,13 +252,18 @@ namespace OpenMSViewer
       }
     }
 
-    painter.setPen(QPen(palette().color(QPalette::Mid), 1.0, Qt::DashLine));
-    for (int tick = 1; tick < 5; ++tick)
+    painter.setPen(QPen(palette().color(QPalette::Mid), 1.0, Qt::DotLine));
+    for (const double tick : rtTicks)
     {
-      const double x = area.left() + area.width() * tick / 5.0;
-      const double y = area.top() + area.height() * tick / 5.0;
-      painter.drawLine(QPointF(x, area.top()), QPointF(x, area.bottom()));
-      painter.drawLine(QPointF(area.left(), y), QPointF(area.right(), y));
+      const double x = mapX(tick * factor);
+      if (x >= area.left() - 0.5 && x <= area.right() + 0.5)
+        painter.drawLine(QPointF(x, area.top()), QPointF(x, area.bottom()));
+    }
+    for (const double tick : intensityTicks)
+    {
+      const double y = mapY(tick);
+      if (y >= area.top() - 0.5 && y <= area.bottom() + 0.5)
+        painter.drawLine(QPointF(area.left(), y), QPointF(area.right(), y));
     }
 
     static constexpr std::array<QColor, 8> colors{
@@ -274,19 +287,27 @@ namespace OpenMSViewer
       ++colorIndex;
     }
 
+    // Numeric tick marks + labels. RT label precision follows the tick spacing so
+    // closely-spaced ticks (or large RT offsets) never render as the same text.
+    const double rtStep = rtTicks.size() > 1 ? std::abs(rtTicks[1] - rtTicks[0]) : 1.0;
+    const int rtDecimals = rtStep >= 1.0
+      ? 0 : std::min(6, static_cast<int>(std::ceil(-std::log10(rtStep))));
     painter.setPen(palette().color(QPalette::Text));
-    const double factor = rtInMinutes_ ? 60.0 : 1.0;
-    for (int tick = 0; tick <= 5; ++tick)
+    for (const double tick : rtTicks)
     {
-      const double fraction = tick / 5.0;
-      const double x = area.left() + fraction * area.width();
-      const double rt = rtMinimum + fraction * (rtMaximum - rtMinimum);
-      painter.drawText(QRectF(x - 40.0, area.bottom() + 5.0, 80.0, 20.0),
-                       Qt::AlignHCenter | Qt::AlignTop, QString::number(rt / factor, 'f', 2));
-      const double intensity = intensityMaximum * (1.0 - fraction);
-      const double y = area.top() + fraction * area.height();
-      painter.drawText(QRectF(0.0, y - 10.0, area.left() - 8.0, 20.0),
-                       Qt::AlignRight | Qt::AlignVCenter, QString::number(intensity, 'g', 3));
+      const double x = mapX(tick * factor);
+      if (x < area.left() - 0.5 || x > area.right() + 0.5) continue;
+      painter.drawLine(QPointF(x, area.bottom()), QPointF(x, area.bottom() + 4.0));
+      painter.drawText(QRectF(x - 42.0, area.bottom() + 5.0, 84.0, 15.0),
+                       Qt::AlignHCenter | Qt::AlignTop, QString::number(tick, 'f', rtDecimals));
+    }
+    for (const double tick : intensityTicks)
+    {
+      const double y = mapY(tick);
+      if (y < area.top() - 0.5 || y > area.bottom() + 0.5) continue;
+      painter.drawLine(QPointF(area.left() - 4.0, y), QPointF(area.left(), y));
+      painter.drawText(QRectF(0.0, y - 8.0, area.left() - 6.0, 16.0),
+                       Qt::AlignRight | Qt::AlignVCenter, QString::number(tick, 'g', 3));
     }
     painter.drawText(QRectF(area.left(), height() - 23.0, area.width(), 20.0), Qt::AlignCenter,
                      rtInMinutes_ ? tr("Retention time (min)") : tr("Retention time (s)"));

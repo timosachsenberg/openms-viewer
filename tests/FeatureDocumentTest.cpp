@@ -77,6 +77,80 @@ private slots:
     QVERIFY(!document.hasFeatures());
     QVERIFY(document.features().empty());
   }
+
+  void manualEditAddUpdateRemove()
+  {
+    OpenMSViewer::ViewerDocument document;
+    QSignalSpy changed(&document, &OpenMSViewer::ViewerDocument::featuresChanged);
+
+    // Add creates the feature map on a bare document.
+    const std::size_t index = document.addFeature(1234.5, 567.89, 4200.0, 3);
+    QCOMPARE(index, std::size_t{0});
+    QCOMPARE(changed.count(), 1);
+    QVERIFY(document.hasFeatures());
+    QCOMPARE(document.features().size(), std::size_t{1});
+    const OpenMSViewer::FeatureRecord* added = document.feature(0);
+    QVERIFY(added != nullptr);
+    QCOMPARE(added->rt, 1234.5);
+    QCOMPARE(added->mz, 567.89);
+    QCOMPARE(added->charge, 3);
+    // No convex hull → a default box around the centroid.
+    QVERIFY(added->bounds.rtMin < 1234.5 && added->bounds.rtMax > 1234.5);
+
+    document.addFeature(2000.0, 800.0, 100.0, 1);
+    QCOMPARE(document.features().size(), std::size_t{2});
+
+    // Update moves/edits the first feature.
+    document.updateFeature(0, 1300.0, 570.0, 9000.0, 2);
+    QCOMPARE(document.feature(0)->rt, 1300.0);
+    QCOMPARE(document.feature(0)->mz, 570.0);
+    QCOMPARE(document.feature(0)->intensity, 9000.0);
+    QCOMPARE(document.feature(0)->charge, 2);
+
+    // Remove drops it; indices are rebuilt.
+    document.removeFeature(0);
+    QCOMPARE(document.features().size(), std::size_t{1});
+    QCOMPARE(document.feature(0)->mz, 800.0);  // the second feature, now index 0
+
+    // Out-of-range edits are no-ops.
+    const int before = changed.count();
+    document.updateFeature(99, 0.0, 0.0, 0.0, 0);
+    document.removeFeature(99);
+    QCOMPARE(changed.count(), before);
+
+    // Round-trips through featureXML (the manual features are real Features).
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString out = dir.filePath(QStringLiteral("edited.featureXML"));
+    QString error;
+    QVERIFY2(document.saveFeatures(out, error), qPrintable(error));
+    OpenMS::FeatureMap reloaded;
+    OpenMS::FeatureXMLFile().load(out.toStdString(), reloaded);
+    QCOMPARE(reloaded.size(), std::size_t{1});
+  }
+
+  void editKeepsHullUnlessMoved()
+  {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("hulls.featureXML"));
+    OpenMS::FeatureXMLFile().store(path.toStdString(), OpenMSViewer::TestData::featureMap());
+
+    OpenMSViewer::ViewerDocument document;
+    QVERIFY(document.adoptFeatures(OpenMSViewer::ViewerDocument::readFeatureXML(path)));
+    QVERIFY(!document.feature(0)->hulls.empty());  // loaded with a convex hull
+
+    // Editing only intensity/charge (same RT/m·z) keeps the hull.
+    const double rt = document.feature(0)->rt;
+    const double mz = document.feature(0)->mz;
+    document.updateFeature(0, rt, mz, 12345.0, 4);
+    QVERIFY(!document.feature(0)->hulls.empty());
+    QCOMPARE(document.feature(0)->intensity, 12345.0);
+
+    // Moving the centroid drops the now-mismatched hull (falls back to a box).
+    document.updateFeature(0, rt + 10.0, mz, 12345.0, 4);
+    QVERIFY(document.feature(0)->hulls.empty());
+  }
 };
 
 int runFeatureDocumentTests(int argc, char** argv)

@@ -102,6 +102,8 @@ add_library(openms_viewer_ui STATIC
   src/widgets/ChromatogramPanelWidget.h
   src/widgets/FeatureTableWidget.cpp
   src/widgets/FeatureTableWidget.h
+  src/widgets/FeatureEditDialog.cpp
+  src/widgets/FeatureEditDialog.h
   src/widgets/FaimsPanelWidget.cpp
   src/widgets/FaimsPanelWidget.h
   src/widgets/IdentificationTableWidget.cpp

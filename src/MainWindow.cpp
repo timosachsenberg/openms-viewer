@@ -22,6 +22,7 @@
 #include "widgets/OswPanel.h"
 #include "widgets/ConsensusPanel.h"
 #include "widgets/MetadataBrowserWidget.h"
+#include "widgets/FeatureEditDialog.h"
 #include "model/ConsensusDrilldown.h"
 #include "widgets/LoadingOverlayWidget.h"
 #include "widgets/SpectrumWidget.h"
@@ -330,6 +331,44 @@ namespace OpenMSViewer
       selectIdentification(index, 0);
     });
     connect(peakMap_, &PeakMapWidget::precursorActivated, this, &MainWindow::selectSpectrum);
+    // Manual feature editing (Edit interaction mode). Each mutates the document's
+    // FeatureMap; featuresChanged then refreshes the overlay + table, and the
+    // "Save features as…" action persists the edits.
+    connect(peakMap_, &PeakMapWidget::featureCreateRequested, this, [this](double rt, double mz)
+    {
+      if (featureLoadWatcher_.isRunning()) return;  // a load is replacing the map
+      const std::size_t index = document_.addFeature(rt, mz, 0.0, 1);
+      selection_.setFeature(index);  // fans out to peak map + table (after featuresChanged)
+      notify(tr("Added feature at RT %1 s · m/z %2").arg(rt, 0, 'f', 1).arg(mz, 0, 'f', 4),
+             ToastLevel::Info);
+    });
+    connect(peakMap_, &PeakMapWidget::featureMoveRequested, this,
+            [this](std::size_t index, double rt, double mz)
+    {
+      if (featureLoadWatcher_.isRunning()) return;
+      const FeatureRecord* feature = document_.feature(index);
+      if (!feature) return;
+      document_.updateFeature(index, rt, mz, feature->intensity, feature->charge);
+      selection_.setFeature(index);
+    });
+    connect(peakMap_, &PeakMapWidget::featureEditRequested, this, [this](std::size_t index)
+    {
+      // Block while a load is in flight; the dialog itself is modal, so no new load
+      // can start (and swap the map) while it is open.
+      if (featureLoadWatcher_.isRunning()) return;
+      const FeatureRecord* feature = document_.feature(index);
+      if (!feature) return;
+      FeatureEditDialog dialog(feature->rt, feature->mz, feature->intensity, feature->charge, this);
+      if (dialog.exec() != QDialog::Accepted) return;
+      document_.updateFeature(index, dialog.rt(), dialog.mz(), dialog.intensity(), dialog.charge());
+      selection_.setFeature(index);
+    });
+    connect(peakMap_, &PeakMapWidget::featureDeleteRequested, this, [this](std::size_t index)
+    {
+      if (featureLoadWatcher_.isRunning()) return;
+      document_.removeFeature(index);
+      notify(tr("Feature deleted"), ToastLevel::Info);
+    });
     // SelectionController is the single source of truth: its signals drive the
     // per-panel leaf appliers, so any selection source updates every panel.
     connect(&selection_, &SelectionController::spectrumChanged,
@@ -962,7 +1001,7 @@ namespace OpenMSViewer
     peakMapControlBar_->addWidget(modeLabel);
     auto* interactionMode = new QComboBox(peakMapControlBar_);
     interactionMode->setObjectName(QStringLiteral("peakMapInteractionMode"));
-    interactionMode->addItems({tr("Zoom (Z)"), tr("Pan (P)"), tr("Measure (M)")});
+    interactionMode->addItems({tr("Zoom (Z)"), tr("Pan (P)"), tr("Measure (M)"), tr("Edit features (E)")});
     interactionMode->setToolTip(tr("Choose what dragging in the peak map does"));
     interactionMode->setAccessibleName(tr("Peak-map interaction mode"));
     peakMapControlBar_->addWidget(interactionMode);

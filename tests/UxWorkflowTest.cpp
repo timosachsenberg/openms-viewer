@@ -61,7 +61,7 @@ private slots:
     QVERIFY(stack && welcome && peakMap && interaction && level && scan && runContext && loading && ticDock);
     QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(welcome));
     QVERIFY(!ticDock->toggleViewAction()->isEnabled());
-    QCOMPARE(interaction->count(), 3);
+    QCOMPARE(interaction->count(), 4);  // Zoom / Pan / Measure / Edit
     QCOMPARE(level->count(), 3);
     QVERIFY(!interaction->isVisible());
     QVERIFY(!peakMap->accessibleName().isEmpty());

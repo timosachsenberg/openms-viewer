@@ -21,7 +21,7 @@ class QKeyEvent;
 
 namespace OpenMSViewer
 {
-  enum class PeakMapInteractionMode { Zoom, Pan, Measure };
+  enum class PeakMapInteractionMode { Zoom, Pan, Measure, Edit };
 
   // One MS/MS precursor as an overlay marker: the isolation window (m/z low..high)
   // at the fragmentation scan's RT, plus the selected precursor m/z and charge.
@@ -106,6 +106,11 @@ namespace OpenMSViewer
     void featureActivated(std::size_t featureIndex);
     void identificationActivated(std::size_t identificationIndex);
     void precursorActivated(std::size_t spectrumIndex);
+    // Feature-edit gestures (only emitted in Edit interaction mode).
+    void featureCreateRequested(double rt, double mz);
+    void featureMoveRequested(std::size_t featureIndex, double rt, double mz);
+    void featureEditRequested(std::size_t featureIndex);
+    void featureDeleteRequested(std::size_t featureIndex);
     void zoomHistoryChanged(bool canGoBack);
     void interactionModeChanged(int modeIndex);
     void cursorPositionChanged(double rt, double mz, double intensity);
@@ -123,7 +128,7 @@ namespace OpenMSViewer
     void keyPressEvent(QKeyEvent* event) override;
 
   private:
-    enum class DragMode { None, Zoom, Pan, Measure };
+    enum class DragMode { None, Zoom, Pan, Measure, Edit };
 
     [[nodiscard]] QRect plotRect() const;
     [[nodiscard]] QPointF dataAt(const QPointF& position) const;
@@ -187,6 +192,12 @@ namespace OpenMSViewer
     std::uint64_t activeMinimapGeneration_{0};
 
     DragMode dragMode_{DragMode::None};
+    std::optional<std::size_t> editFeatureIndex_;  // feature grabbed in Edit mode (else create)
+    // Empty-space feature creation is deferred by the double-click interval so a
+    // double-click (which Qt delivers as press+release+dblclick+release) opens the
+    // edit dialog / resets the view instead of leaving a phantom feature.
+    QTimer editCreateTimer_;
+    QPointF pendingCreateData_;
     QPoint dragStart_;
     QPoint dragCurrent_;
     QPoint dragPrevious_;

@@ -858,6 +858,48 @@ namespace OpenMSViewer
     return false;
   }
 
+  std::size_t ViewerDocument::addFeature(double rt, double mz, double intensity, int charge)
+  {
+    if (!featureMap_) featureMap_ = std::make_shared<OpenMS::FeatureMap>();
+    OpenMS::Feature feature;
+    feature.setRT(rt);
+    feature.setMZ(mz);
+    feature.setIntensity(static_cast<OpenMS::Feature::IntensityType>(intensity));
+    feature.setCharge(charge);
+    feature.setOverallQuality(1.0);
+    feature.ensureUniqueId();
+    featureMap_->push_back(feature);
+    const std::size_t index = featureMap_->size() - 1;
+    features_ = buildFeatureRecords(*featureMap_);
+    emit featuresChanged();
+    return index;
+  }
+
+  void ViewerDocument::updateFeature(std::size_t index, double rt, double mz,
+                                     double intensity, int charge)
+  {
+    if (!featureMap_ || index >= featureMap_->size()) return;
+    OpenMS::Feature& feature = (*featureMap_)[index];
+    // Only a moved centroid invalidates the stored convex hull; an intensity/charge-
+    // only edit must keep it (dropping it would lose real geometry on save).
+    const bool moved = feature.getRT() != rt || feature.getMZ() != mz;
+    feature.setRT(rt);
+    feature.setMZ(mz);
+    feature.setIntensity(static_cast<OpenMS::Feature::IntensityType>(intensity));
+    feature.setCharge(charge);
+    if (moved) feature.getConvexHulls().clear();
+    features_ = buildFeatureRecords(*featureMap_);
+    emit featuresChanged();
+  }
+
+  void ViewerDocument::removeFeature(std::size_t index)
+  {
+    if (!featureMap_ || index >= featureMap_->size()) return;
+    featureMap_->erase(featureMap_->begin() + static_cast<std::ptrdiff_t>(index));
+    features_ = buildFeatureRecords(*featureMap_);
+    emit featuresChanged();
+  }
+
   bool ViewerDocument::isEmpty() const noexcept { return experiment_ == nullptr; }
   const QString& ViewerDocument::sourcePath() const noexcept { return sourcePath_; }
   const PlotRange& ViewerDocument::bounds() const noexcept { return bounds_; }

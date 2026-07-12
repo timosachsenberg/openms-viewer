@@ -5,6 +5,7 @@
 
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <QApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -44,6 +45,11 @@ namespace OpenMSViewer
     renderTimer_.setSingleShot(true);
     renderTimer_.setInterval(45);
     connect(&renderTimer_, &QTimer::timeout, this, &PeakMapWidget::startRender);
+    editCreateTimer_.setSingleShot(true);
+    connect(&editCreateTimer_, &QTimer::timeout, this, [this]
+    {
+      emit featureCreateRequested(pendingCreateData_.x(), pendingCreateData_.y());
+    });
     connect(&renderWatcher_, &QFutureWatcher<QImage>::finished, this, [this]
     {
       if (activeGeneration_ == desiredGeneration_)
@@ -280,7 +286,7 @@ namespace OpenMSViewer
 
   void PeakMapWidget::setInteractionMode(int modeIndex)
   {
-    const auto mode = static_cast<PeakMapInteractionMode>(std::clamp(modeIndex, 0, 2));
+    const auto mode = static_cast<PeakMapInteractionMode>(std::clamp(modeIndex, 0, 3));
     if (mode == interactionMode_) return;
     interactionMode_ = mode;
     updateInteractionCursor();
@@ -1024,7 +1030,10 @@ namespace OpenMSViewer
 
   std::optional<std::size_t> PeakMapWidget::nearestFeature(const QPointF& position) const
   {
-    if (!showFeatureCentroids_ || features_.empty() || !plotRect().contains(position.toPoint()))
+    // Hit-test whenever any feature overlay is visible (centroids OR bounds OR hulls),
+    // so Edit-mode grab/move and hover work even when centroids alone are hidden.
+    const bool anyFeatureOverlay = showFeatureCentroids_ || showFeatureBounds_ || showFeatureHulls_;
+    if (!anyFeatureOverlay || features_.empty() || !plotRect().contains(position.toPoint()))
       return std::nullopt;
     double bestSquaredDistance = 15.0 * 15.0;
     std::optional<std::size_t> best;
@@ -1100,8 +1109,11 @@ namespace OpenMSViewer
   {
     painter.save();
     const QString mode = interactionMode_ == PeakMapInteractionMode::Pan ? tr("Pan")
-      : interactionMode_ == PeakMapInteractionMode::Measure ? tr("Measure") : tr("Zoom");
-    const QString hint = tr("%1 mode · wheel zoom · double-click reset").arg(mode);
+      : interactionMode_ == PeakMapInteractionMode::Measure ? tr("Measure")
+      : interactionMode_ == PeakMapInteractionMode::Edit ? tr("Edit") : tr("Zoom");
+    const QString hint = interactionMode_ == PeakMapInteractionMode::Edit
+      ? tr("Edit features · click empty = add · drag = move · dbl-click = edit · Del = delete")
+      : tr("%1 mode · wheel zoom · double-click reset").arg(mode);
     const int hintWidth = painter.fontMetrics().horizontalAdvance(hint) + 18;
     const QRect hintRect(area.left() + 8, area.top() + 8, hintWidth, 24);
     painter.setPen(QColor(230, 230, 235));
@@ -1293,6 +1305,13 @@ namespace OpenMSViewer
       setCursor(Qt::ClosedHandCursor);
     }
     else if (interactionMode_ == PeakMapInteractionMode::Measure) dragMode_ = DragMode::Measure;
+    else if (interactionMode_ == PeakMapInteractionMode::Edit)
+    {
+      // Grab the feature under the cursor to move it; empty space starts a create.
+      dragMode_ = DragMode::Edit;
+      editFeatureIndex_ = nearestFeature(event->position());
+      if (editFeatureIndex_) selectedFeature_ = editFeatureIndex_;
+    }
     else dragMode_ = DragMode::Zoom;
     event->accept();
   }
@@ -1436,6 +1455,22 @@ namespace OpenMSViewer
         if (!specificNavigation) emit rtActivated(dataAt(dragCurrent_).x());
       }
     }
+    else if (completedMode == DragMode::Edit)
+    {
+      const bool moved = (dragCurrent_ - dragStart_).manhattanLength() >= 6;
+      const QPointF data = dataAt(dragCurrent_);
+      if (editFeatureIndex_)  // grabbed an existing feature
+      {
+        if (moved) emit featureMoveRequested(*editFeatureIndex_, data.x(), data.y());
+        else emit featureActivated(*editFeatureIndex_);  // a plain click just selects it
+      }
+      else if (!moved)  // clicked empty space → create, unless a double-click follows
+      {
+        pendingCreateData_ = data;
+        editCreateTimer_.start(QApplication::doubleClickInterval());
+      }
+      editFeatureIndex_.reset();
+    }
     update();
     event->accept();
   }
@@ -1444,6 +1479,21 @@ namespace OpenMSViewer
   {
     if (event->button() == Qt::LeftButton && plotRect().contains(event->position().toPoint()))
     {
+      // In Edit mode a double-click on a feature opens its edit dialog; the pending
+      // press started an Edit drag and the first release armed a create — cancel both.
+      if (interactionMode_ == PeakMapInteractionMode::Edit)
+      {
+        dragMode_ = DragMode::None;
+        editFeatureIndex_.reset();
+        editCreateTimer_.stop();  // this was a double-click, not a create
+        if (const auto feature = nearestFeature(event->position()))
+        {
+          selectedFeature_ = feature;
+          emit featureEditRequested(*feature);
+          event->accept();
+          return;
+        }
+      }
       resetView();
       event->accept();
       return;
@@ -1471,10 +1521,16 @@ namespace OpenMSViewer
       event->accept();
       return;
     }
-    if (event->key() == Qt::Key_G) showGoToRangeDialog();
+    if ((event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace)
+        && interactionMode_ == PeakMapInteractionMode::Edit && selectedFeature_)
+    {
+      emit featureDeleteRequested(*selectedFeature_);
+    }
+    else if (event->key() == Qt::Key_G) showGoToRangeDialog();
     else if (event->key() == Qt::Key_Z) setInteractionMode(0);
     else if (event->key() == Qt::Key_P) setInteractionMode(1);
     else if (event->key() == Qt::Key_M) setInteractionMode(2);
+    else if (event->key() == Qt::Key_E) setInteractionMode(3);
     else
     {
       QWidget::keyPressEvent(event);

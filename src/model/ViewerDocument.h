@@ -157,6 +157,13 @@ namespace OpenMSViewer
     [[nodiscard]] bool saveFeatures(const QString& path, QString& error) const;
     [[nodiscard]] bool saveIdentifications(const QString& path, QString& error) const;
 
+    // Manual feature-map editing (TOPPView EDIT mode). Each mutates the in-memory
+    // FeatureMap, rebuilds the derived records and emits featuresChanged. addFeature
+    // creates the map if none is loaded, so features can be drawn onto a bare run.
+    std::size_t addFeature(double rt, double mz, double intensity, int charge);
+    void updateFeature(std::size_t index, double rt, double mz, double intensity, int charge);
+    void removeFeature(std::size_t index);
+
     [[nodiscard]] bool isEmpty() const noexcept;
     [[nodiscard]] const QString& sourcePath() const noexcept;
     [[nodiscard]] const PlotRange& bounds() const noexcept;

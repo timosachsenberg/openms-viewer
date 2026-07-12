@@ -84,6 +84,39 @@ private slots:
     charge->setCurrentIndex(2);
     QTRY_COMPARE(table->model()->rowCount(), 1);
   }
+
+  // Edit mode: clicking empty space creates a feature; Delete removes the selected one.
+  void editModeCreatesAndDeletesFeatures()
+  {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString mzmlPath = directory.filePath(QStringLiteral("edit.mzML"));
+    OpenMS::MzMLFile().store(mzmlPath.toStdString(), OpenMSViewer::TestData::experiment());
+
+    OpenMSViewer::MainWindow window;
+    window.resize(1100, 760);
+    window.show();
+    window.loadFiles({mzmlPath});
+    auto* peakMap = window.findChild<OpenMSViewer::PeakMapWidget*>();
+    QVERIFY(peakMap != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(peakMap->hasExperiment(), 5000);
+
+    peakMap->setInteractionMode(3);  // Edit
+    peakMap->resetView();
+    const QPoint spot = peakMap->mapDataToWidget(15.0, 500.0).toPoint();
+    QTest::mouseClick(peakMap, Qt::LeftButton, Qt::NoModifier, spot);  // empty → create
+
+    auto* featureWidget = window.findChild<OpenMSViewer::FeatureTableWidget*>();
+    QVERIFY(featureWidget != nullptr);
+    auto* table = featureWidget->findChild<QTableView*>();
+    QVERIFY(table != nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(peakMap->selectedFeature().has_value(), 2000);
+
+    peakMap->setFocus();
+    QTest::keyClick(peakMap, Qt::Key_Delete);  // selected feature → delete
+    QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 0, 3000);
+  }
 };
 
 int runMainWindowFeatureWorkflowTests(int argc, char** argv)

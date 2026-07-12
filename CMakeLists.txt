@@ -62,6 +62,8 @@ add_library(openms_viewer_core STATIC
   src/model/ChromatogramSource.h
   src/model/OswDocument.cpp
   src/model/OswDocument.h
+  src/model/ConsensusDocument.cpp
+  src/model/ConsensusDocument.h
   src/plot/PeakMapRasterizer.cpp
   src/plot/PeakMapRasterizer.h
   src/plot/PlotAxis.cpp
@@ -185,6 +187,7 @@ if(OPENMS_VIEWER_BUILD_TESTS)
     tests/OswStoreTest.cpp
     tests/ChromatogramSourceTest.cpp
     tests/OswPanelTest.cpp
+    tests/ConsensusDocumentTest.cpp
     tests/PeakMapRasterizerTest.cpp
     tests/FeatureDocumentTest.cpp
     tests/IdentificationDocumentTest.cpp

@@ -159,6 +159,8 @@ namespace OpenMSViewer
     [[nodiscard]] const DocumentStatistics& statistics() const noexcept;
     [[nodiscard]] const std::vector<SpectrumRecord>& spectra() const noexcept;
     [[nodiscard]] const SpectrumRecord* spectrumRecord(std::size_t index) const noexcept;
+    [[nodiscard]] std::optional<std::size_t> spectrumIndexForNativeId(
+      const QString& nativeId) const noexcept;
     [[nodiscard]] const std::vector<ChromatogramRecord>& chromatograms() const noexcept;
     [[nodiscard]] bool hasChromatograms() const noexcept;
     [[nodiscard]] bool hasIonMobility() const noexcept;

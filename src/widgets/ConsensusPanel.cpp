@@ -158,6 +158,17 @@ namespace OpenMSViewer
 
     connect(view_->selectionModel(), &QItemSelectionModel::currentRowChanged,
             this, [this](const QModelIndex& current) { onFeatureActivated(current); });
+    // A deliberate double-click (never mere selection) drills into the source scan,
+    // so highlighting on arrow-key browsing stays non-intrusive. doubleClicked is
+    // also reliable across styles/platforms, unlike the activation-trigger-dependent
+    // QAbstractItemView::activated.
+    connect(view_, &QTableView::doubleClicked, this, [this](const QModelIndex& index)
+    {
+      if (!index.isValid()) return;
+      const int sourceRow = proxy_->mapToSource(index).row();
+      if (sourceRow >= 0 && sourceRow < static_cast<int>(features_.size()))
+        emit featureDrillDown(static_cast<qint64>(model_->row(sourceRow).index));
+    });
     connect(search_, &QLineEdit::textChanged, this,
             [this](const QString& text) { proxy_->setSearch(text); reselectAfterFilter(); });
     connect(minMaps_, &QSpinBox::valueChanged, this,

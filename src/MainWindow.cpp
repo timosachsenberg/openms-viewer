@@ -3,6 +3,7 @@
 #include "model/FormatRegistry.h"
 
 #include <OpenMS/FORMAT/FileTypes.h>
+#include <OpenMS/KERNEL/ConsensusMap.h>
 
 #include "export/MzMLExportDialog.h"
 #include "export/PlotExporter.h"
@@ -20,6 +21,7 @@
 #include "widgets/LogWidget.h"
 #include "widgets/OswPanel.h"
 #include "widgets/ConsensusPanel.h"
+#include "model/ConsensusDrilldown.h"
 #include "widgets/LoadingOverlayWidget.h"
 #include "widgets/SpectrumWidget.h"
 #include "widgets/TicWidget.h"
@@ -375,6 +377,10 @@ namespace OpenMSViewer
             this, &MainWindow::selectFeatureAndZoom);
     connect(identifications_, &IdentificationTableWidget::identificationActivated,
             this, &MainWindow::selectIdentification);
+    connect(consensus_, &ConsensusPanel::featureActivated,
+            this, &MainWindow::onConsensusFeatureActivated);
+    connect(consensus_, &ConsensusPanel::featureDrillDown,
+            this, &MainWindow::onConsensusFeatureDrillDown);
 
     QSettings settings;
     if (settings.contains(QStringLiteral("main/geometry")))
@@ -720,6 +726,13 @@ namespace OpenMSViewer
     connect(showIdentificationSequencesAction_, &QAction::toggled,
             peakMap_, &PeakMapWidget::setShowIdentificationSequences);
 
+    showConsensusAction_ = new QAction(tr("Consensus features"), this);
+    showConsensusAction_->setCheckable(true);
+    showConsensusAction_->setChecked(true);
+    showConsensusAction_->setEnabled(false);
+    connect(showConsensusAction_, &QAction::toggled,
+            peakMap_, &PeakMapWidget::setShowConsensus);
+
     clearFeatureOverlayAction_ = new QAction(tr("Clear feature overlay"), this);
     connect(clearFeatureOverlayAction_, &QAction::triggered, this, [this]
     {
@@ -977,6 +990,8 @@ namespace OpenMSViewer
     overlayMenu->addSeparator();
     overlayMenu->addAction(showIdentificationsAction_);
     overlayMenu->addAction(showIdentificationSequencesAction_);
+    overlayMenu->addSeparator();
+    overlayMenu->addAction(showConsensusAction_);
     overlayMenu->addSeparator();
     overlayMenu->addAction(clearFeatureOverlayAction_);
     overlayMenu->addAction(clearIdentificationOverlayAction_);
@@ -1271,9 +1286,15 @@ namespace OpenMSViewer
     setDockAvailable(oswDock_, false);
     if (osw_) osw_->clear();
     hasOswData_ = false;
+    oswSourcePath_.clear();
     setDockAvailable(consensusDock_, false);
     if (consensus_) consensus_->clear();
     hasConsensusData_ = false;
+    consensusMap_.reset();
+    consensusColumns_.clear();
+    consensusSourcePath_.clear();
+    if (peakMap_) peakMap_->setConsensusFeatures({});
+    if (showConsensusAction_) showConsensusAction_->setEnabled(false);
   }
 
   void MainWindow::showDataPage()
@@ -1492,17 +1513,36 @@ namespace OpenMSViewer
   void MainWindow::updateRunContext()
   {
     reloadAction_->setEnabled(!lastPrimaryPath_.isEmpty() && QFileInfo::exists(lastPrimaryPath_));
+    // Results views (consensus / OSW) can be loaded alongside — or instead of — a raw
+    // run, so they are tagged everywhere rather than only on the raw-run branch.
+    QStringList results;
+    if (hasConsensusData_) results << tr("Consensus");
+    if (hasOswData_) results << tr("OSW");
+    const QString resultsTag = results.isEmpty()
+      ? QString() : tr(" · %1").arg(results.join(QStringLiteral(" + ")));
+
     if (imagingStore_)
     {
-      runContext_->setText(tr("%1 · %2 pixels")
-        .arg(QFileInfo(imagingSummary_.sourcePath).fileName()).arg(imagingSummary_.pixels.size()));
+      runContext_->setText(tr("%1 · %2 pixels%3")
+        .arg(QFileInfo(imagingSummary_.sourcePath).fileName())
+        .arg(imagingSummary_.pixels.size()).arg(resultsTag));
       runContext_->setToolTip(imagingSummary_.sourcePath);
       return;
     }
     if (document_.isEmpty())
     {
-      runContext_->setText(tr("No data"));
-      runContext_->setToolTip({});
+      // Results-only session (no raw run): surface the results instead of "No data".
+      if (!results.isEmpty())
+      {
+        const QString source = hasConsensusData_ ? consensusSourcePath_ : oswSourcePath_;
+        runContext_->setText(tr("%1%2").arg(QFileInfo(source).fileName(), resultsTag));
+        runContext_->setToolTip(source);
+      }
+      else
+      {
+        runContext_->setText(tr("No data"));
+        runContext_->setToolTip({});
+      }
       selectionContext_->setText(tr("Spectrum —"));
       viewContext_->setText(tr("View —"));
       return;
@@ -1510,12 +1550,93 @@ namespace OpenMSViewer
     QStringList overlays;
     if (document_.hasFeatures()) overlays << tr("Features");
     if (document_.hasIdentifications()) overlays << tr("IDs");
+    overlays += results;
     QString text = tr("%1 · %2 spectra · %3 peaks")
       .arg(QFileInfo(document_.sourcePath()).fileName())
       .arg(document_.statistics().spectrumCount).arg(document_.statistics().peakCount);
     if (!overlays.isEmpty()) text += tr(" · %1").arg(overlays.join(QStringLiteral(" + ")));
     runContext_->setText(text);
     runContext_->setToolTip(document_.sourcePath());
+  }
+
+  void MainWindow::updateWindowTitle()
+  {
+    // A raw run (or imaging) is the primary; results views loaded alongside it are
+    // appended as tags so the title stays coherent no matter what loaded last —
+    // rather than the previous "whichever finished most recently wins".
+    QString primary;
+    if (imagingStore_) primary = QFileInfo(imagingSummary_.sourcePath).fileName();
+    else if (!document_.isEmpty()) primary = QFileInfo(document_.sourcePath()).fileName();
+
+    QStringList results;
+    if (hasConsensusData_ && !consensusSourcePath_.isEmpty())
+      results << QFileInfo(consensusSourcePath_).fileName();
+    if (hasOswData_ && !oswSourcePath_.isEmpty())
+      results << QFileInfo(oswSourcePath_).fileName();
+
+    // With no raw run, the first results view becomes the primary label itself.
+    if (primary.isEmpty() && !results.isEmpty()) primary = results.takeFirst();
+
+    if (primary.isEmpty())
+      setWindowTitle(tr("OpenMS Viewer"));
+    else if (results.isEmpty())
+      setWindowTitle(tr("%1 — OpenMS Viewer").arg(primary));
+    else
+      setWindowTitle(tr("%1 (+ %2) — OpenMS Viewer").arg(primary, results.join(QStringLiteral(", "))));
+  }
+
+  void MainWindow::onConsensusFeatureActivated(qint64 index)
+  {
+    // Selection only highlights the diamond on the peak map; it must not yank the
+    // raw spectrum view around during arrow-key browsing of the consensus table.
+    if (index < 0) { peakMap_->setSelectedConsensus(std::nullopt); return; }
+    peakMap_->setSelectedConsensus(static_cast<std::size_t>(index));
+  }
+
+  void MainWindow::onConsensusFeatureDrillDown(qint64 index)
+  {
+    if (index < 0) return;
+    const auto consensusIndex = static_cast<std::size_t>(index);
+    peakMap_->setSelectedConsensus(consensusIndex);
+    peakMap_->zoomToConsensus(consensusIndex);
+    navigateConsensusToRawSpectrum(consensusIndex);
+  }
+
+  void MainWindow::navigateConsensusToRawSpectrum(std::size_t consensusIndex)
+  {
+    if (!consensusMap_) return;
+    if (document_.isEmpty())
+    {
+      notify(tr("Load the raw run to open a consensus feature's source scan"), ToastLevel::Info);
+      return;
+    }
+
+    const auto target = ConsensusDrilldown::resolve(*consensusMap_, consensusIndex,
+                                                    consensusColumns_, document_);
+    if (target.ambiguousRun)
+    {
+      notify(tr("The loaded run's name matches several input maps — can't resolve the source scan"),
+             ToastLevel::Warning);
+      return;
+    }
+    if (!target.runIsInputMap)
+    {
+      notify(tr("The loaded run is not an input map of this consensus — showing the envelope only"),
+             ToastLevel::Info);
+      return;
+    }
+    if (!target.spectrumIndex)
+    {
+      notify(tr("This consensus feature has no handle in the loaded run"), ToastLevel::Info);
+      return;
+    }
+
+    selectSpectrum(*target.spectrumIndex);
+    if (target.exact)
+      notify(tr("Opened the source scan for %1").arg(QFileInfo(document_.sourcePath()).fileName()),
+             ToastLevel::Success);
+    else
+      notify(tr("No source scan recorded — showing the nearest scan by RT"), ToastLevel::Warning);
   }
 
   unsigned int MainWindow::navigationMsLevel() const
@@ -1817,13 +1938,14 @@ namespace OpenMSViewer
     const bool hasChromatograms = result.chromatograms != nullptr;
     osw_->setData(std::move(result.store), std::move(result.chromatograms), result.chromatogramNote);
     hasOswData_ = true;
+    oswSourcePath_ = sourcePath;
     lastPrimaryPath_ = sourcePath;
     rememberRecentFile(sourcePath);
     showDataPage();
     dockVisibilityPreference_[oswDock_->objectName()] = true;
     setDockAvailable(oswDock_, true);
     oswDock_->raise();
-    setWindowTitle(tr("%1 — OpenMS Viewer").arg(QFileInfo(sourcePath).fileName()));
+    updateWindowTitle();
     updateRunContext();
     statusBar()->showMessage(tr("Loaded OpenSWATH results from %1").arg(QFileInfo(sourcePath).fileName()), 8000);
     notify(hasChromatograms ? tr("Loaded OpenSWATH results")
@@ -1861,6 +1983,16 @@ namespace OpenMSViewer
     const QString sourcePath = result.sourcePath;
     const std::size_t featureCount = result.features.size();
     const std::size_t mapCount = result.columns.size();
+    // Retain the map + columns + a copy of the feature summaries: the panel drives
+    // the tables/chart while the peak map draws the overlay and MainWindow resolves
+    // drill-down from a handle's map back to the loaded raw run.
+    consensusMap_ = result.map;
+    consensusColumns_ = result.columns;
+    consensusSourcePath_ = sourcePath;
+    peakMap_->setConsensusFeatures(result.features);
+    showConsensusAction_->setEnabled(true);
+    showConsensusAction_->setChecked(true);
+    peakMap_->setShowConsensus(true);
     consensus_->setData(std::move(result.map), std::move(result.features),
                         std::move(result.columns), result.experimentType);
     hasConsensusData_ = true;
@@ -1870,7 +2002,7 @@ namespace OpenMSViewer
     dockVisibilityPreference_[consensusDock_->objectName()] = true;
     setDockAvailable(consensusDock_, true);
     consensusDock_->raise();
-    setWindowTitle(tr("%1 — OpenMS Viewer").arg(QFileInfo(sourcePath).fileName()));
+    updateWindowTitle();
     updateRunContext();
     statusBar()->showMessage(tr("Loaded consensus map from %1").arg(QFileInfo(sourcePath).fileName()), 8000);
     notify(tr("Loaded %1 consensus features across %2 maps").arg(featureCount).arg(mapCount),
@@ -2156,7 +2288,7 @@ namespace OpenMSViewer
     if (dockVisibilityPreference_.value(imagingDock_->objectName(), true)) imagingDock_->raise();
     if (!imagingSummary_.pixels.empty())
       selectImagingSpectrum(imagingSummary_.pixels.front().spectrumIndex);
-    setWindowTitle(tr("%1 — OpenMS Viewer").arg(QFileInfo(imagingSummary_.sourcePath).fileName()));
+    updateWindowTitle();
     updateRunContext();
     updateSpectrumControls();
     statusBar()->showMessage(tr("Loaded %1 imaging pixels (%2 × %3), %4 peaks")
@@ -2212,7 +2344,7 @@ namespace OpenMSViewer
     updateSpectrumControls();
 
     const auto& stats = document_.statistics();
-    setWindowTitle(tr("%1 — OpenMS Viewer").arg(QFileInfo(document_.sourcePath()).fileName()));
+    updateWindowTitle();
     statusBar()->showMessage(
       tr("Loaded %1 spectra (%2 MS1), %3 peaks, %4 chromatograms, %5 IM frames, %6 FAIMS CVs")
         .arg(stats.spectrumCount)

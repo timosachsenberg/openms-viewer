@@ -349,6 +349,51 @@ namespace OpenMSViewer
                 identification.mz - 2.8, identification.mz + 2.8}, true);
   }
 
+  void PeakMapWidget::setConsensusFeatures(const std::vector<ConsensusFeatureRecord>& features)
+  {
+    consensusFeatures_ = features;
+    selectedConsensus_.reset();
+    update();
+  }
+
+  void PeakMapWidget::setSelectedConsensus(std::optional<std::size_t> consensusIndex)
+  {
+    selectedConsensus_ = consensusIndex;
+    update();
+  }
+
+  std::optional<std::size_t> PeakMapWidget::selectedConsensus() const noexcept
+  {
+    return selectedConsensus_;
+  }
+
+  bool PeakMapWidget::hasConsensusFeatures() const noexcept
+  {
+    return !consensusFeatures_.empty();
+  }
+
+  void PeakMapWidget::setShowConsensus(bool show)
+  {
+    showConsensus_ = show;
+    update();
+  }
+
+  void PeakMapWidget::zoomToConsensus(std::size_t consensusIndex)
+  {
+    if (!experiment_ || consensusIndex >= consensusFeatures_.size()) return;
+    const ConsensusFeatureRecord& feature = consensusFeatures_[consensusIndex];
+    if (!std::isfinite(feature.rt) || !std::isfinite(feature.mz)) return;
+    selectedConsensus_ = feature.index;
+    const bool envValid = std::isfinite(feature.bounds.rtMin) && std::isfinite(feature.bounds.rtMax)
+      && std::isfinite(feature.bounds.mzMin) && std::isfinite(feature.bounds.mzMax)
+      && feature.bounds.rtMax >= feature.bounds.rtMin
+      && feature.bounds.mzMax >= feature.bounds.mzMin;
+    const double rtSpan = std::max(envValid ? feature.bounds.rtSpan() : 0.0, 20.0);
+    const double mzSpan = std::max(envValid ? feature.bounds.mzSpan() : 0.0, 4.0);
+    applyRange({feature.rt - rtSpan * 0.7, feature.rt + rtSpan * 0.7,
+                feature.mz - mzSpan * 0.7, feature.mz + mzSpan * 0.7}, true);
+  }
+
   QRect PeakMapWidget::plotRect() const
   {
     return rect().adjusted(68, 20, -22, -52);
@@ -603,6 +648,7 @@ namespace OpenMSViewer
       }
     }
 
+    drawConsensus(painter);  // approximate multi-run context, under the precise overlays
     drawFeatures(painter);
     drawIdentifications(painter);
     drawLegend(painter, area);
@@ -799,6 +845,84 @@ namespace OpenMSViewer
     painter.restore();
   }
 
+  void PeakMapWidget::drawConsensus(QPainter& painter) const
+  {
+    if (!showConsensus_ || consensusFeatures_.empty()) return;
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    const auto drawOne = [&](const ConsensusFeatureRecord& feature)
+    {
+      if (!std::isfinite(feature.rt) || !std::isfinite(feature.mz)) return false;
+      // The envelope is usable only when all four bounds are finite AND ordered;
+      // otherwise pixelFor() would receive a non-finite coordinate.
+      const bool envValid = std::isfinite(feature.bounds.rtMin) && std::isfinite(feature.bounds.rtMax)
+        && std::isfinite(feature.bounds.mzMin) && std::isfinite(feature.bounds.mzMax)
+        && feature.bounds.rtMax >= feature.bounds.rtMin
+        && feature.bounds.mzMax >= feature.bounds.mzMin;
+      // Cull by the envelope when it has extent, else by the centroid alone.
+      if (envValid)
+      {
+        if (feature.bounds.rtMax < view_.rtMin || feature.bounds.rtMin > view_.rtMax
+            || feature.bounds.mzMax < view_.mzMin || feature.bounds.mzMin > view_.mzMax) return false;
+      }
+      else if (feature.rt < view_.rtMin || feature.rt > view_.rtMax
+               || feature.mz < view_.mzMin || feature.mz > view_.mzMax) return false;
+
+      const bool selected = selectedConsensus_ && *selectedConsensus_ == feature.index;
+      // Amber, distinct from feature green and identification hues; selected turns
+      // a bold coral so it reads against the amber field.
+      const QColor color = selected ? QColor(255, 90, 90) : QColor(255, 170, 0);
+      const int lineWidth = selected ? 2 : 1;
+
+      // Dashed envelope: the bounding box of the per-map handle centroids. Dashing
+      // signals it is an aggregate span, not a single feature's convex hull.
+      if (envValid && (feature.bounds.rtMax > feature.bounds.rtMin
+                       || feature.bounds.mzMax > feature.bounds.mzMin))
+      {
+        const QPointF corner = pixelFor(feature.bounds.rtMin, feature.bounds.mzMin);
+        const QPointF opposite = pixelFor(feature.bounds.rtMax, feature.bounds.mzMax);
+        QColor envelope = color;
+        envelope.setAlpha(selected ? 220 : 130);
+        painter.setPen(QPen(envelope, lineWidth, Qt::DashLine));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRect(QRectF(corner, opposite).normalized());
+      }
+
+      // Upward triangle centroid: features use circles and identifications use
+      // diamonds, so a triangle keeps all three overlays distinguishable by shape
+      // (not just colour) when shown together.
+      const QPointF centre = pixelFor(feature.rt, feature.mz);
+      const double radius = selected ? 6.5 : 4.5;
+      QPolygonF triangle;
+      triangle << QPointF(centre.x(), centre.y() - radius)
+               << QPointF(centre.x() + radius * 0.9, centre.y() + radius * 0.7)
+               << QPointF(centre.x() - radius * 0.9, centre.y() + radius * 0.7);
+      painter.setPen(QPen(Qt::white, selected ? 2 : 1));
+      painter.setBrush(color);
+      painter.drawPolygon(triangle);
+      return true;
+    };
+
+    // Draw the selected feature first so its highlight is guaranteed even when the
+    // draw cap is reached before its position in the list (large consensus maps).
+    std::optional<std::size_t> selectedPos;
+    if (selectedConsensus_)
+      for (std::size_t i = 0; i < consensusFeatures_.size(); ++i)
+        if (consensusFeatures_[i].index == *selectedConsensus_) { selectedPos = i; break; }
+    if (selectedPos) drawOne(consensusFeatures_[*selectedPos]);
+
+    std::size_t drawn = 0;
+    for (std::size_t i = 0; i < consensusFeatures_.size(); ++i)
+    {
+      if (drawn >= 10000) break;
+      if (selectedPos && i == *selectedPos) continue;  // already drawn above
+      if (drawOne(consensusFeatures_[i])) ++drawn;
+    }
+    painter.restore();
+  }
+
   std::optional<std::size_t> PeakMapWidget::nearestFeature(const QPointF& position) const
   {
     if (!showFeatureCentroids_ || features_.empty() || !plotRect().contains(position.toPoint()))
@@ -905,6 +1029,19 @@ namespace OpenMSViewer
               << QPointF(center.x(), center.y() + 5) << QPointF(center.x() - 5, center.y());
       painter.drawPolygon(diamond);
       painter.drawText(area.left() + 28, legendY + 12, tr("Identification"));
+      legendY += 18;
+    }
+    if (showConsensus_ && !consensusFeatures_.empty())
+    {
+      painter.setPen(Qt::white);
+      painter.setBrush(QColor(255, 170, 0));
+      const QPointF center(area.left() + 17, legendY + 6);
+      QPolygonF triangle;
+      triangle << QPointF(center.x(), center.y() - 5)
+               << QPointF(center.x() + 4.5, center.y() + 4)
+               << QPointF(center.x() - 4.5, center.y() + 4);
+      painter.drawPolygon(triangle);
+      painter.drawText(area.left() + 28, legendY + 12, tr("Consensus (dashed = envelope)"));
     }
 
     const int barHeight = std::min(120, std::max(70, area.height() / 4));

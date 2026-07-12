@@ -820,6 +820,17 @@ namespace OpenMSViewer
     return &spectra_[index];
   }
 
+  std::optional<std::size_t> ViewerDocument::spectrumIndexForNativeId(
+    const QString& nativeId) const noexcept
+  {
+    if (nativeId.isEmpty()) return std::nullopt;
+    // Linear scan: native-ID drill-down is a rare, user-initiated click, so a
+    // per-call scan avoids maintaining a cache that would have to track adoption.
+    for (const SpectrumRecord& spectrum : spectra_)
+      if (spectrum.nativeId == nativeId) return spectrum.index;
+    return std::nullopt;
+  }
+
   const std::vector<ChromatogramRecord>& ViewerDocument::chromatograms() const noexcept
   {
     return chromatograms_;

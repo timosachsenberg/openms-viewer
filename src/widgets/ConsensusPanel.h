@@ -41,7 +41,8 @@ namespace OpenMSViewer
     void selectFeature(std::size_t index);
 
   signals:
-    void featureActivated(qint64 index);
+    void featureActivated(qint64 index);   // row selected → highlight on the peak map
+    void featureDrillDown(qint64 index);   // row double-clicked/entered → open source scan
 
   private:
     void onFeatureActivated(const QModelIndex& current);

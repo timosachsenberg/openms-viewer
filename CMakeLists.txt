@@ -64,6 +64,8 @@ add_library(openms_viewer_core STATIC
   src/model/OswDocument.h
   src/model/ConsensusDocument.cpp
   src/model/ConsensusDocument.h
+  src/model/ConsensusDrilldown.cpp
+  src/model/ConsensusDrilldown.h
   src/plot/PeakMapRasterizer.cpp
   src/plot/PeakMapRasterizer.h
   src/plot/PlotAxis.cpp
@@ -193,6 +195,8 @@ if(OPENMS_VIEWER_BUILD_TESTS)
     tests/OswPanelTest.cpp
     tests/ConsensusDocumentTest.cpp
     tests/ConsensusPanelTest.cpp
+    tests/ConsensusDrilldownTest.cpp
+    tests/MainWindowConsensusWorkflowTest.cpp
     tests/PeakMapRasterizerTest.cpp
     tests/FeatureDocumentTest.cpp
     tests/IdentificationDocumentTest.cpp

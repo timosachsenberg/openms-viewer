@@ -102,6 +102,12 @@ namespace OpenMSViewer
     void showWelcomePage();
     void showDataPage();
     void updateRunContext();
+    void updateWindowTitle();
+    // Consensus peak-map overlay: highlight on selection, and on activation drill
+    // from a consensus feature down to the source scan in the loaded raw run.
+    void onConsensusFeatureActivated(qint64 index);
+    void onConsensusFeatureDrillDown(qint64 index);
+    void navigateConsensusToRawSpectrum(std::size_t consensusIndex);
     void updateSpectrumControls();
     void setPeakMapControlsEnabled(bool enabled);
     void configureDock(QDockWidget* dock);
@@ -216,6 +222,7 @@ namespace OpenMSViewer
     QAction* showFeatureHullsAction_{nullptr};
     QAction* showIdentificationsAction_{nullptr};
     QAction* showIdentificationSequencesAction_{nullptr};
+    QAction* showConsensusAction_{nullptr};
     QAction* clearFeatureOverlayAction_{nullptr};
     QAction* clearIdentificationOverlayAction_{nullptr};
     QAction* annotateSpectrumAction_{nullptr};
@@ -240,6 +247,12 @@ namespace OpenMSViewer
     bool updatingSpectrumIndex_{false};
     bool hasOswData_{false};
     bool hasConsensusData_{false};
+    // Retained for the peak-map overlay drill-down (resolve a consensus feature's
+    // per-map handle back to a scan in the loaded raw run) and coherent titling.
+    std::shared_ptr<OpenMS::ConsensusMap> consensusMap_;
+    std::vector<ConsensusColumn> consensusColumns_;
+    QString consensusSourcePath_;
+    QString oswSourcePath_;
 
     enum Operation
     {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "model/ViewerDocument.h"
+#include "model/ConsensusDocument.h"
 #include "plot/PeakMapRasterizer.h"
 
 #include <OpenMS/KERNEL/MSExperiment.h>
@@ -39,6 +40,11 @@ namespace OpenMSViewer
     void setSelectedFeature(std::optional<std::size_t> featureIndex);
     void setIdentifications(const std::vector<IdentificationRecord>& identifications);
     void setSelectedIdentification(std::optional<std::size_t> identificationIndex);
+    // Consensus features are a multi-run overlay: an aligned/averaged centroid plus
+    // the "alignment envelope" bounding the per-map handle centroids. Drawn distinctly
+    // (dashed envelope + diamond) from single-run features to signal the approximation.
+    void setConsensusFeatures(const std::vector<ConsensusFeatureRecord>& features);
+    void setSelectedConsensus(std::optional<std::size_t> consensusIndex);
 
     [[nodiscard]] bool axesSwapped() const noexcept;
     [[nodiscard]] PeakMapColorMap colorMap() const noexcept;
@@ -48,6 +54,8 @@ namespace OpenMSViewer
     [[nodiscard]] std::shared_ptr<const OpenMS::MSExperiment> experiment() const noexcept;
     [[nodiscard]] std::optional<std::size_t> selectedFeature() const noexcept;
     [[nodiscard]] std::optional<std::size_t> selectedIdentification() const noexcept;
+    [[nodiscard]] std::optional<std::size_t> selectedConsensus() const noexcept;
+    [[nodiscard]] bool hasConsensusFeatures() const noexcept;
     [[nodiscard]] QPointF mapDataToWidget(double rt, double mz) const;
     [[nodiscard]] const QImage& rasterImage() const noexcept;
     [[nodiscard]] const QImage& minimapImage() const noexcept;
@@ -74,6 +82,8 @@ namespace OpenMSViewer
     void setShowIdentifications(bool show);
     void setShowIdentificationSequences(bool show);
     void zoomToIdentification(std::size_t identificationIndex);
+    void setShowConsensus(bool show);
+    void zoomToConsensus(std::size_t consensusIndex);
 
   signals:
     void viewRangeChanged(const OpenMSViewer::PlotRange& range);
@@ -112,6 +122,7 @@ namespace OpenMSViewer
     void drawAxes(QPainter& painter, const QRect& area) const;
     void drawFeatures(QPainter& painter) const;
     void drawIdentifications(QPainter& painter) const;
+    void drawConsensus(QPainter& painter) const;
     void drawLegend(QPainter& painter, const QRect& area) const;
     void updateInteractionCursor();
     [[nodiscard]] std::optional<std::size_t> nearestFeature(const QPointF& position) const;
@@ -142,6 +153,9 @@ namespace OpenMSViewer
     std::optional<std::size_t> hoveredIdentification_;
     bool showIdentifications_{true};
     bool showIdentificationSequences_{false};
+    std::vector<ConsensusFeatureRecord> consensusFeatures_;
+    std::optional<std::size_t> selectedConsensus_;
+    bool showConsensus_{true};
 
     QTimer renderTimer_;
     QFutureWatcher<QImage> renderWatcher_;

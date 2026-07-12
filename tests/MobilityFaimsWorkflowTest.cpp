@@ -10,6 +10,7 @@
 
 #include <OpenMS/FORMAT/MzMLFile.h>
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDockWidget>
 #include <QSettings>
@@ -75,6 +76,12 @@ private slots:
     QVERIFY(selector != nullptr);
     selector->setCurrentIndex(0);
     QCOMPARE(activated.value(), std::size_t{0});
+
+    // The mobilogram smoothing toggle is present and drives the plot without error.
+    auto* smooth = panel.findChild<QCheckBox*>(QStringLiteral("ionMobilitySmooth"));
+    QVERIFY(smooth != nullptr);
+    smooth->setChecked(true);
+    QVERIFY(!panel.grab().isNull());
   }
 
   void detectsFiltersAndNavigatesFaimsChannels()

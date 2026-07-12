@@ -30,6 +30,7 @@ namespace OpenMSViewer
     void setSelectedIndices(const std::vector<std::size_t>& indices);
     void setPeakMapRange(const PlotRange& range);
     void setRtInMinutes(bool minutes);
+    void setSmoothing(bool smooth);
     [[nodiscard]] const std::vector<std::size_t>& selectedIndices() const noexcept;
     [[nodiscard]] std::optional<std::pair<double, double>> peakMapRtRange() const noexcept;
 
@@ -45,12 +46,15 @@ namespace OpenMSViewer
   private:
     [[nodiscard]] QRectF plotRect() const;
     [[nodiscard]] std::optional<std::pair<double, double>> selectedRtBounds() const;
+    void rebuildSmoothing();
 
     std::vector<ChromatogramRecord> chromatograms_;
+    std::vector<std::vector<double>> smoothed_;  // parallel to chromatograms_, when smoothing on
     std::vector<std::size_t> selectedIndices_;
     std::optional<std::pair<double, double>> peakMapRtRange_;
     std::optional<QPoint> hoverPos_;
     bool rtInMinutes_{false};
+    bool smooth_{false};
   };
 
   class ChromatogramPanelWidget final : public QWidget

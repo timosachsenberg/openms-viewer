@@ -37,6 +37,7 @@ namespace OpenMSViewer
                  const std::vector<IonMobilityFrameRecord>& frames);
     void setFramePosition(std::optional<std::size_t> position);
     void setShowMobilogram(bool show);
+    void setSmoothMobilogram(bool smooth);
     void setColorMap(PeakMapColorMap colorMap);
     void resetView();
     void setMzRange(double minimumMz, double maximumMz, bool reset = false);
@@ -74,6 +75,7 @@ namespace OpenMSViewer
     IonMobilityRaster raster_;
     PeakMapColorMap colorMap_{PeakMapColorMap::Viridis};
     bool showMobilogram_{true};
+    bool smoothMobilogram_{false};
     bool dragging_{false};
     bool draggingMobilogram_{false};
     QPoint dragStart_;

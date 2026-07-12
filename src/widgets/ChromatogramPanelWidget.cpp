@@ -1,8 +1,10 @@
 #include "widgets/ChromatogramPanelWidget.h"
 
+#include "model/TraceSmoothing.h"
 #include "plot/PlotAxis.h"
 
 #include <QAbstractTableModel>
+#include <QCheckBox>
 #include <QFileDialog>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -151,7 +153,30 @@ namespace OpenMSViewer
   {
     chromatograms_ = chromatograms;
     selectedIndices_.clear();
+    rebuildSmoothing();
     update();
+  }
+
+  void ChromatogramPlotWidget::setSmoothing(bool smooth)
+  {
+    if (smooth_ == smooth) return;
+    smooth_ = smooth;
+    rebuildSmoothing();
+    update();
+  }
+
+  void ChromatogramPlotWidget::rebuildSmoothing()
+  {
+    smoothed_.clear();
+    if (!smooth_) return;
+    smoothed_.reserve(chromatograms_.size());
+    for (const ChromatogramRecord& record : chromatograms_)
+    {
+      std::vector<double> intensity;
+      intensity.reserve(record.points.size());
+      for (const ChromatogramPoint& point : record.points) intensity.push_back(point.intensity);
+      smoothed_.push_back(TraceSmoothing::savitzkyGolay(intensity));
+    }
   }
 
   void ChromatogramPlotWidget::setSelectedIndices(const std::vector<std::size_t>& indices)
@@ -269,23 +294,47 @@ namespace OpenMSViewer
     static constexpr std::array<QColor, 8> colors{
       QColor(52, 152, 219), QColor(231, 76, 60), QColor(46, 204, 113), QColor(155, 89, 182),
       QColor(241, 196, 15), QColor(26, 188, 156), QColor(230, 126, 34), QColor(236, 240, 241)};
+    // Polyline over the record's points; `values` supplies the intensity (raw, or
+    // the cached Savitzky-Golay smoothing).
+    const auto buildPath = [&](const ChromatogramRecord& record, const std::vector<double>* values)
+    {
+      QPainterPath path;
+      bool first = true;
+      for (std::size_t point = 0; point < record.points.size(); ++point)
+      {
+        const double intensity = values ? (*values)[point] : record.points[point].intensity;
+        const QPointF position(mapX(record.points[point].rt), mapY(intensity));
+        first ? path.moveTo(position) : path.lineTo(position);
+        first = false;
+      }
+      return path;
+    };
+
+    // Clip traces to the plot rect: Savitzky-Golay can overshoot above the raw max
+    // on sharp peaks, which would otherwise draw over the legend/title band.
+    painter.save();
+    painter.setClipRect(area);
     int colorIndex = 0;
     for (const std::size_t index : selectedIndices_)
     {
       if (index >= chromatograms_.size()) continue;
       const auto& record = chromatograms_[index];
-      QPainterPath path;
-      bool first = true;
-      for (const ChromatogramPoint& point : record.points)
+      const QColor color = colors[static_cast<std::size_t>(colorIndex++) % colors.size()];
+      // When smoothing, draw the raw trace faintly under the prominent smoothed one
+      // (a true overlay). The cached vector matches record.points 1:1.
+      const bool haveSmoothed = smooth_ && index < smoothed_.size()
+        && smoothed_[index].size() == record.points.size();
+      if (haveSmoothed)
       {
-        const QPointF position(mapX(point.rt), mapY(point.intensity));
-        first ? path.moveTo(position) : path.lineTo(position);
-        first = false;
+        QColor faint = color;
+        faint.setAlpha(70);
+        painter.setPen(QPen(faint, 1.0));
+        painter.drawPath(buildPath(record, nullptr));
       }
-      painter.setPen(QPen(colors[static_cast<std::size_t>(colorIndex) % colors.size()], 1.7));
-      painter.drawPath(path);
-      ++colorIndex;
+      painter.setPen(QPen(color, 1.7));
+      painter.drawPath(buildPath(record, haveSmoothed ? &smoothed_[index] : nullptr));
     }
+    painter.restore();
 
     // Numeric tick marks + labels. RT label precision follows the tick spacing so
     // closely-spaced ticks (or large RT offsets) never render as the same text.
@@ -450,6 +499,10 @@ namespace OpenMSViewer
     controls->addWidget(search_);
     controls->addWidget(new QLabel(tr("Ctrl-click rows to compare"), this));
     controls->addStretch();
+    auto* smooth = new QCheckBox(tr("Smooth (Savitzky-Golay)"), this);
+    smooth->setObjectName(QStringLiteral("chromatogramSmooth"));
+    smooth->setToolTip(tr("Overlay a Savitzky-Golay lowpass of each chromatogram trace"));
+    controls->addWidget(smooth);
     countLabel_ = new QLabel(this);
     countLabel_->setObjectName(QStringLiteral("chromatogramCountLabel"));
     controls->addWidget(countLabel_);
@@ -489,6 +542,7 @@ namespace OpenMSViewer
     connect(clearButton, &QPushButton::clicked, this, &ChromatogramPanelWidget::clearSelection);
     connect(exportButton, &QPushButton::clicked, this, &ChromatogramPanelWidget::exportTsv);
     connect(plot_, &ChromatogramPlotWidget::rtActivated, this, &ChromatogramPanelWidget::rtActivated);
+    connect(smooth, &QCheckBox::toggled, plot_, &ChromatogramPlotWidget::setSmoothing);
     connect(proxy_, &QAbstractItemModel::rowsInserted, this, &ChromatogramPanelWidget::updateCountLabel);
     connect(proxy_, &QAbstractItemModel::rowsRemoved, this, &ChromatogramPanelWidget::updateCountLabel);
     updateCountLabel();

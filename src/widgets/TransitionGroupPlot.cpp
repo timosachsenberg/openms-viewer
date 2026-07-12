@@ -261,6 +261,10 @@ namespace OpenMSViewer
     // Transition traces: MS1 dashed dark (behind), fragments solid colour-cycled.
     // When smoothing is on, the raw trace is drawn faintly underneath the prominent
     // smoothed curve (a true overlay), so the denoising is visible against the data.
+    // Clip to the plot rect: Savitzky-Golay can overshoot above the raw max on sharp
+    // peaks, which would otherwise draw past the axes.
+    painter.save();
+    painter.setClipRect(area);
     int colorIndex = 0;
     for (const TransitionChromatogram* transition : visible)
     {
@@ -278,6 +282,7 @@ namespace OpenMSViewer
       painter.setPen(QPen(color, transition->isMs1() ? 1.3 : 1.6, style));
       painter.drawPath(buildPath(transition, displayIntensity(transition)));
     }
+    painter.restore();
 
     // Axis labels + legend.
     painter.setPen(palette().color(QPalette::Text));

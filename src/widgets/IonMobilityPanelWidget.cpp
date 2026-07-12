@@ -1,5 +1,6 @@
 #include "widgets/IonMobilityPanelWidget.h"
 
+#include "model/TraceSmoothing.h"
 #include "plot/PlotAxis.h"
 
 #include <QtConcurrent/QtConcurrentRun>
@@ -88,6 +89,13 @@ namespace OpenMSViewer
     if (showMobilogram_ == show) return;
     showMobilogram_ = show;
     scheduleRender();
+  }
+
+  void IonMobilityPlotWidget::setSmoothMobilogram(bool smooth)
+  {
+    if (smoothMobilogram_ == smooth) return;
+    smoothMobilogram_ = smooth;
+    update();  // presentation-only: no re-render needed
   }
 
   void IonMobilityPlotWidget::setColorMap(PeakMapColorMap colorMap)
@@ -320,23 +328,45 @@ namespace OpenMSViewer
     if (raster_.mobilogram.empty()) return;
     const float maximum = *std::max_element(raster_.mobilogram.begin(), raster_.mobilogram.end());
     if (maximum <= 0.0F) return;
-    QPainterPath line;
-    QPainterPath fill;
-    fill.moveTo(area.left(), area.bottom());
-    for (std::size_t index = 0; index < raster_.mobilogram.size(); ++index)
+
+    // Intensity values to draw as the profile: raw, or a Savitzky-Golay smoothing.
+    // Both are scaled by the RAW maximum so the smoothed profile stays comparable.
+    std::vector<double> raw(raster_.mobilogram.begin(), raster_.mobilogram.end());
+    const std::vector<double> smoothed = smoothMobilogram_
+      ? TraceSmoothing::savitzkyGolay(raw) : std::vector<double>{};
+
+    const auto buildPath = [&](const std::vector<double>& values, bool close)
     {
-      const double fraction = raster_.mobilogram.size() == 1 ? 0.0
-        : static_cast<double>(index) / static_cast<double>(raster_.mobilogram.size() - 1);
-      const double x = area.left() + raster_.mobilogram[index] / maximum * area.width();
-      const double y = area.bottom() - fraction * area.height();
-      if (index == 0) line.moveTo(x, y); else line.lineTo(x, y);
-      fill.lineTo(x, y);
+      QPainterPath path;
+      if (close) path.moveTo(area.left(), area.bottom());
+      for (std::size_t index = 0; index < values.size(); ++index)
+      {
+        const double fraction = values.size() == 1 ? 0.0
+          : static_cast<double>(index) / static_cast<double>(values.size() - 1);
+        const double x = area.left() + values[index] / maximum * area.width();
+        const double y = area.bottom() - fraction * area.height();
+        if (index == 0 && !close) path.moveTo(x, y); else path.lineTo(x, y);
+      }
+      if (close) { path.lineTo(area.left(), area.top()); path.closeSubpath(); }
+      return path;
+    };
+
+    const bool haveSmoothed = smoothMobilogram_ && smoothed.size() == raw.size();
+    // Clip to the mobilogram rect: Savitzky-Golay can overshoot above the raw max on
+    // sharp edges, which would otherwise spill the fill/line past the right border.
+    painter.save();
+    painter.setClipRect(area);
+    // When smoothing, draw the raw profile faintly underneath the smoothed one.
+    if (haveSmoothed)
+    {
+      painter.setPen(QPen(QColor(0, 205, 245, 70), 1.0));
+      painter.drawPath(buildPath(raw, false));
     }
-    fill.lineTo(area.left(), area.top());
-    fill.closeSubpath();
-    painter.fillPath(fill, QColor(0, 195, 235, 55));
+    const std::vector<double>& profile = haveSmoothed ? smoothed : raw;
+    painter.fillPath(buildPath(profile, true), QColor(0, 195, 235, 55));
     painter.setPen(QPen(QColor(0, 205, 245), 1.7));
-    painter.drawPath(line);
+    painter.drawPath(buildPath(profile, false));
+    painter.restore();
     painter.setPen(palette().color(QPalette::Text));
     painter.drawText(QRect(area.left(), 3, area.width(), 18), Qt::AlignCenter, tr("Mobilogram"));
   }
@@ -468,6 +498,10 @@ namespace OpenMSViewer
     mobilogram_->setObjectName(QStringLiteral("ionMobilityMobilogram"));
     mobilogram_->setChecked(true);
     controls->addWidget(mobilogram_);
+    auto* smoothMobilogram = new QCheckBox(tr("Smooth"), this);
+    smoothMobilogram->setObjectName(QStringLiteral("ionMobilitySmooth"));
+    smoothMobilogram->setToolTip(tr("Overlay a Savitzky-Golay lowpass of the mobilogram"));
+    controls->addWidget(smoothMobilogram);
     linkMz_ = new QCheckBox(tr("Link spectrum m/z"), this);
     linkMz_->setObjectName(QStringLiteral("ionMobilityLinkMz"));
     controls->addWidget(linkMz_);
@@ -493,6 +527,7 @@ namespace OpenMSViewer
         frameSelector_->setCurrentIndex(frameSelector_->currentIndex() + 1);
     });
     connect(mobilogram_, &QCheckBox::toggled, plot_, &IonMobilityPlotWidget::setShowMobilogram);
+    connect(smoothMobilogram, &QCheckBox::toggled, plot_, &IonMobilityPlotWidget::setSmoothMobilogram);
     connect(linkMz_, &QCheckBox::toggled, this, [this](bool linked)
     {
       if (!linked) return;

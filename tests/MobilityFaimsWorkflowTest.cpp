@@ -19,6 +19,9 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <array>
+#include <tuple>
+
 class MobilityFaimsWorkflowTest final : public QObject
 {
   Q_OBJECT
@@ -82,6 +85,60 @@ private slots:
     QVERIFY(smooth != nullptr);
     smooth->setChecked(true);
     QVERIFY(!panel.grab().isNull());
+  }
+
+  // diaPASEF window groups: distinct MS2 isolation windows (m/z × ion mobility) are
+  // reconstructed from the frames and deduplicated across acquisition cycles.
+  void diaWindowsReconstructAcrossCycles()
+  {
+    std::vector<OpenMSViewer::IonMobilityFrameRecord> frames;
+    OpenMSViewer::IonMobilityFrameRecord ms1;  // survey frame spanning the full space
+    ms1.spectrumIndex = 0;
+    ms1.rt = 0.0;
+    ms1.msLevel = 1;
+    ms1.mobilityMin = 0.6;
+    ms1.mobilityMax = 1.4;
+    ms1.mzMin = 400.0;
+    ms1.mzMax = 900.0;
+    frames.push_back(ms1);
+
+    // Two cycles of two window groups; each group has two windows at one frame RT.
+    std::size_t index = 1;
+    for (int cycle = 0; cycle < 2; ++cycle)
+    {
+      const double rtA = 0.1 + cycle * 1.0;  // group A frame RT
+      const double rtB = 0.2 + cycle * 1.0;  // group B frame RT
+      // Cycle 2 has slightly different OBSERVED ion-mobility extrema (peak jitter);
+      // the reconstruction must still collapse them to the same windows.
+      const double jitter = cycle * 0.008;
+      const std::array<std::tuple<double, double, double, double, double>, 4> windows{{
+        {rtA, 425.0, 475.0, 0.6, 0.9}, {rtA, 525.0, 575.0, 0.9, 1.2},
+        {rtB, 625.0, 675.0, 0.6, 0.9}, {rtB, 725.0, 775.0, 0.9, 1.2}}};
+      for (const auto& [rt, mzLo, mzHi, imLo, imHi] : windows)
+      {
+        OpenMSViewer::IonMobilityFrameRecord frame;
+        frame.spectrumIndex = index++;
+        frame.rt = rt;
+        frame.msLevel = 2;
+        frame.mobilityMin = imLo + jitter;
+        frame.mobilityMax = imHi + jitter;
+        frame.mzMin = 400.0;
+        frame.mzMax = 900.0;
+        frame.precursorMz = (mzLo + mzHi) / 2.0;
+        frame.isolationWindowLower = mzLo;
+        frame.isolationWindowUpper = mzHi;
+        frames.push_back(frame);
+      }
+    }
+
+    OpenMSViewer::IonMobilityPlotWidget plot;
+    plot.resize(600, 400);
+    plot.setData(std::make_shared<OpenMS::MSExperiment>(), frames);
+    QVERIFY(plot.hasDiaWindows());
+    QCOMPARE(plot.diaWindowCount(), std::size_t{4});  // 8 MS2 frames → 4 distinct windows
+    plot.setShowDiaWindows(true);
+    plot.setFramePosition(0);  // MS1 frame → view spans the whole scheme
+    QVERIFY(!plot.grab().isNull());
   }
 
   void detectsFiltersAndNavigatesFaimsChannels()

@@ -25,6 +25,18 @@ class QWheelEvent;
 
 namespace OpenMSViewer
 {
+  // One diaPASEF isolation window: a box in m/z × ion-mobility space. `group` is the
+  // acquisition window group (MS2 frames sharing an RT in the first cycle), used to
+  // colour windows acquired together.
+  struct DiaWindow
+  {
+    double mzLow{0.0};
+    double mzHigh{0.0};
+    double mobilityLow{0.0};
+    double mobilityHigh{0.0};
+    int group{0};
+  };
+
   class IonMobilityPlotWidget final : public QWidget
   {
     Q_OBJECT
@@ -38,6 +50,9 @@ namespace OpenMSViewer
     void setFramePosition(std::optional<std::size_t> position);
     void setShowMobilogram(bool show);
     void setSmoothMobilogram(bool smooth);
+    void setShowDiaWindows(bool show);
+    [[nodiscard]] bool hasDiaWindows() const noexcept { return !diaWindows_.empty(); }
+    [[nodiscard]] std::size_t diaWindowCount() const noexcept { return diaWindows_.size(); }
     void setColorMap(PeakMapColorMap colorMap);
     void resetView();
     void setMzRange(double minimumMz, double maximumMz, bool reset = false);
@@ -66,6 +81,8 @@ namespace OpenMSViewer
     void applyRange(const IonMobilityRange& range);
     void drawAxes(QPainter& painter, const QRect& area);
     void drawMobilogram(QPainter& painter, const QRect& area);
+    void drawDiaWindows(QPainter& painter, const QRect& area) const;
+    void rebuildDiaWindows();
 
     std::shared_ptr<const OpenMS::MSExperiment> experiment_;
     std::vector<IonMobilityFrameRecord> frames_;
@@ -76,6 +93,8 @@ namespace OpenMSViewer
     PeakMapColorMap colorMap_{PeakMapColorMap::Viridis};
     bool showMobilogram_{true};
     bool smoothMobilogram_{false};
+    std::vector<DiaWindow> diaWindows_;  // distinct MS2 isolation windows (m/z × IM)
+    bool showDiaWindows_{false};
     bool dragging_{false};
     bool draggingMobilogram_{false};
     QPoint dragStart_;

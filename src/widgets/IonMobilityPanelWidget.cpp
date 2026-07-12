@@ -19,7 +19,11 @@
 #include <QWheelEvent>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <map>
+#include <set>
+#include <tuple>
 
 namespace OpenMSViewer
 {
@@ -62,8 +66,98 @@ namespace OpenMSViewer
     frames_ = frames;
     framePosition_.reset();
     raster_ = {};
+    rebuildDiaWindows();
     ++desiredGeneration_;
     update();
+  }
+
+  void IonMobilityPlotWidget::setShowDiaWindows(bool show)
+  {
+    if (showDiaWindows_ == show) return;
+    showDiaWindows_ = show;
+    update();
+  }
+
+  void IonMobilityPlotWidget::rebuildDiaWindows()
+  {
+    // Reconstruct the diaPASEF isolation windows (m/z × ion-mobility boxes) from the
+    // MS2 frames. The m/z window is exact (precursor isolation offsets), but the
+    // ion-mobility range here is the OBSERVED peak-array extent (not the method's
+    // acquisition limits), so it jitters cycle to cycle. Key each window on its exact
+    // m/z window + a coarse IM-MIDPOINT bucket (the midpoint is far steadier than the
+    // extrema), and AGGREGATE the observed extents across cycles into one box — so
+    // repeated cycles collapse instead of inflating the count, while distinct IM
+    // windows at the same m/z stay separate. Frames are RT-sorted, so a window's first
+    // occurrence is in cycle 1; windows first seen at the same frame RT (one TIMS
+    // frame) share a "window group" (and colour).
+    diaWindows_.clear();
+    constexpr std::size_t kMaxWindows = 2048;  // guard against non-DIA / pathological input
+    std::map<std::tuple<long long, long long, long long>, std::size_t> keyToIndex;
+    std::map<long long, int> groupOfRt;
+    for (const IonMobilityFrameRecord& frame : frames_)
+    {
+      if (frame.msLevel <= 1 || !frame.isolationWindowLower || !frame.isolationWindowUpper) continue;
+      const double lower = *frame.isolationWindowLower;
+      const double upper = *frame.isolationWindowUpper;
+      if (!std::isfinite(lower) || !std::isfinite(upper) || !std::isfinite(frame.mobilityMin)
+          || !std::isfinite(frame.mobilityMax)) continue;
+      const auto q = [](double value, double scale) { return llround(value * scale); };
+      const double mobilityMid = (frame.mobilityMin + frame.mobilityMax) / 2.0;
+      const std::tuple key{q(lower, 100.0), q(upper, 100.0), q(mobilityMid, 20.0)};  // IM bucket 0.05
+      const auto it = keyToIndex.find(key);
+      if (it == keyToIndex.end())
+      {
+        if (diaWindows_.size() >= kMaxWindows) break;
+        const int group = groupOfRt.try_emplace(q(frame.rt, 100.0),
+                                                static_cast<int>(groupOfRt.size())).first->second;
+        keyToIndex.emplace(key, diaWindows_.size());
+        diaWindows_.push_back({lower, upper, frame.mobilityMin, frame.mobilityMax, group});
+      }
+      else
+      {
+        DiaWindow& window = diaWindows_[it->second];  // union the observed extents
+        window.mzLow = std::min(window.mzLow, lower);
+        window.mzHigh = std::max(window.mzHigh, upper);
+        window.mobilityLow = std::min(window.mobilityLow, frame.mobilityMin);
+        window.mobilityHigh = std::max(window.mobilityHigh, frame.mobilityMax);
+      }
+    }
+  }
+
+  void IonMobilityPlotWidget::drawDiaWindows(QPainter& painter, const QRect& area) const
+  {
+    // Needs a selected frame (so view_ is initialized) and a non-degenerate view,
+    // else the m/z / mobility mappings below would divide by a zero span.
+    if (!showDiaWindows_ || diaWindows_.empty() || !framePosition_) return;
+    if (!(view_.mzSpan() > 0.0) || !(view_.mobilitySpan() > 0.0)) return;
+    // Distinct, stable colours per window group.
+    static const std::array<QColor, 10> kGroupColors{
+      QColor(52, 152, 219), QColor(231, 76, 60), QColor(46, 204, 113), QColor(155, 89, 182),
+      QColor(241, 196, 15), QColor(26, 188, 156), QColor(230, 126, 34), QColor(52, 73, 94),
+      QColor(214, 90, 190), QColor(120, 144, 156)};
+    const auto xForMz = [&](double mz)
+    { return area.left() + (mz - view_.mzMin) / view_.mzSpan() * area.width(); };
+    const auto yForMobility = [&](double mobility)
+    { return area.bottom() - (mobility - view_.mobilityMin) / view_.mobilitySpan() * area.height(); };
+
+    painter.save();
+    painter.setClipRect(area);
+    for (const DiaWindow& window : diaWindows_)
+    {
+      // Cull windows entirely outside the current view.
+      if (window.mzHigh < view_.mzMin || window.mzLow > view_.mzMax
+          || window.mobilityHigh < view_.mobilityMin || window.mobilityLow > view_.mobilityMax)
+        continue;
+      const QRectF box(QPointF(xForMz(window.mzLow), yForMobility(window.mobilityHigh)),
+                       QPointF(xForMz(window.mzHigh), yForMobility(window.mobilityLow)));
+      QColor color = kGroupColors[static_cast<std::size_t>(window.group) % kGroupColors.size()];
+      QColor fill = color;
+      fill.setAlpha(40);
+      painter.setPen(QPen(color, 1.2));
+      painter.setBrush(fill);
+      painter.drawRect(box.normalized());
+    }
+    painter.restore();
   }
 
   void IonMobilityPlotWidget::setFramePosition(std::optional<std::size_t> position)
@@ -205,6 +299,7 @@ namespace OpenMSViewer
     painter.fillRect(area, QColor::fromRgb(PeakMapRasterizer::color(0.0, colorMap_)));
     if (!raster_.image.isNull()) painter.drawImage(area, raster_.image);
     drawAxes(painter, area);
+    drawDiaWindows(painter, area);
 
     if (!framePosition_)
     {
@@ -502,6 +597,10 @@ namespace OpenMSViewer
     smoothMobilogram->setObjectName(QStringLiteral("ionMobilitySmooth"));
     smoothMobilogram->setToolTip(tr("Overlay a Savitzky-Golay lowpass of the mobilogram"));
     controls->addWidget(smoothMobilogram);
+    auto* diaWindows = new QCheckBox(tr("DIA windows"), this);
+    diaWindows->setObjectName(QStringLiteral("ionMobilityDiaWindows"));
+    diaWindows->setToolTip(tr("Overlay the diaPASEF isolation window groups (m/z × ion mobility)"));
+    controls->addWidget(diaWindows);
     linkMz_ = new QCheckBox(tr("Link spectrum m/z"), this);
     linkMz_->setObjectName(QStringLiteral("ionMobilityLinkMz"));
     controls->addWidget(linkMz_);
@@ -528,6 +627,7 @@ namespace OpenMSViewer
     });
     connect(mobilogram_, &QCheckBox::toggled, plot_, &IonMobilityPlotWidget::setShowMobilogram);
     connect(smoothMobilogram, &QCheckBox::toggled, plot_, &IonMobilityPlotWidget::setSmoothMobilogram);
+    connect(diaWindows, &QCheckBox::toggled, plot_, &IonMobilityPlotWidget::setShowDiaWindows);
     connect(linkMz_, &QCheckBox::toggled, this, [this](bool linked)
     {
       if (!linked) return;

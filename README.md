@@ -1,116 +1,234 @@
 # OpenMS Viewer
 
-OpenMS Viewer is a standalone C++ desktop application intended to replace
-TOPPView for interactive mass-spectrometry data inspection. It links against
-OpenMS, but it is developed and released as a separate project.
+**A standalone C++/Qt 6 desktop application for interactive mass-spectrometry data inspection — the intended successor to TOPPView.**
 
-The current vertical slice supports:
+OpenMS Viewer links against the **OpenMS 3.6 core library** (not TOPPView, not the
+OpenMS GUI library) and ships as a separate project. Everything is rendered with
+custom `QPainter` canvases — no WebEngine, no external plotting library — so the
+full run stays in memory while only the visible RT/m·z range is rasterized at
+screen resolution.
 
-- asynchronous, cancellable mzML loading through `OpenMS::MzMLFile`, with a
-  central phase/percent/elapsed-time card that preserves the previous run until
-  the replacement is ready;
-- asynchronous FeatureXML loading through `OpenMS::FeatureXMLFile`, including
-  centroid, bounding-box, and convex-hull overlays;
-- asynchronous idXML loading through `OpenMS::IdXMLFile`, with precursor
-  markers, sequence labels, all peptide hits, metadata, and deterministic
-  one-to-many MS/MS-spectrum linking with a preferred default match;
-- a screen-resolution MS1 peak map rendered by
-  `OpenMS::MSExperiment::rasterizeRTMZ`, with histogram-equalized (default),
-  log, square-root, and linear intensity scales, seven colormaps
-  (viridis/plasma/inferno/magma/jet/hot/grayscale), a Go-to-Range dialog, and a
-  clickable full-run minimap/current-viewport indicator;
-- wheel zoom, rectangle zoom, Alt-drag panning, Shift-drag measurement, zoom
-  history, and RT/m/z axis swapping;
-- a clickable MS1 TIC with an RT marker for every selected scan (including
-  MS2 scans) and peak-map recentering that preserves the current RT span;
-- an MS1/MS2 spectrum viewer with first/previous/next/last and level-specific
-  navigation, persistent wheel/box m/z zoom, snapped peak hover, automatic m/z
-  labels, and per-spectrum two-peak Δm/z measurements;
-- a TIC/BPC view with click selection and drag/wheel RT zoom synchronized back
-  to the peak map;
-- a sortable feature table with intensity, quality, and charge filters, TSV
-  export, table-to-map zoom, and bidirectional selection synchronization;
-- an identification table with linked/unlinked and sequence/score filters,
-  all-hit inspection, metadata details, and TSV export;
-- a synchronized spectra table with MS-level, RT, identification, sequence,
-  and score filters, optional cached statistics/metadata, rows for every linked
-  identification and peptide hit, and TSV export;
-- native OpenMS chromatogram extraction with sortable transition metadata,
-  multi-trace comparison, peak-map RT-range indication, RT activation, and TSV
-  export, including chromatogram-only mzML files;
-- native ion-mobility frame detection and asynchronous `rasterizeIMFrame`
-  rendering with frame navigation, mobilograms, zooming, and MS2 isolation
-  windows;
-- multi-CV FAIMS detection with per-CV TIC traces, scan navigation, and a
-  compensation-voltage filter shared by the peak map and TIC, plus synchronized
-  per-CV peak-map small multiples; table selection and spectrum navigation keep
-  the active channel consistent;
-- asynchronous filtered-mzML export by RT, m/z, MS level, and active FAIMS CV,
-  plus PNG capture for every native plot and TSV export for all data tables;
-- on-disc OpenMS imzML/IBD imaging with TIC and ppm-window ion images,
-  pixel-to-spectrum navigation, lazy spectrum decoding, and additive multi-ion
-  RGB overlays without retaining the full imaging experiment in memory;
-- vendor raw-data loading through the OpenMS backends: Thermo `.raw` (needs a
-  .NET runtime for the bridge) and Bruker timsTOF `.d`/TDF (opentims, no vendor
-  SDK), the latter surfacing ion mobility directly into the IM panels;
-- b/y/a fragment-ion annotation using OpenMS theoretical spectra, external
-  idXML fragment annotations, configurable Da tolerance, coverage statistics,
-  and an optional mirror view with unmatched theoretical ions;
-- a focused welcome page with recent files, reload and close-data actions;
-- visible peak-map Zoom/Pan/Measure modes, log/square-root/linear intensity
-  scaling, color scale and overlay legends, persistent cursor/run/selection
-  context, plot context menus, and collision-aware labels;
-- compact MS-level-aware spectrum navigation with scan-number, native-ID, and
-  RT lookup;
-- native drag-and-drop, file dialogs, dark/light themes, keyboard shortcuts,
-  accessible plot descriptions, movable/closable Qt dock panels whose user
-  visibility choices survive reloads, draggable floating-panel headers with
-  explicit dock/float controls and on-screen recovery, a reset-layout action, and a
-  searchable/saveable diagnostics log.
+![OpenMS Viewer main window](docs/screenshots/main-window.png)
 
-Panel selection is coordinated by one shared selection controller. Mouse,
-keyboard, table, plot, and programmatic selections therefore update the same
-spectrum/feature/identification/hit/FAIMS state without recursive feedback.
+*The main window: a screen-resolution MS1 peak map with feature centroids and a
+clickable minimap (left), a sortable/filterable feature table (right), the MS1
+total-ion chromatogram (bottom-left), and the fragment spectrum for the selected
+scan (bottom-right). Every panel is a movable, closable Qt dock.*
 
-See [docs/architecture.md](docs/architecture.md) for the GUI decision and
-[docs/feature-matrix.md](docs/feature-matrix.md) for parity status against
-`pyopenms-viewer`.
-The [large-file validation](docs/performance.md) records a reproducible
-127-million-peak smoke test and its memory footprint.
-Packaging generators and deployment boundaries are described in
-[docs/packaging.md](docs/packaging.md).
+---
 
-## Build
+## Highlights
 
-OpenMS Viewer currently targets OpenMS 3.6 development builds and Qt 6.4 or
-newer. Point CMake at a built or installed OpenMS package:
+- **One in-memory experiment, screen-resolution rasterization.** The MS1 peak map
+  is drawn by OpenMS native `rasterizeRTMZ` at exactly the pixels on screen, with
+  histogram-equalized / log / square-root / linear intensity scales and seven
+  colormaps.
+- **Everything loads asynchronously and atomically.** mzML, FeatureXML, idXML,
+  consensusXML, and OpenSWATH results load on worker threads and are swapped into
+  the view in one atomic step — a failed or cancelled load never corrupts what
+  you are looking at. Loaders are order-independent; command-line arguments in any
+  order converge to the same linked state.
+- **One selection, everywhere.** A single selection controller keeps the peak map,
+  spectrum, tables, TIC, and detail panels in lock-step without recursive feedback.
+- **Rich-format aware.** Beyond mzML it opens featureXML/featureparquet,
+  idXML/mzIdentML/idparquet, consensusXML/consensusparquet, OpenSWATH `.osw`
+  (with lazy `.xic`/`.sqMass` chromatograms), imzML imaging, and Thermo/Bruker
+  vendor raw data — each routed to the view idiom that fits it.
+
+---
+
+## The peak map
+
+![Peak map with features](docs/screenshots/peak-map.png)
+
+The central canvas rasterizes the visible RT × m·z window on every interaction:
+
+- **Navigation** — wheel zoom, rectangle zoom, `Alt`-drag pan, `Shift`-drag
+  Δm·z / ΔRT measurement, a full zoom history, RT/m·z axis swapping, and a
+  Go-to-Range dialog.
+- **Minimap** — a clickable thumbnail of the whole run with a live viewport
+  rectangle for orientation while zoomed in.
+- **Overlays** — feature centroids, bounding boxes, and convex hulls;
+  identification markers with optional sequence labels; consensus centroids with
+  their alignment envelope; and MS/MS precursor + isolation-window markers. Each
+  overlay is an independent, view-culled, capped layer with its own legend entry.
+- **Interaction modes** — Zoom, Pan, Measure, and **Edit** (see *Manual feature
+  editing* below).
+
+## Spectra and fragment annotation
+
+![Fragment spectrum](docs/screenshots/spectrum.png)
+
+The spectrum viewer offers first/previous/next/last and MS-level-specific
+navigation, scan-number / native-ID / RT lookup, persistent wheel and box m·z
+zoom, snapped peak hover with automatic m·z labels, and two-peak Δm·z
+measurement. Fragment ions are annotated from OpenMS theoretical spectra (b/y/a
+ions) or from external idXML fragment annotations, with a configurable Da
+tolerance, coverage statistics, and an optional **mirror view** that shows the
+unmatched theoretical ions beneath the observed spectrum.
+
+## Features, identifications, and tables
+
+Every tabular view is a sortable model/proxy with column filters, TSV export,
+table-to-map zoom, and **bidirectional selection synchronization** with the plots:
+
+- **Feature table** — intensity, quality, and charge filters; click a row to zoom
+  the map to that feature.
+- **Identification table** — linked/unlinked and sequence/score filters, all-hit
+  inspection, and per-hit metadata. idXML↔spectrum links are *recomputed* whenever
+  either side changes (5 s RT / 0.5 Da precursor tolerance), and every spectrum
+  keeps its lowest-error match as a preferred default.
+- **Spectra table** — MS-level, RT, identification, sequence, and score filters,
+  optional cached statistics/metadata, and a row for every linked identification
+  and peptide hit.
+
+### Manual feature editing
+
+The peak map's **Edit** mode makes the feature map directly editable: drag a
+centroid to move it, double-click to open an editor for RT / m·z / intensity /
+charge, `Delete` to remove, or click empty space to create a new feature. Edits
+that only change intensity or charge preserve the convex hull; moving the centroid
+falls back to a bounding box. The edited map round-trips back out through
+`FeatureXMLFile`.
+
+## Metadata browser
+
+![Metadata browser](docs/screenshots/metadata.png)
+
+A read-only tree exposes the full OpenMS metadata hierarchy: source file and
+checksum, instrument configuration (ion sources, mass analyzers, detectors,
+software), sample, experiment-level user parameters, and — for the selected scan —
+RT, MS level, spectrum type, precursors with isolation window and activation
+method, data processing steps, and per-scan user parameters. Enum values
+(ionization method, analyzer type, …) are rendered through bounds-checked OpenMS
+name tables.
+
+## OpenSWATH / DIA results
+
+![OpenSWATH peak-group view](docs/screenshots/openswath.png)
+
+Open an OpenSWATH `.osw` result and the viewer becomes a targeted-DIA browser:
+
+- a **searchable precursor table** (peptide, charge, precursor m·z, peak-group
+  count, best q-value) with a q-value threshold and a hide-decoys toggle;
+- a **candidate peak-group table** (rank, apex RT, left/right boundary, integrated
+  area, main score, q-value, PEP);
+- a **transition-group plot** drawing every transition XIC on one RT axis with the
+  selected peak-group boundary shaded, the apex and library RT marked, an
+  optional Savitzky-Golay smoothing overlay, and a "show all transitions" toggle;
+- a **score inspector** listing the sub-scores for the selected peak group.
+
+Chromatograms are fetched off the GUI thread with stale-request coalescing and a
+small cache. Both `.xic` (Parquet) and `.sqMass` chromatogram sources are
+supported; the `.sqMass` reader is **lazy** — it decodes only the transitions of
+the selected precursor and never mutates the input database.
+
+## Consensus maps
+
+![Consensus map view](docs/screenshots/consensus.png)
+
+consensusXML / consensusparquet open into a consensus table (RT, m·z, charge,
+quality, map coverage, stored vs. summed intensity, best identification) beside a
+**per-map intensity chart** built from the selected feature's handles. Missing
+maps are shown as gaps — never zero-height bars — with a raw/log toggle, coverage
+and CV readouts, and grouping by the map column headers. Selecting a consensus
+feature highlights its handles and, where the handle resolves to the loaded raw
+run, links through to the underlying spectrum.
+
+## Ion mobility and diaPASEF
+
+![diaPASEF isolation windows](docs/screenshots/dia-windows.png)
+
+Ion-mobility frames are detected natively and rendered with OpenMS
+`rasterizeIMFrame`, with frame navigation, mobilograms, and zooming. For diaPASEF
+data the viewer reconstructs the **isolation-window scheme** across the acquisition
+cycle and overlays every m·z × ion-mobility window box (deduplicated across cycles
+by m·z window and mobility midpoint), making the staircased window groups directly
+visible.
+
+## FAIMS, imaging, and vendor data
+
+- **FAIMS** — multi-CV datasets are detected automatically, with per-CV TIC
+  traces, a compensation-voltage filter shared by the peak map and TIC, and
+  synchronized per-CV peak-map small multiples.
+- **Imaging (MSI)** — imzML/IBD open on-disc with lazy spectrum decoding: TIC and
+  ppm-window ion images, pixel-to-spectrum navigation, and additive multi-ion RGB
+  overlays, all without holding the full imaging experiment in memory.
+- **Vendor raw** — Thermo `.raw` (needs a .NET runtime for the bridge) and Bruker
+  timsTOF `.d`/TDF (opentims, no vendor SDK) load through the OpenMS backends when
+  present; Bruker `.d` surfaces ion mobility straight into the IM panels.
+
+## Export and write-back
+
+- **Filtered mzML export** by RT, m·z, MS level, and active FAIMS CV, run
+  asynchronously.
+- **Native write-back** — save FeatureXML, idXML, and consensusXML (including
+  manually edited feature maps) back through the matching OpenMS writer.
+- **PNG capture** for every native plot and **TSV export** for every data table.
+
+## Workspace
+
+Movable, closable Qt dock panels remember your visibility choices across reloads;
+floating panels have explicit dock/float controls and on-screen recovery, plus a
+reset-layout action. The app supports native drag-and-drop, dark/light themes,
+keyboard shortcuts, accessible plot descriptions, a focused welcome page with
+recent files, and — instead of an embedded scripting console — a thread-safe,
+searchable, saveable **diagnostics log**.
+
+---
+
+## Supported formats
+
+| Category | Formats | View |
+|----------|---------|------|
+| Spectra / experiment | `mzML`, `mzXML`, `mzData`, `sqMass` | Peak map, TIC, spectrum |
+| Feature maps | `featureXML`, `featureparquet` | Feature table + map overlay |
+| Identifications | `idXML`, `mzIdentML` (`.mzid`), `idparquet` | ID table + annotation |
+| Consensus maps | `consensusXML`, `consensusparquet` | Consensus table + per-map chart |
+| OpenSWATH results | `.osw` (+ `.xic` / `.sqMass` chromatograms) | Peak-group browser |
+| Imaging | `imzML` / `IBD` | Ion-image viewer |
+| Vendor raw | Thermo `.raw`, Bruker timsTOF `.d` | Peak map (+ IM for `.d`) |
+
+Routing is by semantic *category* via an audited `FileHandler::getType` registry —
+never by file suffix or inconsistent format capability flags.
+
+## Build, test, run
+
+Requires an OpenMS 3.6 development build/install and Qt 6.4+. Point CMake at
+OpenMS via `-DOpenMS_DIR`:
 
 ```bash
-cmake -S . -B build \
-  -DOpenMS_DIR=/path/to/OpenMS-build
+cmake -S . -B build -DOpenMS_DIR=/path/to/OpenMS-build
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-Run the application with optional mzML, FeatureXML, and idXML files:
+Run the app (all file arguments optional, any order):
 
 ```bash
 ./build/openms-viewer [sample.mzML] [features.featureXML] [ids.idXML]
 ```
 
-Thermo `.raw` files and Bruker timsTOF `.d` datasets load through the same
-entry points when the linked OpenMS was built with `WITH_THERMO_RAW` /
-`WITH_OPENTIMS`. A `.d` dataset is a directory, so open it via **File → Open
-Bruker .d folder…** (or drag the folder in). Thermo `.raw` additionally needs a
-.NET runtime available (set `DOTNET_ROOT` if it is not auto-detected); without
-it the load fails with a clear message rather than crashing.
+A Bruker `.d` dataset is a directory — open it via **File → Open data folder…** or
+drag the folder in. Thermo `.raw` needs a .NET runtime available (set
+`DOTNET_ROOT` if it is not auto-detected); a missing runtime fails with a clear
+message rather than a crash. Vendor loading requires the linked OpenMS to be built
+with `WITH_THERMO_RAW` / `WITH_OPENTIMS`.
 
-During development against the sibling OpenMS checkout in this workspace:
+Default build type is `RelWithDebInfo`; `CMAKE_CXX_STANDARD` is 23; Qt AUTOMOC/
+AUTOUIC/AUTORCC are on.
 
-```bash
-cmake -S . -B build \
-  -DOpenMS_DIR="$HOME/Development/OpenMS/OpenMS-build"
-```
+## Architecture
+
+The code splits into two static libraries plus a thin executable:
+`openms_viewer_core` (UI-independent: model, plot rasterizers, annotation, export,
+logging) and `openms_viewer_ui` (widgets, dialogs, `MainWindow`). The core must
+not depend on Qt Widgets, keeping headless logic testable and reusable.
+
+- [docs/architecture.md](docs/architecture.md) — GUI framework decision and layer contract
+- [docs/feature-matrix.md](docs/feature-matrix.md) — parity status vs. `pyopenms-viewer`
+- [docs/performance.md](docs/performance.md) — 127-million-peak large-file smoke test and memory footprint
+- [docs/packaging.md](docs/packaging.md) — CPack generators and deployment boundaries
 
 ## License
 

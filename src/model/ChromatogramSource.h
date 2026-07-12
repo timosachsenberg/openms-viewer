@@ -5,11 +5,15 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace OpenMSViewer
 {
+  class OswStore;
+
   // One transition's extracted-ion chromatogram (an XIC), with the metadata a
   // peak-group plot needs to label and group it.
   struct TransitionChromatogram
@@ -65,6 +69,38 @@ namespace OpenMSViewer
   private:
     XicChromatogramSource() = default;
     std::vector<std::string> paths_;
+    std::vector<ChromatogramRunRef> runs_;
+    QString provenance_;
+  };
+
+  // .sqMass (the classic OpenSWATH SQLite chromatogram store) — the common
+  // alternative to .xic. sqMass keys chromatograms only by native ID (= the OSW
+  // transition ID) and carries no precursor grouping or library annotation, so this
+  // source is paired with the OswStore: it builds a native-ID → chromatogram-ID
+  // index up-front (metadata only) and decodes just the selected precursor's
+  // transitions on demand via OpenMS's indexed reader — never the whole file.
+  class SqMassChromatogramSource final : public ChromatogramSource
+  {
+  public:
+    [[nodiscard]] static std::shared_ptr<SqMassChromatogramSource> open(
+      const QString& sqMassPath, std::shared_ptr<OswStore> store, QString& error);
+
+    [[nodiscard]] std::vector<ChromatogramRunRef> runs() const override { return runs_; }
+    [[nodiscard]] std::vector<TransitionChromatogram> fetch(
+      std::int64_t precursorId, std::int64_t runId) const override;
+    [[nodiscard]] QString provenance() const override { return provenance_; }
+
+  private:
+    SqMassChromatogramSource() = default;
+    std::string path_;
+    // A PRIVATE OswStore connection (its own sqlite handle), so per-precursor
+    // fetches on worker threads never touch the GUI's store — OswStore is
+    // worker-thread-affine and not internally synchronized. storeMutex_ serializes
+    // the (possibly overlapping) fetches that share this connection.
+    std::shared_ptr<OswStore> store_;
+    mutable std::mutex storeMutex_;
+    std::unordered_map<std::string, int> chromatogramIdByNativeId_;  // NATIVE_ID → CHROMATOGRAM.ID
+    std::int64_t runId_{0};
     std::vector<ChromatogramRunRef> runs_;
     QString provenance_;
   };

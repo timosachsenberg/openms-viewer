@@ -21,6 +21,7 @@
 #include "widgets/LogWidget.h"
 #include "widgets/OswPanel.h"
 #include "widgets/ConsensusPanel.h"
+#include "widgets/MetadataBrowserWidget.h"
 #include "model/ConsensusDrilldown.h"
 #include "widgets/LoadingOverlayWidget.h"
 #include "widgets/SpectrumWidget.h"
@@ -521,6 +522,14 @@ namespace OpenMSViewer
     addDockWidget(Qt::BottomDockWidgetArea, consensusDock_);
     tabifyDockWidget(oswDock_, consensusDock_);
 
+    metadata_ = new MetadataBrowserWidget(this);
+    metadataDock_ = new QDockWidget(tr("Metadata"), this);
+    metadataDock_->setObjectName(QStringLiteral("metadataDock"));
+    metadataDock_->setWidget(metadata_);
+    configureDock(metadataDock_);
+    metadataDock_->setMinimumWidth(360);
+    addDockWidget(Qt::RightDockWidgetArea, metadataDock_);
+
     log_ = new LogWidget(this);
     logDock_ = new QDockWidget(tr("Application log"), this);
     logDock_->setObjectName(QStringLiteral("logDock"));
@@ -564,6 +573,7 @@ namespace OpenMSViewer
     faimsDock_->setMinimumWidth(520);
     addDockWidget(Qt::RightDockWidgetArea, faimsDock_);
     tabifyDockWidget(spectraDock_, faimsDock_);
+    tabifyDockWidget(faimsDock_, metadataDock_);  // join the right-side tab group
   }
 
   void MainWindow::createActions()
@@ -891,6 +901,7 @@ namespace OpenMSViewer
     viewMenu->addAction(ionMobilityDock_->toggleViewAction());
     viewMenu->addAction(faimsDock_->toggleViewAction());
     viewMenu->addAction(imagingDock_->toggleViewAction());
+    viewMenu->addAction(metadataDock_->toggleViewAction());
     viewMenu->addAction(logDock_->toggleViewAction());
 
     auto* helpMenu = menuBar()->addMenu(tr("&Help"));
@@ -1292,6 +1303,8 @@ namespace OpenMSViewer
     setDockAvailable(ionMobilityDock_, false);
     setDockAvailable(faimsDock_, false);
     setDockAvailable(imagingDock_, false);
+    setDockAvailable(metadataDock_, false);
+    if (metadata_) metadata_->clear();
     setDockAvailable(oswDock_, false);
     if (osw_) osw_->clear();
     hasOswData_ = false;
@@ -1322,12 +1335,13 @@ namespace OpenMSViewer
       {spectraDock_->objectName(), false}, {chromatogramsDock_->objectName(), true},
       {ionMobilityDock_->objectName(), true}, {faimsDock_->objectName(), true},
       {imagingDock_->objectName(), true}, {oswDock_->objectName(), true},
-      {consensusDock_->objectName(), true}, {logDock_->objectName(), false}
+      {consensusDock_->objectName(), true}, {metadataDock_->objectName(), false},
+      {logDock_->objectName(), false}
     };
     QSettings settings;
     for (QDockWidget* dock : {ticDock_, spectrumDock_, featuresDock_, identificationsDock_,
                               spectraDock_, chromatogramsDock_, ionMobilityDock_, faimsDock_,
-                              imagingDock_, oswDock_, consensusDock_, logDock_})
+                              imagingDock_, oswDock_, consensusDock_, metadataDock_, logDock_})
     {
       const QString key = QStringLiteral("docks/%1/preferredVisible").arg(dock->objectName());
       bool preferred = defaults.value(dock->objectName(), false);
@@ -1457,11 +1471,12 @@ namespace OpenMSViewer
     dockVisibilityPreference_[imagingDock_->objectName()] = true;
     dockVisibilityPreference_[oswDock_->objectName()] = true;
     dockVisibilityPreference_[consensusDock_->objectName()] = true;
+    dockVisibilityPreference_[metadataDock_->objectName()] = false;
     dockVisibilityPreference_[logDock_->objectName()] = false;
 
     for (QDockWidget* dock : {ticDock_, spectrumDock_, featuresDock_, identificationsDock_,
                               spectraDock_, chromatogramsDock_, ionMobilityDock_, faimsDock_,
-                              imagingDock_, oswDock_, consensusDock_, logDock_})
+                              imagingDock_, oswDock_, consensusDock_, metadataDock_, logDock_})
       dock->setFloating(false);
 
     addDockWidget(Qt::BottomDockWidgetArea, ticDock_);
@@ -1484,9 +1499,11 @@ namespace OpenMSViewer
     addDockWidget(Qt::RightDockWidgetArea, identificationsDock_);
     addDockWidget(Qt::RightDockWidgetArea, spectraDock_);
     addDockWidget(Qt::RightDockWidgetArea, faimsDock_);
+    addDockWidget(Qt::RightDockWidgetArea, metadataDock_);
     tabifyDockWidget(featuresDock_, identificationsDock_);
     tabifyDockWidget(featuresDock_, spectraDock_);
     tabifyDockWidget(spectraDock_, faimsDock_);
+    tabifyDockWidget(faimsDock_, metadataDock_);
 
     if (document_.isEmpty() && !imagingStore_ && !hasOswData_ && !hasConsensusData_) showWelcomePage();
     else if (hasOswData_)
@@ -1516,6 +1533,7 @@ namespace OpenMSViewer
       setDockAvailable(chromatogramsDock_, document_.hasChromatograms());
       setDockAvailable(ionMobilityDock_, document_.hasIonMobility());
       setDockAvailable(faimsDock_, document_.hasFaims());
+      setDockAvailable(metadataDock_, document_.experimentHandle() != nullptr);
     }
     setDockAvailable(logDock_, true);
     statusBar()->showMessage(tr("Panel layout reset"), 3000);
@@ -2272,6 +2290,8 @@ namespace OpenMSViewer
     peakMap_->clear();
     peakMap_->setPrecursorMarkers({});  // the imaging run has no MS/MS precursors
     showPrecursorsAction_->setEnabled(false);
+    metadata_->clear();
+    setDockAvailable(metadataDock_, false);
     tic_->clear();
     spectrum_->clear();
     spectra_->clear();
@@ -2350,6 +2370,8 @@ namespace OpenMSViewer
     setDockAvailable(ticDock_, hasSpectra);
     setDockAvailable(spectrumDock_, hasSpectra);
     setDockAvailable(spectraDock_, hasSpectra);
+    metadata_->setExperiment(experiment);
+    setDockAvailable(metadataDock_, experiment != nullptr);
     chromatograms_->setChromatograms(document_.chromatograms());
     chromatograms_->setPeakMapRange(document_.bounds());
     setDockAvailable(chromatogramsDock_, document_.hasChromatograms());
@@ -2565,6 +2587,7 @@ namespace OpenMSViewer
 
     updateSpectrumControls();
     spectrum_->setSpectrumIndex(spectrumIndex);
+    metadata_->setSpectrumIndex(spectrumIndex);
     tic_->setSelectedSpectrum(spectrumIndex);
     tic_->setSelectedRt(selected->getRT());
     std::optional<double> precursorMz;

@@ -110,6 +110,8 @@ add_library(openms_viewer_ui STATIC
   src/widgets/IonMobilityPanelWidget.h
   src/widgets/LogWidget.cpp
   src/widgets/LogWidget.h
+  src/widgets/MetadataBrowserWidget.cpp
+  src/widgets/MetadataBrowserWidget.h
   src/widgets/LoadingOverlayWidget.cpp
   src/widgets/LoadingOverlayWidget.h
   src/widgets/ImagingPanelWidget.cpp
@@ -195,6 +197,7 @@ if(OPENMS_VIEWER_BUILD_TESTS)
     tests/OswStoreTest.cpp
     tests/ChromatogramSourceTest.cpp
     tests/PrecursorOverlayTest.cpp
+    tests/MetadataBrowserTest.cpp
     tests/TraceSmoothingTest.cpp
     tests/OswPanelTest.cpp
     tests/ConsensusDocumentTest.cpp

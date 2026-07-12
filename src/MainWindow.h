@@ -177,6 +177,7 @@ namespace OpenMSViewer
     ImagingPanelWidget* imaging_{nullptr};
     class OswPanel* osw_{nullptr};
     class ConsensusPanel* consensus_{nullptr};
+    class MetadataBrowserWidget* metadata_{nullptr};
     LogWidget* log_{nullptr};
     TicWidget* tic_{nullptr};
     SpectrumWidget* spectrum_{nullptr};
@@ -192,6 +193,7 @@ namespace OpenMSViewer
     QDockWidget* imagingDock_{nullptr};
     QDockWidget* oswDock_{nullptr};
     QDockWidget* consensusDock_{nullptr};
+    QDockWidget* metadataDock_{nullptr};
     QDockWidget* logDock_{nullptr};
     QProgressBar* progress_{nullptr};
     QLabel* runContext_{nullptr};

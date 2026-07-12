@@ -135,6 +135,15 @@ namespace OpenMSViewer
                                                    CancellationCheck cancelled = {});
     [[nodiscard]] static FeatureLoadResult readFeatureXML(const QString& path);
     [[nodiscard]] static IdentificationLoadResult readIdXML(const QString& path);
+    // Category loaders that route through OpenMS::FileHandler with an explicit
+    // allowlist, so one path serves every format of a kind (featureXML +
+    // featureparquet; idXML + mzIdentML + idparquet; mzML + mzXML + mzData +
+    // sqMass). readFeatureXML/readIdXML delegate here.
+    [[nodiscard]] static LoadResult readExperiment(const QString& path,
+                                                   ProgressCallback progress = {},
+                                                   CancellationCheck cancelled = {});
+    [[nodiscard]] static FeatureLoadResult readFeatures(const QString& path);
+    [[nodiscard]] static IdentificationLoadResult readIdentifications(const QString& path);
     bool adopt(LoadResult result);
     bool adoptFeatures(FeatureLoadResult result);
     bool adoptIdentifications(IdentificationLoadResult result);

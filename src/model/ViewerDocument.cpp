@@ -1,5 +1,7 @@
 #include "model/ViewerDocument.h"
+#include "model/FormatRegistry.h"
 
+#include <OpenMS/FORMAT/FileHandler.h>
 #include <OpenMS/FORMAT/MzMLFile.h>
 #include <OpenMS/FORMAT/FeatureXMLFile.h>
 #include <OpenMS/FORMAT/IdXMLFile.h>
@@ -351,6 +353,100 @@ namespace OpenMSViewer
       result.experiment = std::move(experiment);
     }
 
+    // Flatten an OpenMS FeatureMap into UI FeatureRecords (rt/mz/intensity/charge/
+    // quality + convex hulls + bounding box). Shared by every feature format.
+    std::vector<FeatureRecord> buildFeatureRecords(const OpenMS::FeatureMap& map)
+    {
+      std::vector<FeatureRecord> features;
+      features.reserve(map.size());
+      for (std::size_t index = 0; index < map.size(); ++index)
+      {
+        const auto& source = map[index];
+        FeatureRecord feature;
+        feature.index = index;
+        feature.rt = source.getRT();
+        feature.mz = source.getMZ();
+        feature.intensity = source.getIntensity();
+        feature.charge = source.getCharge();
+        feature.quality = source.getOverallQuality();
+
+        double rtMin = std::numeric_limits<double>::infinity();
+        double rtMax = -std::numeric_limits<double>::infinity();
+        double mzMin = std::numeric_limits<double>::infinity();
+        double mzMax = -std::numeric_limits<double>::infinity();
+        feature.hulls.reserve(source.getConvexHulls().size());
+        for (const auto& sourceHull : source.getConvexHulls())
+        {
+          std::vector<FeaturePoint> hull;
+          hull.reserve(sourceHull.getHullPoints().size());
+          for (const auto& point : sourceHull.getHullPoints())
+          {
+            const double rt = point[0];
+            const double mz = point[1];
+            hull.push_back({rt, mz});
+            rtMin = std::min(rtMin, rt);
+            rtMax = std::max(rtMax, rt);
+            mzMin = std::min(mzMin, mz);
+            mzMax = std::max(mzMax, mz);
+          }
+          if (!hull.empty()) feature.hulls.push_back(std::move(hull));
+        }
+        if (!std::isfinite(rtMin))
+        {
+          rtMin = feature.rt - 1.0;
+          rtMax = feature.rt + 1.0;
+          mzMin = feature.mz - 0.5;
+          mzMax = feature.mz + 0.5;
+        }
+        if (rtMax <= rtMin) rtMax = rtMin + 1e-6;
+        if (mzMax <= mzMin) mzMax = mzMin + 1e-8;
+        feature.bounds = {rtMin, rtMax, mzMin, mzMax};
+        features.push_back(std::move(feature));
+      }
+      return features;
+    }
+
+    // Flatten peptide identifications (+ hits, meta values, peak annotations) into
+    // UI records. Shared by idXML, mzIdentML and idparquet.
+    std::vector<IdentificationRecord> buildIdentificationRecords(
+      const OpenMS::PeptideIdentificationList& peptides)
+    {
+      std::vector<IdentificationRecord> identifications;
+      identifications.reserve(peptides.size());
+      for (std::size_t index = 0; index < peptides.size(); ++index)
+      {
+        const auto& source = peptides[index];
+        IdentificationRecord identification;
+        identification.index = index;
+        identification.rt = source.getRT();
+        identification.mz = source.getMZ();
+        identification.scoreType = QString::fromStdString(source.getScoreType());
+        identification.higherScoreBetter = source.isHigherScoreBetter();
+        identification.identifier = QString::fromStdString(source.getIdentifier());
+        identification.metaValues = collectMetaValues(source);
+        identification.hits.reserve(source.getHits().size());
+        for (std::size_t hitIndex = 0; hitIndex < source.getHits().size(); ++hitIndex)
+        {
+          const auto& sourceHit = source.getHits()[hitIndex];
+          PeptideHitRecord hit;
+          hit.index = hitIndex;
+          hit.sequence = QString::fromStdString(sourceHit.getSequence().toString());
+          hit.score = sourceHit.getScore();
+          hit.charge = sourceHit.getCharge();
+          hit.metaValues = collectMetaValues(sourceHit);
+          hit.peakAnnotations.reserve(sourceHit.getPeakAnnotations().size());
+          for (const auto& sourceAnnotation : sourceHit.getPeakAnnotations())
+          {
+            hit.peakAnnotations.push_back({sourceAnnotation.mz, sourceAnnotation.intensity,
+                                           sourceAnnotation.charge,
+                                           QString::fromStdString(sourceAnnotation.annotation)});
+          }
+          identification.hits.push_back(std::move(hit));
+        }
+        identifications.push_back(std::move(identification));
+      }
+      return identifications;
+    }
   }
 
   ViewerDocument::ViewerDocument(QObject* parent) : QObject(parent)
@@ -493,158 +589,130 @@ namespace OpenMSViewer
 
   ViewerDocument::FeatureLoadResult ViewerDocument::readFeatureXML(const QString& path)
   {
+    return readFeatures(path);
+  }
+
+  ViewerDocument::FeatureLoadResult ViewerDocument::readFeatures(const QString& path)
+  {
     FeatureLoadResult result;
     result.sourcePath = QFileInfo(path).absoluteFilePath();
-
     const QFileInfo file(result.sourcePath);
-    if (!file.exists() || !file.isFile())
+    if (!file.exists())
     {
       result.error = QStringLiteral("File does not exist: %1").arg(result.sourcePath);
       return result;
     }
-    if (file.suffix().compare(QStringLiteral("featureXML"), Qt::CaseInsensitive) != 0)
+    const auto info = FormatRegistry::detect(result.sourcePath);
+    if (info.category != FormatRegistry::Category::Features || !info.supported)
     {
-      result.error = QStringLiteral("Unsupported feature file type '%1'.").arg(file.suffix());
+      result.error = QStringLiteral("Unsupported feature map: %1").arg(result.sourcePath);
       return result;
     }
-
     try
     {
       auto map = std::make_shared<OpenMS::FeatureMap>();
-      OpenMS::FeatureXMLFile().load(result.sourcePath.toStdString(), *map);
-      result.features.reserve(map->size());
-
-      for (std::size_t index = 0; index < map->size(); ++index)
-      {
-        const auto& source = (*map)[index];
-        FeatureRecord feature;
-        feature.index = index;
-        feature.rt = source.getRT();
-        feature.mz = source.getMZ();
-        feature.intensity = source.getIntensity();
-        feature.charge = source.getCharge();
-        feature.quality = source.getOverallQuality();
-
-        double rtMin = std::numeric_limits<double>::infinity();
-        double rtMax = -std::numeric_limits<double>::infinity();
-        double mzMin = std::numeric_limits<double>::infinity();
-        double mzMax = -std::numeric_limits<double>::infinity();
-        feature.hulls.reserve(source.getConvexHulls().size());
-
-        for (const auto& sourceHull : source.getConvexHulls())
-        {
-          std::vector<FeaturePoint> hull;
-          hull.reserve(sourceHull.getHullPoints().size());
-          for (const auto& point : sourceHull.getHullPoints())
-          {
-            const double rt = point[0];
-            const double mz = point[1];
-            hull.push_back({rt, mz});
-            rtMin = std::min(rtMin, rt);
-            rtMax = std::max(rtMax, rt);
-            mzMin = std::min(mzMin, mz);
-            mzMax = std::max(mzMax, mz);
-          }
-          if (!hull.empty()) feature.hulls.push_back(std::move(hull));
-        }
-
-        if (!std::isfinite(rtMin))
-        {
-          rtMin = feature.rt - 1.0;
-          rtMax = feature.rt + 1.0;
-          mzMin = feature.mz - 0.5;
-          mzMax = feature.mz + 0.5;
-        }
-        if (rtMax <= rtMin) rtMax = rtMin + 1e-6;
-        if (mzMax <= mzMin) mzMax = mzMin + 1e-8;
-        feature.bounds = {rtMin, rtMax, mzMin, mzMax};
-        result.features.push_back(std::move(feature));
-      }
-
+      OpenMS::FileHandler().loadFeatures(
+        result.sourcePath.toStdString(), *map,
+        FormatRegistry::allowedTypes(FormatRegistry::Category::Features));
+      result.features = buildFeatureRecords(*map);
       result.featureMap = std::move(map);
-      return result;
     }
     catch (const std::exception& error)
     {
-      result.error = QStringLiteral("OpenMS could not read the FeatureXML file: %1")
+      result.error = QStringLiteral("OpenMS could not read the feature map: %1")
                        .arg(QString::fromLocal8Bit(error.what()));
     }
     catch (...)
     {
-      result.error = QStringLiteral("OpenMS could not read the FeatureXML file (unknown error).");
+      result.error = QStringLiteral("OpenMS could not read the feature map (unknown error).");
     }
     return result;
   }
 
   ViewerDocument::IdentificationLoadResult ViewerDocument::readIdXML(const QString& path)
   {
+    return readIdentifications(path);
+  }
+
+  ViewerDocument::IdentificationLoadResult ViewerDocument::readIdentifications(const QString& path)
+  {
     IdentificationLoadResult result;
     result.sourcePath = QFileInfo(path).absoluteFilePath();
-
     const QFileInfo file(result.sourcePath);
-    if (!file.exists() || !file.isFile())
+    if (!file.exists())
     {
       result.error = QStringLiteral("File does not exist: %1").arg(result.sourcePath);
       return result;
     }
-    if (file.suffix().compare(QStringLiteral("idXML"), Qt::CaseInsensitive) != 0)
+    const auto info = FormatRegistry::detect(result.sourcePath);
+    if (info.category != FormatRegistry::Category::Identifications || !info.supported)
     {
-      result.error = QStringLiteral("Unsupported identification file type '%1'.").arg(file.suffix());
+      result.error = QStringLiteral("Unsupported identification file: %1").arg(result.sourcePath);
       return result;
     }
-
     try
     {
       auto store = std::make_shared<IdentificationStore>();
-      OpenMS::IdXMLFile().load(result.sourcePath.toStdString(),
-                               store->proteinIdentifications,
-                               store->peptideIdentifications);
-      result.identifications.reserve(store->peptideIdentifications.size());
-
-      for (std::size_t index = 0; index < store->peptideIdentifications.size(); ++index)
-      {
-        const auto& source = store->peptideIdentifications[index];
-        IdentificationRecord identification;
-        identification.index = index;
-        identification.rt = source.getRT();
-        identification.mz = source.getMZ();
-        identification.scoreType = QString::fromStdString(source.getScoreType());
-        identification.higherScoreBetter = source.isHigherScoreBetter();
-        identification.identifier = QString::fromStdString(source.getIdentifier());
-        identification.metaValues = collectMetaValues(source);
-        identification.hits.reserve(source.getHits().size());
-
-        for (std::size_t hitIndex = 0; hitIndex < source.getHits().size(); ++hitIndex)
-        {
-          const auto& sourceHit = source.getHits()[hitIndex];
-          PeptideHitRecord hit;
-          hit.index = hitIndex;
-          hit.sequence = QString::fromStdString(sourceHit.getSequence().toString());
-          hit.score = sourceHit.getScore();
-          hit.charge = sourceHit.getCharge();
-          hit.metaValues = collectMetaValues(sourceHit);
-          hit.peakAnnotations.reserve(sourceHit.getPeakAnnotations().size());
-          for (const auto& sourceAnnotation : sourceHit.getPeakAnnotations())
-          {
-            hit.peakAnnotations.push_back({sourceAnnotation.mz, sourceAnnotation.intensity,
-                                           sourceAnnotation.charge,
-                                           QString::fromStdString(sourceAnnotation.annotation)});
-          }
-          identification.hits.push_back(std::move(hit));
-        }
-        result.identifications.push_back(std::move(identification));
-      }
+      OpenMS::FileHandler().loadIdentifications(
+        result.sourcePath.toStdString(), store->proteinIdentifications,
+        store->peptideIdentifications,
+        FormatRegistry::allowedTypes(FormatRegistry::Category::Identifications));
+      result.identifications = buildIdentificationRecords(store->peptideIdentifications);
       result.store = std::move(store);
-      return result;
     }
     catch (const std::exception& error)
     {
-      result.error = QStringLiteral("OpenMS could not read the idXML file: %1")
+      result.error = QStringLiteral("OpenMS could not read the identifications: %1")
                        .arg(QString::fromLocal8Bit(error.what()));
     }
     catch (...)
     {
-      result.error = QStringLiteral("OpenMS could not read the idXML file (unknown error).");
+      result.error = QStringLiteral("OpenMS could not read the identifications (unknown error).");
+    }
+    return result;
+  }
+
+  ViewerDocument::LoadResult ViewerDocument::readExperiment(const QString& path,
+                                                            ProgressCallback,
+                                                            CancellationCheck cancelled)
+  {
+    LoadResult result;
+    result.sourcePath = QFileInfo(path).absoluteFilePath();
+    const QFileInfo file(result.sourcePath);
+    if (!file.exists())
+    {
+      result.error = QStringLiteral("File does not exist: %1").arg(result.sourcePath);
+      return result;
+    }
+    const auto info = FormatRegistry::detect(result.sourcePath);
+    if (info.category != FormatRegistry::Category::Experiment || !info.supported)
+    {
+      result.error = QStringLiteral("Unsupported spectra file: %1").arg(result.sourcePath);
+      return result;
+    }
+    try
+    {
+      auto experiment = std::make_shared<OpenMS::MSExperiment>();
+      // No per-format progress hook here (unlike readMzML); large formats such as
+      // sqMass load fully — MainWindow warns the user before starting.
+      OpenMS::FileHandler().loadExperiment(
+        result.sourcePath.toStdString(), *experiment,
+        FormatRegistry::allowedTypes(FormatRegistry::Category::Experiment));
+      if (cancelled && cancelled()) throw LoadCancelled();
+      deriveLoadResult(result, std::move(experiment), cancelled);
+    }
+    catch (const LoadCancelled&)
+    {
+      result.error = QStringLiteral("Loading cancelled.");
+    }
+    catch (const std::exception& error)
+    {
+      result.error = QStringLiteral("OpenMS could not read the file: %1")
+                       .arg(QString::fromLocal8Bit(error.what()));
+    }
+    catch (...)
+    {
+      result.error = QStringLiteral("OpenMS could not read the file (unknown error).");
     }
     return result;
   }

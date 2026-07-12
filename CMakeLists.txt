@@ -44,6 +44,8 @@ add_library(openms_viewer_core STATIC
   src/annotation/SpectrumAnnotation.cpp
   src/annotation/SpectrumAnnotation.h
   src/model/IdentificationData.h
+  src/model/FormatRegistry.cpp
+  src/model/FormatRegistry.h
   src/logging/ApplicationLog.cpp
   src/logging/ApplicationLog.h
   src/model/ImagingDocument.cpp
@@ -167,6 +169,7 @@ if(OPENMS_VIEWER_BUILD_TESTS)
 
   add_executable(openms_viewer_tests
     tests/TestMain.cpp
+    tests/FormatRegistryTest.cpp
     tests/PeakMapRasterizerTest.cpp
     tests/FeatureDocumentTest.cpp
     tests/IdentificationDocumentTest.cpp

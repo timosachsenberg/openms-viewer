@@ -3,6 +3,7 @@
 
 int runPeakMapRasterizerTests(int argc, char** argv);
 int runFormatRegistryTests(int argc, char** argv);
+int runRichFormatsTests(int argc, char** argv);
 int runFeatureDocumentTests(int argc, char** argv);
 int runMainWindowFeatureWorkflowTests(int argc, char** argv);
 int runIdentificationDocumentTests(int argc, char** argv);
@@ -25,6 +26,7 @@ int main(int argc, char** argv)
   QApplication::setApplicationName(QStringLiteral("OpenMSViewerTests"));
   int status = runPeakMapRasterizerTests(argc, argv);
   status |= runFormatRegistryTests(argc, argv);
+  status |= runRichFormatsTests(argc, argv);
   status |= runFeatureDocumentTests(argc, argv);
   status |= runMainWindowFeatureWorkflowTests(argc, argv);
   status |= runIdentificationDocumentTests(argc, argv);

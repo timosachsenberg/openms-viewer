@@ -170,6 +170,7 @@ if(OPENMS_VIEWER_BUILD_TESTS)
   add_executable(openms_viewer_tests
     tests/TestMain.cpp
     tests/FormatRegistryTest.cpp
+    tests/RichFormatsTest.cpp
     tests/PeakMapRasterizerTest.cpp
     tests/FeatureDocumentTest.cpp
     tests/IdentificationDocumentTest.cpp

@@ -1,5 +1,9 @@
 #include "MainWindow.h"
 
+#include "model/FormatRegistry.h"
+
+#include <OpenMS/FORMAT/FileTypes.h>
+
 #include "export/MzMLExportDialog.h"
 #include "export/PlotExporter.h"
 #include "logging/ApplicationLog.h"
@@ -535,10 +539,10 @@ namespace OpenMSViewer
     openAction_->setShortcut(QKeySequence::Open);
     connect(openAction_, &QAction::triggered, this, &MainWindow::openFile);
 
-    // A Bruker timsTOF .d dataset is a directory, so it needs a folder picker
+    // Directory-shaped inputs (Bruker .d, Parquet bundles) need a folder picker
     // rather than the file dialog above.
-    openBrukerAction_ = new QAction(tr("Open Bruker .d folder…"), this);
-    connect(openBrukerAction_, &QAction::triggered, this, &MainWindow::openBrukerFolder);
+    openBrukerAction_ = new QAction(tr("Open data folder…"), this);
+    connect(openBrukerAction_, &QAction::triggered, this, &MainWindow::openDataFolder);
 
     reloadAction_ = new QAction(style()->standardIcon(QStyle::SP_BrowserReload), tr("Reload"), this);
     reloadAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
@@ -1570,24 +1574,37 @@ namespace OpenMSViewer
     const QString startDirectory = settings.value(QStringLiteral("files/lastDirectory")).toString();
     const QStringList paths = QFileDialog::getOpenFileNames(
       this, tr("Open mass-spectrometry data"), startDirectory,
-      tr("OpenMS data (*.mzML *.mzml *.imzML *.imzml *.raw *.featureXML *.featurexml *.idXML *.idxml);;mzML files (*.mzML *.mzml);;imzML imaging files (*.imzML *.imzml);;Thermo RAW files (*.raw);;FeatureXML files (*.featureXML *.featurexml);;idXML files (*.idXML *.idxml);;All files (*)"));
+      tr("OpenMS data (*.mzML *.mzml *.imzML *.imzml *.raw *.mzXML *.mzxml *.mzData *.mzdata *.sqMass *.sqmass *.featureXML *.featurexml *.idXML *.idxml *.mzid *.mzIdentML);;"
+         "Spectra (*.mzML *.mzml *.mzXML *.mzxml *.mzData *.mzdata *.sqMass *.sqmass);;"
+         "imzML imaging files (*.imzML *.imzml);;Thermo RAW files (*.raw);;"
+         "Feature maps (*.featureXML *.featurexml);;"
+         "Identifications (*.idXML *.idxml *.mzid *.mzIdentML);;All files (*)"));
     if (paths.isEmpty()) return;
     settings.setValue(QStringLiteral("files/lastDirectory"), QFileInfo(paths.front()).absolutePath());
     loadFiles(paths);
   }
 
-  void MainWindow::openBrukerFolder()
+  void MainWindow::openDataFolder()
   {
     QSettings settings;
     const QString startDirectory = settings.value(QStringLiteral("files/lastDirectory")).toString();
     const QString path = QFileDialog::getExistingDirectory(
-      this, tr("Open Bruker timsTOF .d dataset"), startDirectory,
+      this, tr("Open data folder (Bruker .d or Parquet bundle)"), startDirectory,
       QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
     if (path.isEmpty()) return;
-    if (QFileInfo(path).suffix().compare(QStringLiteral("d"), Qt::CaseInsensitive) != 0)
+    // Directory inputs are Bruker .d datasets or the OpenMS Parquet bundle
+    // directories the loader can currently route: featureparquet / idparquet.
+    // (consensusparquet / chromparquet are recognized but not wired yet.)
+    const bool isBruker = QFileInfo(path).suffix().compare(QStringLiteral("d"), Qt::CaseInsensitive) == 0;
+    const auto format = FormatRegistry::detect(path);
+    const bool routable = isBruker
+      || (format.supported && (format.category == FormatRegistry::Category::Features
+                               || format.category == FormatRegistry::Category::Identifications));
+    if (!routable)
     {
-      statusBar()->showMessage(tr("Not a Bruker .d dataset: %1").arg(QFileInfo(path).fileName()), 5000);
-      notify(tr("Not a Bruker .d dataset — expected a folder ending in .d"), ToastLevel::Warning);
+      statusBar()->showMessage(tr("Not a supported data folder: %1").arg(QFileInfo(path).fileName()), 5000);
+      notify(tr("Not a supported data folder — expected a Bruker .d or a Parquet bundle"),
+             ToastLevel::Warning);
       return;
     }
     settings.setValue(QStringLiteral("files/lastDirectory"), QFileInfo(path).absolutePath());
@@ -1692,38 +1709,78 @@ namespace OpenMSViewer
       updateLoadingUi();
       return;
     }
-    if (suffix.compare(QStringLiteral("featureXML"), Qt::CaseInsensitive) == 0)
+    // Everything else routes by detected semantic category — this covers the
+    // XML formats (featureXML/idXML) and the new ones (featureparquet, idparquet,
+    // mzIdentML, mzXML/mzData, sqMass) uniformly.
+    const auto format = FormatRegistry::detect(path);
+    if (format.supported)
     {
-      if (featureLoadWatcher_.isRunning())
+      switch (format.category)
       {
-        statusBar()->showMessage(tr("A FeatureXML file is already loading"), 3000);
-        return;
+        case FormatRegistry::Category::Features:        loadFeatureData(path); return;
+        case FormatRegistry::Category::Identifications: loadIdentificationData(path); return;
+        case FormatRegistry::Category::Experiment:      loadExperimentData(path, format.type); return;
+        default: break;  // Consensus / OpenSWATH wired in later phases
       }
-      statusBar()->showMessage(tr("Loading feature overlay %1…").arg(QFileInfo(path).fileName()));
-      featureCancelled_ = false;
-      beginOperation(FeatureOperation, tr("Loading feature overlay"),
-                     tr("Reading %1").arg(QFileInfo(path).fileName()));
-      featureLoadWatcher_.setFuture(QtConcurrent::run([path] { return ViewerDocument::readFeatureXML(path); }));
-      updateLoadingUi();
-      return;
-    }
-    if (suffix.compare(QStringLiteral("idXML"), Qt::CaseInsensitive) == 0)
-    {
-      if (identificationLoadWatcher_.isRunning())
-      {
-        statusBar()->showMessage(tr("An idXML file is already loading"), 3000);
-        return;
-      }
-      statusBar()->showMessage(tr("Loading identification overlay %1…").arg(QFileInfo(path).fileName()));
-      identificationCancelled_ = false;
-      beginOperation(IdentificationOperation, tr("Loading identification overlay"),
-                     tr("Reading %1").arg(QFileInfo(path).fileName()));
-      identificationLoadWatcher_.setFuture(QtConcurrent::run([path] { return ViewerDocument::readIdXML(path); }));
-      updateLoadingUi();
-      return;
     }
     QMessageBox::warning(this, tr("Unsupported file"),
                          tr("OpenMS Viewer does not yet support '%1'.").arg(QFileInfo(path).fileName()));
+  }
+
+  void MainWindow::loadFeatureData(const QString& path)
+  {
+    if (featureLoadWatcher_.isRunning())
+    {
+      statusBar()->showMessage(tr("A feature map is already loading"), 3000);
+      return;
+    }
+    statusBar()->showMessage(tr("Loading feature overlay %1…").arg(QFileInfo(path).fileName()));
+    featureCancelled_ = false;
+    beginOperation(FeatureOperation, tr("Loading feature overlay"),
+                   tr("Reading %1").arg(QFileInfo(path).fileName()));
+    featureLoadWatcher_.setFuture(QtConcurrent::run([path] { return ViewerDocument::readFeatures(path); }));
+    updateLoadingUi();
+  }
+
+  void MainWindow::loadIdentificationData(const QString& path)
+  {
+    if (identificationLoadWatcher_.isRunning())
+    {
+      statusBar()->showMessage(tr("Identifications are already loading"), 3000);
+      return;
+    }
+    statusBar()->showMessage(tr("Loading identification overlay %1…").arg(QFileInfo(path).fileName()));
+    identificationCancelled_ = false;
+    beginOperation(IdentificationOperation, tr("Loading identification overlay"),
+                   tr("Reading %1").arg(QFileInfo(path).fileName()));
+    identificationLoadWatcher_.setFuture(QtConcurrent::run([path] { return ViewerDocument::readIdentifications(path); }));
+    updateLoadingUi();
+  }
+
+  void MainWindow::loadExperimentData(const QString& path, int fileType)
+  {
+    if (loadWatcher_.isRunning() || imagingLoadWatcher_.isRunning())
+    {
+      statusBar()->showMessage(tr("A primary data file is already loading"), 3000);
+      return;
+    }
+    statusBar()->showMessage(tr("Loading %1 with OpenMS…").arg(QFileInfo(path).fileName()));
+    mzMLLoadTimer_.start();
+    mzMLCancellation_ = std::make_shared<std::atomic_bool>(false);
+    // FileHandler reads these formats in one call (no progress hook), so the
+    // overlay is indeterminate + non-cancellable.
+    beginOperation(MzMLOperation, tr("Loading spectra"),
+                   tr("Opening %1").arg(QFileInfo(path).fileName()), false);
+    const auto cancellation = mzMLCancellation_;
+    loadWatcher_.setFuture(QtConcurrent::run([path, cancellation]
+    {
+      return ViewerDocument::readExperiment(path, {},
+        [cancellation] { return cancellation->load(); });
+    }));
+    updateLoadingUi();
+    // sqMass loads the whole experiment into memory — warn before a big read.
+    if (fileType == static_cast<int>(OpenMS::FileTypes::SQMASS))
+      notify(tr("sqMass loads fully into memory — large files may take a while"), ToastLevel::Warning);
   }
 
   void MainWindow::loadFiles(const QStringList& paths)
@@ -1750,15 +1807,28 @@ namespace OpenMSViewer
         if (startedMzML) continue;
         startedMzML = true;
       }
-      else if (suffix.compare(QStringLiteral("featureXML"), Qt::CaseInsensitive) == 0)
+      else
       {
-        if (startedFeatures) continue;
-        startedFeatures = true;
-      }
-      else if (suffix.compare(QStringLiteral("idXML"), Qt::CaseInsensitive) == 0)
-      {
-        if (startedIdentifications) continue;
-        startedIdentifications = true;
+        // Classify the remaining formats by detected category so a batch never
+        // starts two loads of the same kind (featureXML/featureparquet →
+        // features; idXML/mzid/idparquet → identifications; mzXML/mzData/sqMass →
+        // primary spectra).
+        const auto format = FormatRegistry::detect(path);
+        if (format.supported && format.category == FormatRegistry::Category::Experiment)
+        {
+          if (startedMzML) continue;
+          startedMzML = true;
+        }
+        else if (format.supported && format.category == FormatRegistry::Category::Features)
+        {
+          if (startedFeatures) continue;
+          startedFeatures = true;
+        }
+        else if (format.supported && format.category == FormatRegistry::Category::Identifications)
+        {
+          if (startedIdentifications) continue;
+          startedIdentifications = true;
+        }
       }
       loadFile(path);
     }
@@ -1829,10 +1899,10 @@ namespace OpenMSViewer
     }
     if (!result.succeeded())
     {
-      statusBar()->showMessage(tr("FeatureXML load failed"), 5000);
-      notify(tr("FeatureXML load failed"), ToastLevel::Error);
+      statusBar()->showMessage(tr("Feature map load failed"), 5000);
+      notify(tr("Feature map load failed"), ToastLevel::Error);
       showOperationError(tr("Could not open feature overlay"),
-                         tr("The FeatureXML overlay could not be loaded."), result.error);
+                         tr("The feature map could not be loaded."), result.error);
       return;
     }
     const std::size_t count = result.features.size();
@@ -1860,10 +1930,10 @@ namespace OpenMSViewer
     }
     if (!result.succeeded())
     {
-      statusBar()->showMessage(tr("idXML load failed"), 5000);
-      notify(tr("idXML load failed"), ToastLevel::Error);
+      statusBar()->showMessage(tr("Identification load failed"), 5000);
+      notify(tr("Identification load failed"), ToastLevel::Error);
       showOperationError(tr("Could not open identification overlay"),
-                         tr("The idXML overlay could not be loaded."), result.error);
+                         tr("The identifications could not be loaded."), result.error);
       return;
     }
     const std::size_t count = result.identifications.size();
@@ -2577,16 +2647,20 @@ namespace OpenMSViewer
 
   namespace
   {
-    // A droppable input: Bruker .d must be a directory; every other supported
-    // format is a regular file.
+    // A droppable input: the vendor formats (Bruker .d directory, Thermo .raw
+    // file) plus any format the registry recognizes in a category the loader can
+    // currently route (spectra / features / identifications / imaging).
     bool isSupportedInputPath(const QString& path)
     {
       const QFileInfo info(path);
       const QString suffix = info.suffix();
       if (suffix.compare(QStringLiteral("d"), Qt::CaseInsensitive) == 0) return info.isDir();
-      for (const char* extension : {"mzML", "imzML", "raw", "featureXML", "idXML"})
-        if (suffix.compare(QLatin1String(extension), Qt::CaseInsensitive) == 0) return info.isFile();
-      return false;
+      if (suffix.compare(QStringLiteral("raw"), Qt::CaseInsensitive) == 0) return info.isFile();
+      using Category = FormatRegistry::Category;
+      const auto format = FormatRegistry::detect(path);
+      return format.supported
+        && (format.category == Category::Experiment || format.category == Category::Features
+            || format.category == Category::Identifications || format.category == Category::Imaging);
     }
   }
 

@@ -67,7 +67,7 @@ namespace OpenMSViewer
 
   private slots:
     void openFile();
-    void openBrukerFolder();
+    void openDataFolder();
     void finishLoad();
     void finishFeatureLoad();
     void finishIdentificationLoad();
@@ -108,6 +108,10 @@ namespace OpenMSViewer
                                 std::function<void()> reset = {});
     void showOperationError(const QString& title, const QString& summary, const QString& details);
     void notify(const QString& message, ToastLevel level);
+    // Category-routed loaders shared by loadFile() and the open dialogs/drops.
+    void loadFeatureData(const QString& path);
+    void loadIdentificationData(const QString& path);
+    void loadExperimentData(const QString& path, int fileType);
     void beginOperation(int operation, const QString& title, const QString& detail,
                         bool cancellable = true);
     void endOperation(int operation);

@@ -120,6 +120,10 @@ add_library(openms_viewer_ui STATIC
   src/widgets/TransitionGroupPlot.h
   src/widgets/OswPanel.cpp
   src/widgets/OswPanel.h
+  src/widgets/ConsensusQuantChart.cpp
+  src/widgets/ConsensusQuantChart.h
+  src/widgets/ConsensusPanel.cpp
+  src/widgets/ConsensusPanel.h
   src/widgets/ToastOverlay.cpp
   src/widgets/ToastOverlay.h
   src/widgets/WelcomeWidget.cpp
@@ -188,6 +192,7 @@ if(OPENMS_VIEWER_BUILD_TESTS)
     tests/ChromatogramSourceTest.cpp
     tests/OswPanelTest.cpp
     tests/ConsensusDocumentTest.cpp
+    tests/ConsensusPanelTest.cpp
     tests/PeakMapRasterizerTest.cpp
     tests/FeatureDocumentTest.cpp
     tests/IdentificationDocumentTest.cpp

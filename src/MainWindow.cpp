@@ -19,6 +19,7 @@
 #include "widgets/ImagingPanelWidget.h"
 #include "widgets/LogWidget.h"
 #include "widgets/OswPanel.h"
+#include "widgets/ConsensusPanel.h"
 #include "widgets/LoadingOverlayWidget.h"
 #include "widgets/SpectrumWidget.h"
 #include "widgets/TicWidget.h"
@@ -311,6 +312,8 @@ namespace OpenMSViewer
             this, &MainWindow::finishImagingLoad);
     connect(&oswLoadWatcher_, &QFutureWatcher<OswLoadResult>::finished,
             this, &MainWindow::finishOswLoad);
+    connect(&consensusLoadWatcher_, &QFutureWatcher<ConsensusLoadResult>::finished,
+            this, &MainWindow::finishConsensusLoad);
     connect(&document_, &ViewerDocument::featuresChanged,
             this, &MainWindow::updateFeatureViews);
     connect(&document_, &ViewerDocument::identificationsChanged,
@@ -407,6 +410,7 @@ namespace OpenMSViewer
     if (mzMLExportWatcher_.isRunning()) mzMLExportWatcher_.waitForFinished();
     if (imagingLoadWatcher_.isRunning()) imagingLoadWatcher_.waitForFinished();
     if (oswLoadWatcher_.isRunning()) oswLoadWatcher_.waitForFinished();
+    if (consensusLoadWatcher_.isRunning()) consensusLoadWatcher_.waitForFinished();
   }
 
   void MainWindow::createPanels()
@@ -500,6 +504,15 @@ namespace OpenMSViewer
     oswDock_->setMinimumWidth(720);
     addDockWidget(Qt::BottomDockWidgetArea, oswDock_);
     tabifyDockWidget(imagingDock_, oswDock_);
+
+    consensus_ = new ConsensusPanel(this);
+    consensusDock_ = new QDockWidget(tr("Consensus map"), this);
+    consensusDock_->setObjectName(QStringLiteral("consensusDock"));
+    consensusDock_->setWidget(consensus_);
+    configureDock(consensusDock_);
+    consensusDock_->setMinimumWidth(700);
+    addDockWidget(Qt::BottomDockWidgetArea, consensusDock_);
+    tabifyDockWidget(oswDock_, consensusDock_);
 
     log_ = new LogWidget(this);
     logDock_ = new QDockWidget(tr("Application log"), this);
@@ -1258,6 +1271,9 @@ namespace OpenMSViewer
     setDockAvailable(oswDock_, false);
     if (osw_) osw_->clear();
     hasOswData_ = false;
+    setDockAvailable(consensusDock_, false);
+    if (consensus_) consensus_->clear();
+    hasConsensusData_ = false;
   }
 
   void MainWindow::showDataPage()
@@ -1274,12 +1290,12 @@ namespace OpenMSViewer
       {spectraDock_->objectName(), false}, {chromatogramsDock_->objectName(), true},
       {ionMobilityDock_->objectName(), true}, {faimsDock_->objectName(), true},
       {imagingDock_->objectName(), true}, {oswDock_->objectName(), true},
-      {logDock_->objectName(), false}
+      {consensusDock_->objectName(), true}, {logDock_->objectName(), false}
     };
     QSettings settings;
     for (QDockWidget* dock : {ticDock_, spectrumDock_, featuresDock_, identificationsDock_,
                               spectraDock_, chromatogramsDock_, ionMobilityDock_, faimsDock_,
-                              imagingDock_, oswDock_, logDock_})
+                              imagingDock_, oswDock_, consensusDock_, logDock_})
     {
       const QString key = QStringLiteral("docks/%1/preferredVisible").arg(dock->objectName());
       bool preferred = defaults.value(dock->objectName(), false);
@@ -1407,11 +1423,13 @@ namespace OpenMSViewer
     dockVisibilityPreference_[ionMobilityDock_->objectName()] = true;
     dockVisibilityPreference_[faimsDock_->objectName()] = true;
     dockVisibilityPreference_[imagingDock_->objectName()] = true;
+    dockVisibilityPreference_[oswDock_->objectName()] = true;
+    dockVisibilityPreference_[consensusDock_->objectName()] = true;
     dockVisibilityPreference_[logDock_->objectName()] = false;
 
     for (QDockWidget* dock : {ticDock_, spectrumDock_, featuresDock_, identificationsDock_,
                               spectraDock_, chromatogramsDock_, ionMobilityDock_, faimsDock_,
-                              imagingDock_, logDock_})
+                              imagingDock_, oswDock_, consensusDock_, logDock_})
       dock->setFloating(false);
 
     addDockWidget(Qt::BottomDockWidgetArea, ticDock_);
@@ -1420,11 +1438,15 @@ namespace OpenMSViewer
     addDockWidget(Qt::BottomDockWidgetArea, chromatogramsDock_);
     addDockWidget(Qt::BottomDockWidgetArea, ionMobilityDock_);
     addDockWidget(Qt::BottomDockWidgetArea, imagingDock_);
+    addDockWidget(Qt::BottomDockWidgetArea, oswDock_);
+    addDockWidget(Qt::BottomDockWidgetArea, consensusDock_);
     addDockWidget(Qt::BottomDockWidgetArea, logDock_);
     tabifyDockWidget(ticDock_, chromatogramsDock_);
     tabifyDockWidget(chromatogramsDock_, ionMobilityDock_);
     tabifyDockWidget(ionMobilityDock_, imagingDock_);
-    tabifyDockWidget(imagingDock_, logDock_);
+    tabifyDockWidget(imagingDock_, oswDock_);
+    tabifyDockWidget(oswDock_, consensusDock_);
+    tabifyDockWidget(consensusDock_, logDock_);
 
     addDockWidget(Qt::RightDockWidgetArea, featuresDock_);
     addDockWidget(Qt::RightDockWidgetArea, identificationsDock_);
@@ -1434,11 +1456,16 @@ namespace OpenMSViewer
     tabifyDockWidget(featuresDock_, spectraDock_);
     tabifyDockWidget(spectraDock_, faimsDock_);
 
-    if (document_.isEmpty() && !imagingStore_ && !hasOswData_) showWelcomePage();
+    if (document_.isEmpty() && !imagingStore_ && !hasOswData_ && !hasConsensusData_) showWelcomePage();
     else if (hasOswData_)
     {
       setDockAvailable(oswDock_, true);
       oswDock_->raise();
+    }
+    else if (hasConsensusData_)
+    {
+      setDockAvailable(consensusDock_, true);
+      consensusDock_->raise();
     }
     else if (imagingStore_)
     {
@@ -1574,6 +1601,8 @@ namespace OpenMSViewer
       beginOperation(IdentificationOperation, tr("Loading identification overlay"), tr("Reading idXML"));
     else if (oswLoadWatcher_.isRunning())
       beginOperation(OswOperation, tr("Loading OpenSWATH results"), tr("Reading .osw and .xic"), false);
+    else if (consensusLoadWatcher_.isRunning())
+      beginOperation(ConsensusOperation, tr("Loading consensus map"), tr("Reading consensus features"), false);
   }
 
   void MainWindow::cancelCurrentOperation()
@@ -1587,7 +1616,8 @@ namespace OpenMSViewer
       case FeatureOperation: featureCancelled_ = true; break;
       case IdentificationOperation: identificationCancelled_ = true; break;
       case ExportOperation: exportCancelled_ = true; break;
-      case OswOperation: return;  // not cancellable (single blocking read)
+      case OswOperation: return;        // not cancellable (single blocking read)
+      case ConsensusOperation: return;  // not cancellable
       case NoOperation: return;
     }
     statusBar()->showMessage(tr("Cancelling background operation…"));
@@ -1599,12 +1629,12 @@ namespace OpenMSViewer
     const QString startDirectory = settings.value(QStringLiteral("files/lastDirectory")).toString();
     const QStringList paths = QFileDialog::getOpenFileNames(
       this, tr("Open mass-spectrometry data"), startDirectory,
-      tr("OpenMS data (*.mzML *.mzml *.imzML *.imzml *.raw *.mzXML *.mzxml *.mzData *.mzdata *.sqMass *.sqmass *.featureXML *.featurexml *.idXML *.idxml *.mzid *.mzIdentML *.osw);;"
+      tr("OpenMS data (*.mzML *.mzml *.imzML *.imzml *.raw *.mzXML *.mzxml *.mzData *.mzdata *.sqMass *.sqmass *.featureXML *.featurexml *.idXML *.idxml *.mzid *.mzIdentML *.osw *.consensusXML *.consensusxml);;"
          "Spectra (*.mzML *.mzml *.mzXML *.mzxml *.mzData *.mzdata *.sqMass *.sqmass);;"
          "imzML imaging files (*.imzML *.imzml);;Thermo RAW files (*.raw);;"
          "Feature maps (*.featureXML *.featurexml);;"
          "Identifications (*.idXML *.idxml *.mzid *.mzIdentML);;"
-         "OpenSWATH results (*.osw);;All files (*)"));
+         "OpenSWATH results (*.osw);;Consensus maps (*.consensusXML *.consensusxml);;All files (*)"));
     if (paths.isEmpty()) return;
     settings.setValue(QStringLiteral("files/lastDirectory"), QFileInfo(paths.front()).absolutePath());
     loadFiles(paths);
@@ -1625,7 +1655,8 @@ namespace OpenMSViewer
     const auto format = FormatRegistry::detect(path);
     const bool routable = isBruker
       || (format.supported && (format.category == FormatRegistry::Category::Features
-                               || format.category == FormatRegistry::Category::Identifications));
+                               || format.category == FormatRegistry::Category::Identifications
+                               || format.category == FormatRegistry::Category::Consensus));
     if (!routable)
     {
       statusBar()->showMessage(tr("Not a supported data folder: %1").arg(QFileInfo(path).fileName()), 5000);
@@ -1747,7 +1778,8 @@ namespace OpenMSViewer
         case FormatRegistry::Category::Identifications: loadIdentificationData(path); return;
         case FormatRegistry::Category::Experiment:      loadExperimentData(path, format.type); return;
         case FormatRegistry::Category::Osw:             loadOswData(path); return;
-        default: break;  // Consensus wired in a later phase
+        case FormatRegistry::Category::Consensus:       loadConsensusData(path); return;
+        default: break;
       }
     }
     QMessageBox::warning(this, tr("Unsupported file"),
@@ -1797,6 +1829,52 @@ namespace OpenMSViewer
     notify(hasChromatograms ? tr("Loaded OpenSWATH results")
                             : tr("Loaded OpenSWATH results (no .xic chromatograms found)"),
            hasChromatograms ? ToastLevel::Success : ToastLevel::Warning);
+  }
+
+  void MainWindow::loadConsensusData(const QString& path)
+  {
+    if (consensusLoadWatcher_.isRunning())
+    {
+      statusBar()->showMessage(tr("A consensus map is already loading"), 3000);
+      return;
+    }
+    statusBar()->showMessage(tr("Loading consensus map %1…").arg(QFileInfo(path).fileName()));
+    beginOperation(ConsensusOperation, tr("Loading consensus map"),
+                   tr("Reading %1").arg(QFileInfo(path).fileName()), false);
+    consensusLoadWatcher_.setFuture(QtConcurrent::run([path] { return ConsensusDocument::read(path); }));
+    updateLoadingUi();
+  }
+
+  void MainWindow::finishConsensusLoad()
+  {
+    ConsensusLoadResult result = consensusLoadWatcher_.result();
+    endOperation(ConsensusOperation);
+    updateLoadingUi();
+    if (!result.succeeded())
+    {
+      statusBar()->showMessage(tr("Consensus map load failed"), 5000);
+      notify(tr("Consensus map load failed"), ToastLevel::Error);
+      showOperationError(tr("Could not open consensus map"),
+                         tr("The consensus map could not be read."), result.error);
+      return;
+    }
+    const QString sourcePath = result.sourcePath;
+    const std::size_t featureCount = result.features.size();
+    const std::size_t mapCount = result.columns.size();
+    consensus_->setData(std::move(result.map), std::move(result.features),
+                        std::move(result.columns), result.experimentType);
+    hasConsensusData_ = true;
+    lastPrimaryPath_ = sourcePath;
+    rememberRecentFile(sourcePath);
+    showDataPage();
+    dockVisibilityPreference_[consensusDock_->objectName()] = true;
+    setDockAvailable(consensusDock_, true);
+    consensusDock_->raise();
+    setWindowTitle(tr("%1 — OpenMS Viewer").arg(QFileInfo(sourcePath).fileName()));
+    updateRunContext();
+    statusBar()->showMessage(tr("Loaded consensus map from %1").arg(QFileInfo(sourcePath).fileName()), 8000);
+    notify(tr("Loaded %1 consensus features across %2 maps").arg(featureCount).arg(mapCount),
+           ToastLevel::Success);
   }
 
   void MainWindow::loadFeatureData(const QString& path)
@@ -2178,7 +2256,8 @@ namespace OpenMSViewer
   {
     const bool busy = loadWatcher_.isRunning() || featureLoadWatcher_.isRunning()
       || identificationLoadWatcher_.isRunning() || mzMLExportWatcher_.isRunning()
-      || imagingLoadWatcher_.isRunning() || oswLoadWatcher_.isRunning();
+      || imagingLoadWatcher_.isRunning() || oswLoadWatcher_.isRunning()
+      || consensusLoadWatcher_.isRunning();
     openAction_->setEnabled(!busy);
     reloadAction_->setEnabled(!busy && !lastPrimaryPath_.isEmpty()
                               && QFileInfo::exists(lastPrimaryPath_));
@@ -2733,7 +2812,7 @@ namespace OpenMSViewer
       return format.supported
         && (format.category == Category::Experiment || format.category == Category::Features
             || format.category == Category::Identifications || format.category == Category::Imaging
-            || format.category == Category::Osw);
+            || format.category == Category::Osw || format.category == Category::Consensus);
     }
   }
 

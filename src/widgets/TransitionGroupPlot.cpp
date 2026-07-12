@@ -1,5 +1,6 @@
 #include "widgets/TransitionGroupPlot.h"
 
+#include "model/TraceSmoothing.h"
 #include "plot/PlotAxis.h"
 
 #include <QPainter>
@@ -44,6 +45,7 @@ namespace OpenMSViewer
     peakGroups_ = std::move(peakGroups);
     selectedPeakGroup_ = selectedPeakGroup;
     libraryRt_ = libraryRt;
+    rebuildSmoothing();
     update();
   }
 
@@ -54,9 +56,39 @@ namespace OpenMSViewer
     update();
   }
 
+  void TransitionGroupPlot::setSmoothing(bool smooth)
+  {
+    if (smooth_ == smooth) return;
+    smooth_ = smooth;
+    rebuildSmoothing();
+    update();
+  }
+
+  void TransitionGroupPlot::rebuildSmoothing()
+  {
+    // Smooth once per data/toggle change (not per repaint). Empty when off.
+    smoothed_.clear();
+    if (!smooth_) return;
+    smoothed_.reserve(transitions_.size());
+    for (const TransitionChromatogram& transition : transitions_)
+      smoothed_.push_back(TraceSmoothing::savitzkyGolay(transition.intensity));
+  }
+
+  const std::vector<double>& TransitionGroupPlot::displayIntensity(
+    const TransitionChromatogram* transition) const
+  {
+    if (smooth_ && !smoothed_.empty())
+    {
+      const std::size_t index = static_cast<std::size_t>(transition - transitions_.data());
+      if (index < smoothed_.size()) return smoothed_[index];
+    }
+    return transition->intensity;
+  }
+
   void TransitionGroupPlot::clear()
   {
     transitions_.clear();
+    smoothed_.clear();
     peakGroups_.clear();
     selectedPeakGroup_ = -1;
     libraryRt_ = 0.0;
@@ -111,6 +143,9 @@ namespace OpenMSViewer
     double intensityMax = 0.0;
     for (const TransitionChromatogram* transition : visible)
     {
+      // Scale to the RAW intensities: the smoothed curve is overlaid on the raw
+      // trace, so the axis must fit the true (taller) measured peak — a user reading
+      // a height off the axis then sees the real intensity, not a lowered smoothed one.
       const std::size_t count = std::min(transition->rt.size(), transition->intensity.size());
       for (std::size_t point = 0; point < count; ++point)
       {
@@ -204,27 +239,44 @@ namespace OpenMSViewer
       }
     }
 
-    // Transition traces: MS1 dashed dark (behind), fragments solid colour-cycled.
-    int colorIndex = 0;
-    for (const TransitionChromatogram* transition : visible)
+    // Build a polyline over (rt, intensity), breaking the path at non-finite samples.
+    const auto buildPath = [&](const TransitionChromatogram* transition,
+                               const std::vector<double>& values)
     {
       QPainterPath path;
       bool haveLast = false;
-      const std::size_t count = std::min(transition->rt.size(), transition->intensity.size());
+      const std::size_t count = std::min(transition->rt.size(), values.size());
       for (std::size_t point = 0; point < count; ++point)
       {
         const double rt = transition->rt[point];
-        const double intensity = transition->intensity[point];
+        const double intensity = values[point];
         if (!std::isfinite(rt) || !std::isfinite(intensity)) { haveLast = false; continue; }
         const QPointF position(mapX(rt), mapY(intensity));
         haveLast ? path.lineTo(position) : path.moveTo(position);
         haveLast = true;
       }
-      if (transition->isMs1())
-        painter.setPen(QPen(palette().color(QPalette::Text), 1.3, Qt::DashLine));
-      else
-        painter.setPen(QPen(kTraceColors[static_cast<std::size_t>(colorIndex++) % kTraceColors.size()], 1.6));
-      painter.drawPath(path);
+      return path;
+    };
+
+    // Transition traces: MS1 dashed dark (behind), fragments solid colour-cycled.
+    // When smoothing is on, the raw trace is drawn faintly underneath the prominent
+    // smoothed curve (a true overlay), so the denoising is visible against the data.
+    int colorIndex = 0;
+    for (const TransitionChromatogram* transition : visible)
+    {
+      const QColor color = transition->isMs1() ? palette().color(QPalette::Text)
+        : kTraceColors[static_cast<std::size_t>(colorIndex++) % kTraceColors.size()];
+      const Qt::PenStyle style = transition->isMs1() ? Qt::DashLine : Qt::SolidLine;
+
+      if (smooth_)
+      {
+        QColor faint = color;
+        faint.setAlpha(70);
+        painter.setPen(QPen(faint, 1.0, style));
+        painter.drawPath(buildPath(transition, transition->intensity));
+      }
+      painter.setPen(QPen(color, transition->isMs1() ? 1.3 : 1.6, style));
+      painter.drawPath(buildPath(transition, displayIntensity(transition)));
     }
 
     // Axis labels + legend.

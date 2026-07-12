@@ -60,6 +60,8 @@ add_library(openms_viewer_core STATIC
   src/model/Sqlite3Api.h
   src/model/ChromatogramSource.cpp
   src/model/ChromatogramSource.h
+  src/model/TraceSmoothing.cpp
+  src/model/TraceSmoothing.h
   src/model/OswDocument.cpp
   src/model/OswDocument.h
   src/model/ConsensusDocument.cpp
@@ -192,6 +194,7 @@ if(OPENMS_VIEWER_BUILD_TESTS)
     tests/RichFormatsTest.cpp
     tests/OswStoreTest.cpp
     tests/ChromatogramSourceTest.cpp
+    tests/TraceSmoothingTest.cpp
     tests/OswPanelTest.cpp
     tests/ConsensusDocumentTest.cpp
     tests/ConsensusPanelTest.cpp

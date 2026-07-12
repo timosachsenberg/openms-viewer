@@ -249,9 +249,13 @@ namespace OpenMSViewer
     auto* plotControls = new QHBoxLayout;
     showAllTransitions_ = new QCheckBox(tr("Show all transitions"), plotArea);
     showAllTransitions_->setObjectName(QStringLiteral("oswShowAllTransitions"));
+    smoothTraces_ = new QCheckBox(tr("Smooth (Savitzky-Golay)"), plotArea);
+    smoothTraces_->setObjectName(QStringLiteral("oswSmoothTraces"));
+    smoothTraces_->setToolTip(tr("Overlay a Savitzky-Golay lowpass of each transition trace"));
     chromatogramNote_ = new QLabel(plotArea);
     chromatogramNote_->setStyleSheet(QStringLiteral("color: palette(placeholder-text);"));
     plotControls->addWidget(showAllTransitions_);
+    plotControls->addWidget(smoothTraces_);
     plotControls->addStretch();
     plotControls->addWidget(chromatogramNote_);
     plotLayout->addLayout(plotControls);
@@ -289,6 +293,8 @@ namespace OpenMSViewer
             [this](bool hide) { precursorProxy_->setHideDecoys(hide); reselectPrecursorAfterFilter(); });
     connect(showAllTransitions_, &QCheckBox::toggled, this,
             [this](bool showAll) { if (plot_) plot_->setShowAllTransitions(showAll); });
+    connect(smoothTraces_, &QCheckBox::toggled, this,
+            [this](bool smooth) { if (plot_) plot_->setSmoothing(smooth); });
     connect(fetchWatcher_, &QFutureWatcher<std::vector<TransitionChromatogram>>::finished,
             this, [this] { applyFetchedTransitions(); });
   }

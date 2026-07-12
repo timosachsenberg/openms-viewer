@@ -25,6 +25,7 @@ namespace OpenMSViewer
                  int selectedPeakGroup,
                  double libraryRt);
     void setShowAllTransitions(bool showAll);
+    void setSmoothing(bool smooth);
     void clear();
 
   protected:
@@ -35,12 +36,19 @@ namespace OpenMSViewer
     // Fragment traces sorted by peak intensity (top-N unless "show all"), with all
     // MS1/precursor traces always kept.
     [[nodiscard]] std::vector<const TransitionChromatogram*> visibleTransitions() const;
+    // The intensities to draw for a transition: raw, or the cached Savitzky-Golay
+    // smoothing when the smoothing toggle is on.
+    [[nodiscard]] const std::vector<double>& displayIntensity(
+      const TransitionChromatogram* transition) const;
+    void rebuildSmoothing();
 
     std::vector<TransitionChromatogram> transitions_;
+    std::vector<std::vector<double>> smoothed_;  // parallel to transitions_, when smoothing on
     std::vector<OswPeakGroup> peakGroups_;
     int selectedPeakGroup_{-1};
     double libraryRt_{0.0};
     bool showAll_{false};
+    bool smooth_{false};
     int topFragments_{6};
   };
 }

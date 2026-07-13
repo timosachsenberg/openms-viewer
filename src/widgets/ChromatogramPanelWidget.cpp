@@ -1,4 +1,5 @@
 #include "widgets/ChromatogramPanelWidget.h"
+#include "widgets/CompactControls.h"
 
 #include "model/RtUnit.h"
 
@@ -14,14 +15,15 @@
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
-#include <QPushButton>
 #include <QSaveFile>
 #include <QSortFilterProxyModel>
 #include <QTableView>
 #include <QTextStream>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -517,19 +519,30 @@ namespace OpenMSViewer
     search_->setPlaceholderText(tr("Search chromatograms…"));
     search_->setClearButtonEnabled(true);
     search_->setAccessibleName(tr("Search chromatograms"));
-    controls->addWidget(search_);
-    controls->addWidget(new QLabel(tr("Ctrl-click rows to compare"), this));
-    controls->addStretch();
+    controls->addWidget(search_, 1);
+    auto* display = new QToolButton(this);
+    display->setObjectName(QStringLiteral("chromatogramDisplayOptions"));
+    display->setText(tr("Display"));
+    display->setPopupMode(QToolButton::InstantPopup);
+    display->setAccessibleName(tr("Chromatogram display options"));
+    auto* displayMenu = new QMenu(display);
+    displayMenu->setObjectName(QStringLiteral("chromatogramDisplayMenu"));
     auto* smooth = new QCheckBox(tr("Smooth (Savitzky-Golay)"), this);
     smooth->setObjectName(QStringLiteral("chromatogramSmooth"));
     smooth->setToolTip(tr("Overlay a Savitzky-Golay lowpass of each chromatogram trace"));
-    controls->addWidget(smooth);
+    CompactControls::addMenuControl(displayMenu, smooth);
+    display->setMenu(displayMenu);
+    controls->addWidget(display);
     countLabel_ = new QLabel(this);
     countLabel_->setObjectName(QStringLiteral("chromatogramCountLabel"));
     controls->addWidget(countLabel_);
-    auto* clearButton = new QPushButton(tr("Clear selection"), this);
+    auto* clearButton = CompactControls::makeIconButton(
+      this, QIcon(QStringLiteral(":/icons/material-clear-all.svg")),
+      tr("Clear chromatogram selection"), QStringLiteral("chromatogramClearSelection"));
     controls->addWidget(clearButton);
-    auto* exportButton = new QPushButton(tr("Export TSV…"), this);
+    auto* exportButton = CompactControls::makeIconButton(
+      this, QIcon(QStringLiteral(":/icons/material-file-download.svg")),
+      tr("Export selected chromatograms as TSV"), QStringLiteral("chromatogramExportTsv"));
     controls->addWidget(exportButton);
     layout->addLayout(controls);
 
@@ -542,6 +555,7 @@ namespace OpenMSViewer
     table_ = new QTableView(this);
     table_->setObjectName(QStringLiteral("chromatogramTable"));
     table_->setAccessibleName(tr("Filtered chromatogram table"));
+    table_->setToolTip(tr("Ctrl-click rows to compare chromatograms"));
     table_->setModel(proxy_);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -560,8 +574,8 @@ namespace OpenMSViewer
             this, &ChromatogramPanelWidget::updateSelection);
     connect(search_, &QLineEdit::textChanged, proxy_, &QSortFilterProxyModel::setFilterFixedString);
     connect(search_, &QLineEdit::textChanged, this, &ChromatogramPanelWidget::updateCountLabel);
-    connect(clearButton, &QPushButton::clicked, this, &ChromatogramPanelWidget::clearSelection);
-    connect(exportButton, &QPushButton::clicked, this, &ChromatogramPanelWidget::exportTsv);
+    connect(clearButton, &QToolButton::clicked, this, &ChromatogramPanelWidget::clearSelection);
+    connect(exportButton, &QToolButton::clicked, this, &ChromatogramPanelWidget::exportTsv);
     connect(plot_, &ChromatogramPlotWidget::rtActivated, this, &ChromatogramPanelWidget::rtActivated);
     connect(smooth, &QCheckBox::toggled, plot_, &ChromatogramPlotWidget::setSmoothing);
     connect(proxy_, &QAbstractItemModel::rowsInserted, this, &ChromatogramPanelWidget::updateCountLabel);

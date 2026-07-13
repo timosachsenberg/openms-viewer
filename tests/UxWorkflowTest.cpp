@@ -164,6 +164,12 @@ private slots:
     auto* measureMode = window.findChild<QToolButton*>(QStringLiteral("peakMapMeasureMode"));
     auto* resetView = window.findChild<QToolButton*>(QStringLiteral("peakMapResetView"));
     auto* displayOptions = window.findChild<QToolButton*>(QStringLiteral("peakMapDisplayOptions"));
+    auto* spectrumFirst = window.findChild<QToolButton*>(QStringLiteral("spectrumFirst"));
+    auto* spectrumPrevious = window.findChild<QToolButton*>(QStringLiteral("spectrumPrevious"));
+    auto* spectrumNext = window.findChild<QToolButton*>(QStringLiteral("spectrumNext"));
+    auto* spectrumLast = window.findChild<QToolButton*>(QStringLiteral("spectrumLast"));
+    auto* spectrumMeasure = window.findChild<QToolButton*>(QStringLiteral("spectrumMeasureMode"));
+    auto* spectrumLabel = window.findChild<QToolButton*>(QStringLiteral("spectrumLabelMode"));
     auto* editMode = window.findChild<QAction*>(QStringLiteral("peakMapEditMode"));
     auto* colorMap = window.findChild<QComboBox*>(QStringLiteral("peakMapColorMap"));
     auto* intensityScale = window.findChild<QComboBox*>(QStringLiteral("peakMapIntensityScale"));
@@ -176,7 +182,8 @@ private slots:
     QVERIFY(stack && welcome && peakMap && interactionModes && zoomMode && panMode
             && measureMode && resetView && displayOptions && editMode && colorMap
             && intensityScale && level && scan && rasterWidth && runContext && loading
-            && ticDock);
+            && ticDock && spectrumFirst && spectrumPrevious && spectrumNext
+            && spectrumLast && spectrumMeasure && spectrumLabel);
     QCOMPARE(resetView->toolButtonStyle(), Qt::ToolButtonIconOnly);
     QVERIFY(!resetView->icon().isNull());
     QVERIFY(!resetView->toolTip().isEmpty());
@@ -184,6 +191,13 @@ private slots:
     QVERIFY(displayOptions->menu()->isAncestorOf(colorMap));
     QVERIFY(displayOptions->menu()->isAncestorOf(intensityScale));
     QVERIFY(displayOptions->menu()->isAncestorOf(rasterWidth));
+    for (QToolButton* button : {spectrumFirst, spectrumPrevious, spectrumNext,
+                                spectrumLast, spectrumMeasure, spectrumLabel})
+    {
+      QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonIconOnly);
+      QVERIFY(!button->icon().isNull());
+      QVERIFY(!button->toolTip().isEmpty());
+    }
     QCOMPARE(rasterWidth->value(), OpenMSViewer::PeakMapWidget::DefaultRasterWidth);
     rasterWidth->setValue(768);
     QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(welcome));

@@ -1,4 +1,5 @@
 #include "widgets/IonMobilityPanelWidget.h"
+#include "widgets/CompactControls.h"
 
 #include "model/RtUnit.h"
 #include "model/TraceSmoothing.h"
@@ -11,12 +12,14 @@
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSignalBlocker>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -584,32 +587,66 @@ namespace OpenMSViewer
     info_->setObjectName(QStringLiteral("ionMobilityInfo"));
     controls->addWidget(info_);
     controls->addStretch();
-    previous_ = new QPushButton(QStringLiteral("<"), this);
+    previous_ = new QPushButton(
+      QIcon(QStringLiteral(":/icons/material-navigate-before.svg")), QString(), this);
+    previous_->setObjectName(QStringLiteral("ionMobilityPrevious"));
+    previous_->setFlat(true);
     previous_->setToolTip(tr("Previous ion-mobility frame"));
+    previous_->setAccessibleName(previous_->toolTip());
     controls->addWidget(previous_);
     frameSelector_ = new QComboBox(this);
     frameSelector_->setObjectName(QStringLiteral("ionMobilityFrameSelector"));
     frameSelector_->setMinimumWidth(250);
     controls->addWidget(frameSelector_);
-    next_ = new QPushButton(QStringLiteral(">"), this);
+    next_ = new QPushButton(
+      QIcon(QStringLiteral(":/icons/material-navigate-next.svg")), QString(), this);
+    next_->setObjectName(QStringLiteral("ionMobilityNext"));
+    next_->setFlat(true);
     next_->setToolTip(tr("Next ion-mobility frame"));
+    next_->setAccessibleName(next_->toolTip());
     controls->addWidget(next_);
+
+    auto* display = new QToolButton(this);
+    display->setObjectName(QStringLiteral("ionMobilityDisplayOptions"));
+    display->setText(tr("Display"));
+    display->setPopupMode(QToolButton::InstantPopup);
+    display->setAccessibleName(tr("Ion-mobility display options"));
+    auto* displayMenu = new QMenu(display);
+    displayMenu->setObjectName(QStringLiteral("ionMobilityDisplayMenu"));
     mobilogram_ = new QCheckBox(tr("Mobilogram"), this);
     mobilogram_->setObjectName(QStringLiteral("ionMobilityMobilogram"));
     mobilogram_->setChecked(true);
-    controls->addWidget(mobilogram_);
+    CompactControls::addMenuControl(displayMenu, mobilogram_);
     auto* smoothMobilogram = new QCheckBox(tr("Smooth"), this);
     smoothMobilogram->setObjectName(QStringLiteral("ionMobilitySmooth"));
     smoothMobilogram->setToolTip(tr("Overlay a Savitzky-Golay lowpass of the mobilogram"));
-    controls->addWidget(smoothMobilogram);
+    CompactControls::addMenuControl(displayMenu, smoothMobilogram);
+    display->setMenu(displayMenu);
+    controls->addWidget(display);
+
+    auto* overlays = new QToolButton(this);
+    overlays->setObjectName(QStringLiteral("ionMobilityOverlayOptions"));
+    overlays->setText(tr("Overlays"));
+    overlays->setPopupMode(QToolButton::InstantPopup);
+    overlays->setAccessibleName(tr("Ion-mobility overlay options"));
+    auto* overlayMenu = new QMenu(overlays);
+    overlayMenu->setObjectName(QStringLiteral("ionMobilityOverlayMenu"));
     diaWindows_ = new QCheckBox(tr("DIA windows"), this);
     diaWindows_->setObjectName(QStringLiteral("ionMobilityDiaWindows"));
     diaWindows_->setToolTip(tr("Overlay the diaPASEF isolation window groups (m/z × ion mobility)"));
-    controls->addWidget(diaWindows_);
+    CompactControls::addMenuControl(overlayMenu, diaWindows_);
     linkMz_ = new QCheckBox(tr("Link spectrum m/z"), this);
     linkMz_->setObjectName(QStringLiteral("ionMobilityLinkMz"));
-    controls->addWidget(linkMz_);
-    auto* reset = new QPushButton(tr("Reset view"), this);
+    CompactControls::addMenuControl(overlayMenu, linkMz_);
+    overlays->setMenu(overlayMenu);
+    controls->addWidget(overlays);
+
+    auto* reset = new QPushButton(
+      QIcon(QStringLiteral(":/icons/material-zoom-out-map.svg")), QString(), this);
+    reset->setObjectName(QStringLiteral("ionMobilityResetView"));
+    reset->setFlat(true);
+    reset->setToolTip(tr("Reset ion-mobility view"));
+    reset->setAccessibleName(reset->toolTip());
     controls->addWidget(reset);
     layout->addLayout(controls);
     range_ = new QLabel(tr("m/z: — · IM: —"), this);

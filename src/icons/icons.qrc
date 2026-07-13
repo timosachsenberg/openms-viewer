@@ -9,5 +9,17 @@
     <file alias="material-straighten.svg">material-straighten.svg</file>
     <file alias="material-edit.svg">material-edit.svg</file>
     <file alias="material-zoom-out-map.svg">material-zoom-out-map.svg</file>
+    <file alias="material-first-page.svg">material-first-page.svg</file>
+    <file alias="material-navigate-before.svg">material-navigate-before.svg</file>
+    <file alias="material-navigate-next.svg">material-navigate-next.svg</file>
+    <file alias="material-last-page.svg">material-last-page.svg</file>
+    <file alias="material-label.svg">material-label.svg</file>
+    <file alias="material-file-download.svg">material-file-download.svg</file>
+    <file alias="material-clear-all.svg">material-clear-all.svg</file>
+    <file alias="material-content-copy.svg">material-content-copy.svg</file>
+    <file alias="material-save.svg">material-save.svg</file>
+    <file alias="material-visibility.svg">material-visibility.svg</file>
+    <file alias="material-visibility-off.svg">material-visibility-off.svg</file>
+    <file alias="material-delete-outline.svg">material-delete-outline.svg</file>
   </qresource>
 </RCC>

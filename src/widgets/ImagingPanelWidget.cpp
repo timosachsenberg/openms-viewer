@@ -1,4 +1,5 @@
 #include "widgets/ImagingPanelWidget.h"
+#include "widgets/CompactControls.h"
 
 #include "plot/RasterShading.h"
 
@@ -10,10 +11,12 @@
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
 #include <QSplitter>
+#include <QToolButton>
 #include <QToolTip>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -558,11 +561,6 @@ namespace OpenMSViewer
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(6, 6, 6, 6);
     auto* controls = new QHBoxLayout;
-    controls->addWidget(new QLabel(tr("Display"), this));
-    displayMode_ = new QComboBox(this);
-    displayMode_->setObjectName(QStringLiteral("imagingDisplayMode"));
-    displayMode_->addItems({tr("TIC image"), tr("Ion image"), tr("Multi-ion overlay")});
-    controls->addWidget(displayMode_);
     controls->addWidget(new QLabel(tr("m/z"), this));
     mz_ = new QDoubleSpinBox(this);
     mz_->setObjectName(QStringLiteral("imagingMz"));
@@ -581,16 +579,43 @@ namespace OpenMSViewer
     extract_ = new QPushButton(tr("Extract"), this);
     extract_->setObjectName(QStringLiteral("imagingExtract"));
     controls->addWidget(extract_);
-    addOverlay_ = new QPushButton(tr("Add to overlay"), this);
-    controls->addWidget(addOverlay_);
-    clearOverlay_ = new QPushButton(tr("Clear overlay"), this);
-    controls->addWidget(clearOverlay_);
-    controls->addSpacing(12);
-    controls->addWidget(new QLabel(tr("Aggregate"), this));
-    aggregateMode_ = new QComboBox(this);
+
+    auto* display = new QToolButton(this);
+    display->setObjectName(QStringLiteral("imagingDisplayOptions"));
+    display->setText(tr("Display"));
+    display->setPopupMode(QToolButton::InstantPopup);
+    display->setAccessibleName(tr("Imaging display options"));
+    auto* displayMenu = new QMenu(display);
+    displayMenu->setObjectName(QStringLiteral("imagingDisplayMenu"));
+    displayMode_ = new QComboBox(displayMenu);
+    displayMode_->setObjectName(QStringLiteral("imagingDisplayMode"));
+    displayMode_->addItems({tr("TIC image"), tr("Ion image"), tr("Multi-ion overlay")});
+    CompactControls::addLabeledMenuControl(displayMenu, tr("Image"), displayMode_);
+    aggregateMode_ = new QComboBox(displayMenu);
     aggregateMode_->setObjectName(QStringLiteral("imagingAggregateMode"));
     aggregateMode_->addItems({tr("Mean"), tr("Max (skyline)")});
-    controls->addWidget(aggregateMode_);
+    CompactControls::addLabeledMenuControl(
+      displayMenu, tr("Aggregate spectrum"), aggregateMode_);
+    display->setMenu(displayMenu);
+    controls->addWidget(display);
+
+    auto* overlays = new QToolButton(this);
+    overlays->setObjectName(QStringLiteral("imagingOverlayOptions"));
+    overlays->setText(tr("Overlays"));
+    overlays->setPopupMode(QToolButton::InstantPopup);
+    overlays->setAccessibleName(tr("Imaging overlay actions"));
+    auto* overlayMenu = new QMenu(overlays);
+    overlayMenu->setObjectName(QStringLiteral("imagingOverlayMenu"));
+    addOverlay_ = new QPushButton(tr("Add to overlay"), this);
+    addOverlay_->setObjectName(QStringLiteral("imagingAddOverlay"));
+    addOverlay_->setFlat(true);
+    CompactControls::addMenuControl(overlayMenu, addOverlay_);
+    clearOverlay_ = new QPushButton(tr("Clear overlay"), this);
+    clearOverlay_->setObjectName(QStringLiteral("imagingClearOverlay"));
+    clearOverlay_->setFlat(true);
+    CompactControls::addMenuControl(overlayMenu, clearOverlay_);
+    overlays->setMenu(overlayMenu);
+    controls->addWidget(overlays);
     controls->addStretch();
     layout->addLayout(controls);
     info_ = new QLabel(tr("No imaging dataset loaded"), this);

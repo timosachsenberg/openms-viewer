@@ -13,11 +13,13 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDockWidget>
+#include <QMenu>
 #include <QSettings>
 #include <QTableView>
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QToolButton>
 
 #include <array>
 #include <tuple>
@@ -82,7 +84,15 @@ private slots:
 
     // The mobilogram smoothing toggle is present and drives the plot without error.
     auto* smooth = panel.findChild<QCheckBox*>(QStringLiteral("ionMobilitySmooth"));
+    auto* diaWindows = panel.findChild<QCheckBox*>(QStringLiteral("ionMobilityDiaWindows"));
+    auto* display = panel.findChild<QToolButton*>(QStringLiteral("ionMobilityDisplayOptions"));
+    auto* overlays = panel.findChild<QToolButton*>(QStringLiteral("ionMobilityOverlayOptions"));
     QVERIFY(smooth != nullptr);
+    QVERIFY(diaWindows != nullptr);
+    QVERIFY(display != nullptr && display->menu() != nullptr);
+    QVERIFY(overlays != nullptr && overlays->menu() != nullptr);
+    QVERIFY(display->menu()->isAncestorOf(smooth));
+    QVERIFY(overlays->menu()->isAncestorOf(diaWindows));
     smooth->setChecked(true);
     QVERIFY(!panel.grab().isNull());
   }

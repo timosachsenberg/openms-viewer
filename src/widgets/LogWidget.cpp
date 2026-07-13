@@ -1,4 +1,5 @@
 #include "widgets/LogWidget.h"
+#include "widgets/CompactControls.h"
 
 #include "logging/ApplicationLog.h"
 
@@ -11,10 +12,10 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPlainTextEdit>
-#include <QPushButton>
 #include <QSaveFile>
 #include <QScrollBar>
 #include <QTextStream>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 namespace OpenMSViewer
@@ -48,9 +49,15 @@ namespace OpenMSViewer
     search_->setObjectName(QStringLiteral("logSearch"));
     search_->setPlaceholderText(tr("Filter log text…"));
     controls->addWidget(search_, 1);
-    auto* clear = new QPushButton(tr("Clear"), this);
-    auto* copy = new QPushButton(tr("Copy all"), this);
-    auto* save = new QPushButton(tr("Save…"), this);
+    auto* clear = CompactControls::makeIconButton(
+      this, QIcon(QStringLiteral(":/icons/material-clear-all.svg")),
+      tr("Clear log"), QStringLiteral("logClear"));
+    auto* copy = CompactControls::makeIconButton(
+      this, QIcon(QStringLiteral(":/icons/material-content-copy.svg")),
+      tr("Copy all log messages"), QStringLiteral("logCopyAll"));
+    auto* save = CompactControls::makeIconButton(
+      this, QIcon(QStringLiteral(":/icons/material-save.svg")),
+      tr("Save log"), QStringLiteral("logSave"));
     controls->addWidget(clear);
     controls->addWidget(copy);
     controls->addWidget(save);
@@ -66,13 +73,13 @@ namespace OpenMSViewer
             this, &LogWidget::appendMessage);
     connect(severity_, qOverload<int>(&QComboBox::currentIndexChanged), this, &LogWidget::updateFilter);
     connect(search_, &QLineEdit::textChanged, this, &LogWidget::updateFilter);
-    connect(clear, &QPushButton::clicked, this, [this]
+    connect(clear, &QToolButton::clicked, this, [this]
     {
       entries_.clear();
       output_->clear();
     });
-    connect(copy, &QPushButton::clicked, this, &LogWidget::copyAll);
-    connect(save, &QPushButton::clicked, this, &LogWidget::saveLog);
+    connect(copy, &QToolButton::clicked, this, &LogWidget::copyAll);
+    connect(save, &QToolButton::clicked, this, &LogWidget::saveLog);
   }
 
   QString LogWidget::text() const { return output_->toPlainText(); }

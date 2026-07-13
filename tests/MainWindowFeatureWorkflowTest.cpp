@@ -16,6 +16,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QToolButton>
 
 class MainWindowFeatureWorkflowTest final : public QObject
 {
@@ -140,6 +141,12 @@ private slots:
     QVERIFY(redo != nullptr);
     QTRY_COMPARE(layers->rowCount(), 2);  // primary run + feature layer
     QVERIFY(layers->item(1, 2)->text().contains(QStringLiteral("Modified")));
+    auto* layerVisibility = window.findChild<QToolButton*>(QStringLiteral("layerVisibility_1"));
+    auto* layerRemove = window.findChild<QToolButton*>(QStringLiteral("layerRemove_1"));
+    QVERIFY(layerVisibility != nullptr && layerVisibility->isCheckable());
+    QVERIFY(layerRemove != nullptr);
+    QVERIFY(!layerVisibility->icon().isNull());
+    QVERIFY(!layerRemove->icon().isNull());
 
     undo->trigger();
     QTRY_COMPARE(table->model()->rowCount(), 0);

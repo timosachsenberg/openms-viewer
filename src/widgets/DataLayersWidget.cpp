@@ -1,11 +1,9 @@
 #include "widgets/DataLayersWidget.h"
 
-#include <QCheckBox>
 #include <QFileInfo>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QStyle>
 #include <QTableWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -19,12 +17,6 @@ namespace OpenMSViewer
     layout->setContentsMargins(6, 6, 6, 6);
     layout->setSpacing(6);
 
-    auto* intro = new QLabel(
-      tr("Loaded sources and overlays. Hide a layer without unloading it, or remove it from the session."),
-      this);
-    intro->setWordWrap(true);
-    layout->addWidget(intro);
-
     empty_ = new QLabel(tr("No data loaded"), this);
     empty_->setAlignment(Qt::AlignCenter);
     empty_->setStyleSheet(QStringLiteral("color: palette(placeholder-text);"));
@@ -33,6 +25,8 @@ namespace OpenMSViewer
     table_ = new QTableWidget(this);
     table_->setObjectName(QStringLiteral("dataLayersTable"));
     table_->setAccessibleName(tr("Loaded data and overlay layers"));
+    table_->setToolTip(
+      tr("Hide a layer without unloading it, or remove it from the session"));
     table_->setColumnCount(4);
     table_->setHorizontalHeaderLabels({tr("Layer"), tr("Source"), tr("Status"), tr("Actions")});
     table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
@@ -116,18 +110,30 @@ namespace OpenMSViewer
       actionsLayout->setSpacing(4);
       if (layer != Layer::Primary)
       {
-        auto* visible = new QCheckBox(tr("Show"), actions);
+        auto* visible = new QToolButton(actions);
         visible->setObjectName(QStringLiteral("layerVisibility_%1").arg(index));
+        visible->setAutoRaise(true);
+        visible->setCheckable(true);
         visible->setChecked(state.visible);
+        visible->setIcon(QIcon(state.visible
+          ? QStringLiteral(":/icons/material-visibility.svg")
+          : QStringLiteral(":/icons/material-visibility-off.svg")));
         visible->setToolTip(tr("Show or hide this layer without unloading it"));
-        connect(visible, &QCheckBox::toggled, this,
-                [this, layer](bool checked) { emit visibilityChanged(layer, checked); });
+        visible->setAccessibleName(visible->toolTip());
+        connect(visible, &QToolButton::toggled, this,
+                [this, layer, visible](bool checked)
+                {
+                  visible->setIcon(QIcon(checked
+                    ? QStringLiteral(":/icons/material-visibility.svg")
+                    : QStringLiteral(":/icons/material-visibility-off.svg")));
+                  emit visibilityChanged(layer, checked);
+                });
         actionsLayout->addWidget(visible);
       }
       auto* remove = new QToolButton(actions);
       remove->setObjectName(QStringLiteral("layerRemove_%1").arg(index));
       remove->setAutoRaise(true);
-      remove->setIcon(style()->standardIcon(QStyle::SP_DialogCloseButton));
+      remove->setIcon(QIcon(QStringLiteral(":/icons/material-delete-outline.svg")));
       remove->setToolTip(layer == Layer::Primary ? tr("Close this data session")
                                                  : tr("Remove this layer from the session"));
       remove->setAccessibleName(remove->toolTip());

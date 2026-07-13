@@ -19,10 +19,12 @@
 #include <QItemSelectionModel>
 #include <QLineEdit>
 #include <QLabel>
+#include <QMenu>
 #include <QSpinBox>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QToolButton>
 
 class DataPanelsWorkflowTest final : public QObject
 {
@@ -60,6 +62,9 @@ private slots:
     auto* minimumRt = spectra.findChild<QLineEdit*>(QStringLiteral("spectrumMinimumRt"));
     auto* score = spectra.findChild<QLineEdit*>(QStringLiteral("spectrumMinimumScore"));
     auto* scoreLabel = spectra.findChild<QLabel*>(QStringLiteral("spectrumScoreThresholdLabel"));
+    auto* filters = spectra.findChild<QToolButton*>(QStringLiteral("spectrumFilterOptions"));
+    auto* columns = spectra.findChild<QToolButton*>(QStringLiteral("spectrumColumnOptions"));
+    auto* advanced = spectra.findChild<QCheckBox*>(QStringLiteral("spectrumAdvancedColumns"));
     QVERIFY(spectraTable != nullptr);
     QVERIFY(mode != nullptr);
     QVERIFY(sequence != nullptr);
@@ -67,6 +72,12 @@ private slots:
     QVERIFY(minimumRt != nullptr);
     QVERIFY(score != nullptr);
     QVERIFY(scoreLabel != nullptr);
+    QVERIFY(filters != nullptr && filters->menu() != nullptr);
+    QVERIFY(columns != nullptr && columns->menu() != nullptr);
+    QVERIFY(filters->menu()->isAncestorOf(minimumRt));
+    QVERIFY(filters->menu()->isAncestorOf(score));
+    QVERIFY(filters->menu()->isAncestorOf(allHits));
+    QVERIFY(columns->menu()->isAncestorOf(advanced));
     QCOMPARE(spectraTable->model()->rowCount(), 3);
     mode->setCurrentIndex(1);
     QCOMPARE(spectraTable->model()->rowCount(), 1);
@@ -105,7 +116,14 @@ private slots:
     chromatograms.setChromatograms(document.chromatograms());
     chromatograms.setPeakMapRange({11.0, 17.0, 0.0, 1.0});
     auto* chromatogramTable = chromatograms.findChild<QTableView*>(QStringLiteral("chromatogramTable"));
+    auto* chromatogramDisplay = chromatograms.findChild<QToolButton*>(
+      QStringLiteral("chromatogramDisplayOptions"));
+    auto* chromatogramSmooth = chromatograms.findChild<QCheckBox*>(
+      QStringLiteral("chromatogramSmooth"));
     QVERIFY(chromatogramTable != nullptr);
+    QVERIFY(chromatogramDisplay != nullptr && chromatogramDisplay->menu() != nullptr);
+    QVERIFY(chromatogramSmooth != nullptr);
+    QVERIFY(chromatogramDisplay->menu()->isAncestorOf(chromatogramSmooth));
     QCOMPARE(chromatogramTable->model()->rowCount(), 2);
     chromatogramTable->selectRow(0);
     chromatogramTable->selectionModel()->select(
@@ -141,9 +159,13 @@ private slots:
     auto* table = identifications.findChild<QTableView*>(QStringLiteral("identificationTable"));
     auto* threshold = identifications.findChild<QLineEdit*>(QStringLiteral("identificationScoreThreshold"));
     auto* label = identifications.findChild<QLabel*>(QStringLiteral("identificationScoreThresholdLabel"));
+    auto* filters = identifications.findChild<QToolButton*>(
+      QStringLiteral("identificationFilterOptions"));
     QVERIFY(table != nullptr);
     QVERIFY(threshold != nullptr);
     QVERIFY(label != nullptr);
+    QVERIFY(filters != nullptr && filters->menu() != nullptr);
+    QVERIFY(filters->menu()->isAncestorOf(threshold));
     QVERIFY(label->text().contains(QStringLiteral("q-value")));
     QVERIFY(label->text().contains(QStringLiteral("≤")));
     threshold->setText(QStringLiteral("0.05"));
@@ -216,6 +238,31 @@ private slots:
     QTRY_VERIFY(peakMap->viewRange().rtMin > 15.9);
     QTRY_VERIFY(peakMap->viewRange().rtMax > 19.9);
     QVERIFY(qAbs(peakMap->viewRange().rtSpan() - 4.0) < 1e-9);
+
+    // Clicking a peak-map precursor selects its MS/MS scan in the spectra
+    // table, including when that same precursor is clicked again after the
+    // table selection was cleared independently.
+    QAction* showPrecursors = nullptr;
+    for (QAction* action : window.findChildren<QAction*>())
+      if (action->text() == QStringLiteral("MS/MS precursors + isolation windows"))
+      {
+        showPrecursors = action;
+        break;
+      }
+    QVERIFY(showPrecursors != nullptr);
+    showPrecursors->setChecked(true);
+    peakMap->resetView();
+    const QPoint precursor = peakMap->mapDataToWidget(11.0, 500.2).toPoint();
+    QTest::mouseClick(peakMap, Qt::LeftButton, Qt::NoModifier, precursor);
+    QTRY_COMPARE(spectrum->spectrumIndex(), std::size_t{1});
+    QTRY_VERIFY(table->currentIndex().isValid());
+    QCOMPARE(table->currentIndex().data(Qt::UserRole).toULongLong(), qulonglong{1});
+
+    table->selectionModel()->clear();
+    QVERIFY(!table->currentIndex().isValid());
+    QTest::mouseClick(peakMap, Qt::LeftButton, Qt::NoModifier, precursor);
+    QTRY_VERIFY(table->currentIndex().isValid());
+    QCOMPARE(table->currentIndex().data(Qt::UserRole).toULongLong(), qulonglong{1});
   }
 };
 

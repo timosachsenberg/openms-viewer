@@ -1,4 +1,5 @@
 #include "widgets/IdentificationTableWidget.h"
+#include "widgets/CompactControls.h"
 
 #include "model/RtUnit.h"
 
@@ -12,13 +13,14 @@
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPlainTextEdit>
-#include <QPushButton>
 #include <QSaveFile>
 #include <QScopedValueRollback>
 #include <QSortFilterProxyModel>
 #include <QTableView>
 #include <QTextStream>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -247,7 +249,6 @@ namespace OpenMSViewer
   {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(6, 6, 6, 6);
-    layout->addWidget(new QLabel(tr("Select an identification to open its linked MS/MS spectrum"), this));
 
     auto* controls = new QHBoxLayout;
     viewMode_ = new QComboBox(this);
@@ -258,10 +259,17 @@ namespace OpenMSViewer
     sequenceFilter_->setObjectName(QStringLiteral("identificationSequenceFilter"));
     sequenceFilter_->setPlaceholderText(tr("Sequence filter"));
     sequenceFilter_->setClearButtonEnabled(true);
-    controls->addWidget(sequenceFilter_);
+    controls->addWidget(sequenceFilter_, 1);
+
+    auto* filters = new QToolButton(this);
+    filters->setObjectName(QStringLiteral("identificationFilterOptions"));
+    filters->setText(tr("Filters"));
+    filters->setPopupMode(QToolButton::InstantPopup);
+    filters->setAccessibleName(tr("Identification table filters"));
+    auto* filterMenu = new QMenu(filters);
+    filterMenu->setObjectName(QStringLiteral("identificationFilterMenu"));
     scoreThresholdLabel_ = new QLabel(tr("Score threshold"), this);
     scoreThresholdLabel_->setObjectName(QStringLiteral("identificationScoreThresholdLabel"));
-    controls->addWidget(scoreThresholdLabel_);
     minimumScore_ = new QLineEdit(this);
     minimumScore_->setObjectName(QStringLiteral("identificationScoreThreshold"));
     minimumScore_->setPlaceholderText(tr("threshold"));
@@ -269,15 +277,23 @@ namespace OpenMSViewer
     auto* validator = new QDoubleValidator(-1.0e300, 1.0e300, 12, minimumScore_);
     validator->setNotation(QDoubleValidator::ScientificNotation);
     minimumScore_->setValidator(validator);
-    controls->addWidget(minimumScore_);
+    CompactControls::addLabeledMenuControl(
+      filterMenu, scoreThresholdLabel_, minimumScore_, 150, 110);
     showAllHits_ = new QCheckBox(tr("All hits"), this);
-    controls->addWidget(showAllHits_);
-    auto* reset = new QPushButton(tr("Reset"), this);
-    controls->addWidget(reset);
-    controls->addStretch();
+    showAllHits_->setObjectName(QStringLiteral("identificationAllHits"));
+    CompactControls::addMenuControl(filterMenu, showAllHits_);
+    filterMenu->addSeparator();
+    auto* reset = CompactControls::makeIconButton(
+      filterMenu, QIcon(QStringLiteral(":/icons/material-clear-all.svg")),
+      tr("Reset identification filters"), QStringLiteral("identificationResetFilters"));
+    CompactControls::addMenuControl(filterMenu, reset);
+    filters->setMenu(filterMenu);
+    controls->addWidget(filters);
     countLabel_ = new QLabel(this);
     controls->addWidget(countLabel_);
-    auto* exportButton = new QPushButton(tr("Export TSV…"), this);
+    auto* exportButton = CompactControls::makeIconButton(
+      this, QIcon(QStringLiteral(":/icons/material-file-download.svg")),
+      tr("Export filtered identifications as TSV"), QStringLiteral("identificationExportTsv"));
     controls->addWidget(exportButton);
     layout->addLayout(controls);
 
@@ -287,6 +303,7 @@ namespace OpenMSViewer
     table_ = new QTableView(this);
     table_->setObjectName(QStringLiteral("identificationTable"));
     table_->setAccessibleName(tr("Filtered identification table"));
+    table_->setToolTip(tr("Select an identification to open its linked MS/MS spectrum"));
     table_->setModel(proxy_);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -308,7 +325,7 @@ namespace OpenMSViewer
     connect(sequenceFilter_, &QLineEdit::textChanged, this, &IdentificationTableWidget::updateFilters);
     connect(minimumScore_, &QLineEdit::textChanged, this, &IdentificationTableWidget::updateFilters);
     connect(showAllHits_, &QCheckBox::toggled, this, &IdentificationTableWidget::rebuildRows);
-    connect(reset, &QPushButton::clicked, this, [this]
+    connect(reset, &QToolButton::clicked, this, [this]
     {
       viewMode_->setCurrentIndex(0);
       sequenceFilter_->clear();
@@ -316,7 +333,7 @@ namespace OpenMSViewer
       showAllHits_->setChecked(false);
       updateFilters();
     });
-    connect(exportButton, &QPushButton::clicked, this, &IdentificationTableWidget::exportTsv);
+    connect(exportButton, &QToolButton::clicked, this, &IdentificationTableWidget::exportTsv);
     connect(table_->selectionModel(), &QItemSelectionModel::currentRowChanged,
             this, [this](const QModelIndex& proxyIndex)
     {

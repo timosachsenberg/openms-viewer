@@ -104,6 +104,7 @@ add_library(openms_viewer_ui STATIC
   src/widgets/PeakSurface3DWidget.h
   src/widgets/ChromatogramPanelWidget.cpp
   src/widgets/ChromatogramPanelWidget.h
+  src/widgets/CompactControls.h
   src/widgets/DataLayersWidget.cpp
   src/widgets/DataLayersWidget.h
   src/widgets/FeatureTableWidget.cpp

@@ -1060,13 +1060,15 @@ namespace OpenMSViewer
     connect(showUnmatchedIonsAction_, &QAction::toggled,
             spectrum_, &SpectrumWidget::setShowUnmatchedTheoretical);
 
-    measureSpectrumAction_ = new QAction(tr("Measure peak distance"), this);
+    measureSpectrumAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-straighten.svg")), tr("Measure peak distance"), this);
     measureSpectrumAction_->setCheckable(true);
     measureSpectrumAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M));
     connect(measureSpectrumAction_, &QAction::toggled,
             spectrum_, &SpectrumWidget::setMeasurementMode);
 
-    labelSpectrumAction_ = new QAction(tr("Label peaks"), this);
+    labelSpectrumAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-label.svg")), tr("Label peaks"), this);
     labelSpectrumAction_->setCheckable(true);
     labelSpectrumAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_L));
     labelSpectrumAction_->setStatusTip(
@@ -1092,7 +1094,9 @@ namespace OpenMSViewer
     connect(showSpectrumGridAction_, &QAction::toggled,
             spectrum_, &SpectrumWidget::setShowGrid);
 
-    resetSpectrumViewAction_ = new QAction(tr("Reset spectrum m/z view"), this);
+    resetSpectrumViewAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-zoom-out-map.svg")),
+      tr("Reset spectrum m/z view"), this);
     connect(resetSpectrumViewAction_, &QAction::triggered,
             spectrum_, &SpectrumWidget::resetMzView);
 
@@ -1104,14 +1108,14 @@ namespace OpenMSViewer
     connect(clearSpectrumLabelsAction_, &QAction::triggered,
             spectrum_, &SpectrumWidget::clearLabels);
 
-    spectrumFirstAction_ = new QAction(style()->standardIcon(QStyle::SP_MediaSkipBackward),
-                                       QStringLiteral("⏮"), this);
-    spectrumPreviousAction_ = new QAction(style()->standardIcon(QStyle::SP_MediaSeekBackward),
-                                          QStringLiteral("◀"), this);
-    spectrumNextAction_ = new QAction(style()->standardIcon(QStyle::SP_MediaSeekForward),
-                                      QStringLiteral("▶"), this);
-    spectrumLastAction_ = new QAction(style()->standardIcon(QStyle::SP_MediaSkipForward),
-                                      QStringLiteral("⏭"), this);
+    spectrumFirstAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-first-page.svg")), tr("First spectrum"), this);
+    spectrumPreviousAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-navigate-before.svg")), tr("Previous spectrum"), this);
+    spectrumNextAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-navigate-next.svg")), tr("Next spectrum"), this);
+    spectrumLastAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-last-page.svg")), tr("Last spectrum"), this);
     spectrumFirstAction_->setToolTip(tr("First spectrum"));
     spectrumPreviousAction_->setToolTip(tr("Previous spectrum"));
     spectrumNextAction_->setToolTip(tr("Next spectrum"));
@@ -1437,24 +1441,23 @@ namespace OpenMSViewer
     peakMapControlBar_->addWidget(overlays);
 
     // ---- Spectrum options live in the spectrum panel's control bar ----
-    const auto addNavigationButton = [this](QAction* action, const QString& glyph,
-                                            const QString& accessibleName)
+    const auto addSpectrumActionButton = [this](QAction* action, const QString& objectName)
     {
       auto* button = new QToolButton(spectrumControlBar_);
+      button->setObjectName(objectName);
       button->setDefaultAction(action);
-      button->setText(glyph);
-      button->setToolTip(accessibleName);
-      button->setAccessibleName(accessibleName);
-      button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+      button->setAutoRaise(true);
+      button->setIconSize(QSize(20, 20));
+      button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+      button->setAccessibleName(action->text());
       spectrumControlBar_->addWidget(button);
     };
-    addNavigationButton(spectrumFirstAction_, QStringLiteral("⏮"), tr("First spectrum"));
-    addNavigationButton(spectrumPreviousAction_, QStringLiteral("◀"), tr("Previous spectrum"));
-    addNavigationButton(spectrumNextAction_, QStringLiteral("▶"), tr("Next spectrum"));
-    addNavigationButton(spectrumLastAction_, QStringLiteral("⏭"), tr("Last spectrum"));
+    addSpectrumActionButton(spectrumFirstAction_, QStringLiteral("spectrumFirst"));
+    addSpectrumActionButton(spectrumPreviousAction_, QStringLiteral("spectrumPrevious"));
+    addSpectrumActionButton(spectrumNextAction_, QStringLiteral("spectrumNext"));
+    addSpectrumActionButton(spectrumLastAction_, QStringLiteral("spectrumLast"));
     spectrumControlBar_->addSeparator();
 
-    spectrumControlBar_->addWidget(new QLabel(tr("Navigate"), spectrumControlBar_));
     spectrumLevel_ = new QComboBox(spectrumControlBar_);
     spectrumLevel_->setObjectName(QStringLiteral("spectrumLevelFilter"));
     spectrumLevel_->addItems({tr("All"), tr("MS1"), tr("MS2")});
@@ -1514,15 +1517,8 @@ namespace OpenMSViewer
     });
 
     spectrumControlBar_->addSeparator();
-    auto* measureButton = new QToolButton(spectrumControlBar_);
-    measureButton->setDefaultAction(measureSpectrumAction_);
-    measureButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    spectrumControlBar_->addWidget(measureButton);
-
-    auto* labelButton = new QToolButton(spectrumControlBar_);
-    labelButton->setDefaultAction(labelSpectrumAction_);
-    labelButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    spectrumControlBar_->addWidget(labelButton);
+    addSpectrumActionButton(measureSpectrumAction_, QStringLiteral("spectrumMeasureMode"));
+    addSpectrumActionButton(labelSpectrumAction_, QStringLiteral("spectrumLabelMode"));
 
     auto* annotationButton = new QToolButton(spectrumControlBar_);
     annotationButton->setText(tr("Annotation"));
@@ -3429,8 +3425,13 @@ namespace OpenMSViewer
       }
     }
 
-    // Panels refresh through applySpectrumSelection (spectrumChanged signal).
+    // Panels normally refresh through applySpectrumSelection (spectrumChanged
+    // signal). Re-apply an unchanged selection as well: the user may have
+    // cleared or filtered a panel since the spectrum was first selected, and a
+    // fresh click on its peak-map precursor must restore the linked table row.
+    const bool reselected = selection_.spectrum() && *selection_.spectrum() == index;
     selection_.setSpectrum(index);
+    if (reselected) applySpectrumSelection(static_cast<qint64>(index));
     // Keep the selection visible in the peak map from every source (including
     // re-selecting the current spectrum), preserving the current RT span.
     const PlotRange view = peakMap_->viewRange();

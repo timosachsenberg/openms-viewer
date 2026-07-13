@@ -4,6 +4,7 @@
 #include <QComboBox>
 #include <QLineEdit>
 #include <QTest>
+#include <QToolButton>
 
 class LogWidgetTest final : public QObject
 {
@@ -24,8 +25,17 @@ private slots:
 
     auto* severity = widget.findChild<QComboBox*>(QStringLiteral("logSeverity"));
     auto* search = widget.findChild<QLineEdit*>(QStringLiteral("logSearch"));
+    auto* clear = widget.findChild<QToolButton*>(QStringLiteral("logClear"));
+    auto* copy = widget.findChild<QToolButton*>(QStringLiteral("logCopyAll"));
+    auto* save = widget.findChild<QToolButton*>(QStringLiteral("logSave"));
     QVERIFY(severity != nullptr);
     QVERIFY(search != nullptr);
+    for (QToolButton* button : {clear, copy, save})
+    {
+      QVERIFY(button != nullptr);
+      QVERIFY(!button->icon().isNull());
+      QVERIFY(!button->toolTip().isEmpty());
+    }
     severity->setCurrentIndex(2);
     QVERIFY(!widget.text().contains(QStringLiteral("log-widget-info-unique")));
     QVERIFY(widget.text().contains(QStringLiteral("log-widget-warning-unique")));

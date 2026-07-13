@@ -14,9 +14,11 @@
 #include <QSettings>
 #include <QFile>
 #include <QFileInfo>
+#include <QMenu>
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QToolButton>
 
 #include <optional>
 
@@ -106,18 +108,22 @@ private slots:
     auto* mz = panel.findChild<QDoubleSpinBox*>(QStringLiteral("imagingMz"));
     auto* extract = panel.findChild<QPushButton*>(QStringLiteral("imagingExtract"));
     auto* mode = panel.findChild<QComboBox*>(QStringLiteral("imagingDisplayMode"));
+    auto* display = panel.findChild<QToolButton*>(QStringLiteral("imagingDisplayOptions"));
+    auto* overlays = panel.findChild<QToolButton*>(QStringLiteral("imagingOverlayOptions"));
     QVERIFY(mz != nullptr);
     QVERIFY(extract != nullptr);
     QVERIFY(mode != nullptr);
+    QVERIFY(display != nullptr && display->menu() != nullptr);
+    QVERIFY(overlays != nullptr && overlays->menu() != nullptr);
+    QVERIFY(display->menu()->isAncestorOf(mode));
     mz->setValue(100.0);
     extract->click();
     QTRY_COMPARE_WITH_TIMEOUT(mode->currentIndex(), 1, 3000);
     QVERIFY(!panel.imageWidget()->renderedImage().isNull());
 
-    QPushButton* addOverlay = nullptr;
-    for (QPushButton* button : panel.findChildren<QPushButton*>())
-      if (button->text() == QStringLiteral("Add to overlay")) addOverlay = button;
+    auto* addOverlay = panel.findChild<QPushButton*>(QStringLiteral("imagingAddOverlay"));
     QVERIFY(addOverlay != nullptr);
+    QVERIFY(overlays->menu()->isAncestorOf(addOverlay));
     addOverlay->click();
     QCOMPARE(panel.overlayCount(), std::size_t{1});
     QCOMPARE(mode->currentIndex(), 2);

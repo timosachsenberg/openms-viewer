@@ -1,4 +1,5 @@
 #include "widgets/SpectrumTableWidget.h"
+#include "widgets/CompactControls.h"
 
 #include "model/RtUnit.h"
 
@@ -12,12 +13,13 @@
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
-#include <QPushButton>
+#include <QMenu>
 #include <QSaveFile>
 #include <QScopedValueRollback>
 #include <QSortFilterProxyModel>
 #include <QTableView>
 #include <QTextStream>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -371,8 +373,21 @@ namespace OpenMSViewer
     mode_->setObjectName(QStringLiteral("spectrumModeFilter"));
     mode_->addItems({tr("All spectra"), tr("MS2"), tr("Identified")});
     first->addWidget(mode_);
+    sequence_ = new QLineEdit(this);
+    sequence_->setObjectName(QStringLiteral("spectrumSequenceFilter"));
+    sequence_->setPlaceholderText(tr("Sequence contains…"));
+    sequence_->setClearButtonEnabled(true);
+    sequence_->setMaximumWidth(220);
+    first->addWidget(sequence_, 1);
+
+    auto* filters = new QToolButton(this);
+    filters->setObjectName(QStringLiteral("spectrumFilterOptions"));
+    filters->setText(tr("Filters"));
+    filters->setPopupMode(QToolButton::InstantPopup);
+    filters->setAccessibleName(tr("Spectrum table filters"));
+    auto* filterMenu = new QMenu(filters);
+    filterMenu->setObjectName(QStringLiteral("spectrumFilterMenu"));
     rtFilterLabel_ = new QLabel(RtUnit::columnHeader(rtInMinutes_), this);
-    first->addWidget(rtFilterLabel_);
     minimumRt_ = new QLineEdit(this);
     minimumRt_->setObjectName(QStringLiteral("spectrumMinimumRt"));
     minimumRt_->setPlaceholderText(tr("minimum"));
@@ -380,8 +395,6 @@ namespace OpenMSViewer
     auto* rtValidator = new QDoubleValidator(0.0, 1.0e300, 12, minimumRt_);
     rtValidator->setNotation(QDoubleValidator::ScientificNotation);
     minimumRt_->setValidator(rtValidator);
-    first->addWidget(minimumRt_);
-    first->addWidget(new QLabel(QStringLiteral("–"), this));
     maximumRt_ = new QLineEdit(this);
     maximumRt_->setObjectName(QStringLiteral("spectrumMaximumRt"));
     maximumRt_->setPlaceholderText(tr("maximum"));
@@ -389,15 +402,16 @@ namespace OpenMSViewer
     auto* maximumRtValidator = new QDoubleValidator(0.0, 1.0e300, 12, maximumRt_);
     maximumRtValidator->setNotation(QDoubleValidator::ScientificNotation);
     maximumRt_->setValidator(maximumRtValidator);
-    first->addWidget(maximumRt_);
-    sequence_ = new QLineEdit(this);
-    sequence_->setObjectName(QStringLiteral("spectrumSequenceFilter"));
-    sequence_->setPlaceholderText(tr("Sequence contains…"));
-    sequence_->setMaximumWidth(180);
-    first->addWidget(sequence_);
+    auto* rtRange = new QWidget(filterMenu);
+    auto* rtRangeLayout = new QHBoxLayout(rtRange);
+    rtRangeLayout->setContentsMargins(0, 0, 0, 0);
+    rtRangeLayout->setSpacing(6);
+    rtRangeLayout->addWidget(minimumRt_);
+    rtRangeLayout->addWidget(new QLabel(QStringLiteral("–"), rtRange));
+    rtRangeLayout->addWidget(maximumRt_);
+    CompactControls::addLabeledMenuControl(filterMenu, rtFilterLabel_, rtRange, 110, 190);
     scoreThresholdLabel_ = new QLabel(tr("Score threshold"), this);
     scoreThresholdLabel_->setObjectName(QStringLiteral("spectrumScoreThresholdLabel"));
-    first->addWidget(scoreThresholdLabel_);
     minimumScore_ = new QLineEdit(this);
     minimumScore_->setObjectName(QStringLiteral("spectrumMinimumScore"));
     minimumScore_->setPlaceholderText(tr("threshold"));
@@ -405,36 +419,51 @@ namespace OpenMSViewer
     auto* scoreValidator = new QDoubleValidator(-1.0e300, 1.0e300, 12, minimumScore_);
     scoreValidator->setNotation(QDoubleValidator::ScientificNotation);
     minimumScore_->setValidator(scoreValidator);
-    first->addWidget(minimumScore_);
-    auto* reset = new QPushButton(tr("Reset"), this);
-    first->addWidget(reset);
+    CompactControls::addLabeledMenuControl(
+      filterMenu, scoreThresholdLabel_, minimumScore_, 150, 110);
+    allHits_ = new QCheckBox(tr("All peptide hits"), this);
+    allHits_->setObjectName(QStringLiteral("spectrumAllHits"));
+    CompactControls::addMenuControl(filterMenu, allHits_);
+    filterMenu->addSeparator();
+    auto* reset = CompactControls::makeIconButton(
+      filterMenu, QIcon(QStringLiteral(":/icons/material-clear-all.svg")),
+      tr("Reset spectrum filters"), QStringLiteral("spectrumResetFilters"));
+    CompactControls::addMenuControl(filterMenu, reset);
+    filters->setMenu(filterMenu);
+    first->addWidget(filters);
+
+    auto* display = new QToolButton(this);
+    display->setObjectName(QStringLiteral("spectrumColumnOptions"));
+    display->setText(tr("Columns"));
+    display->setPopupMode(QToolButton::InstantPopup);
+    display->setAccessibleName(tr("Spectrum table columns"));
+    auto* displayMenu = new QMenu(display);
+    displayMenu->setObjectName(QStringLiteral("spectrumColumnMenu"));
+    advanced_ = new QCheckBox(tr("Advanced statistics"), this);
+    advanced_->setObjectName(QStringLiteral("spectrumAdvancedColumns"));
+    CompactControls::addMenuControl(displayMenu, advanced_);
+    metadata_ = new QCheckBox(tr("Metadata"), this);
+    metadata_->setObjectName(QStringLiteral("spectrumMetadataColumn"));
+    CompactControls::addMenuControl(displayMenu, metadata_);
+    display->setMenu(displayMenu);
+    first->addWidget(display);
     first->addStretch();
     countLabel_ = new QLabel(this);
     countLabel_->setObjectName(QStringLiteral("spectrumCountLabel"));
     first->addWidget(countLabel_);
-    auto* exportButton = new QPushButton(tr("Export TSV…"), this);
+    auto* exportButton = CompactControls::makeIconButton(
+      this, QIcon(QStringLiteral(":/icons/material-file-download.svg")),
+      tr("Export filtered spectra as TSV"), QStringLiteral("spectrumExportTsv"));
     first->addWidget(exportButton);
     layout->addLayout(first);
-
-    auto* options = new QHBoxLayout;
-    advanced_ = new QCheckBox(tr("Advanced statistics"), this);
-    advanced_->setObjectName(QStringLiteral("spectrumAdvancedColumns"));
-    metadata_ = new QCheckBox(tr("Metadata"), this);
-    metadata_->setObjectName(QStringLiteral("spectrumMetadataColumn"));
-    allHits_ = new QCheckBox(tr("All peptide hits"), this);
-    allHits_->setObjectName(QStringLiteral("spectrumAllHits"));
-    options->addWidget(advanced_);
-    options->addWidget(metadata_);
-    options->addWidget(allHits_);
-    options->addStretch();
-    options->addWidget(new QLabel(tr("Click a row to open that spectrum"), this));
-    layout->addLayout(options);
 
     model_ = new SpectrumTableModel(this);
     proxy_ = new SpectrumFilterProxyModel(this);
     proxy_->setSourceModel(model_);
     table_ = new QTableView(this);
     table_->setObjectName(QStringLiteral("spectraTable"));
+    table_->setAccessibleName(tr("Filtered spectrum table"));
+    table_->setToolTip(tr("Click a row to open that spectrum"));
     table_->setModel(proxy_);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -460,8 +489,8 @@ namespace OpenMSViewer
       updateColumns();
       updateCountLabel();
     });
-    connect(reset, &QPushButton::clicked, this, &SpectrumTableWidget::resetFilters);
-    connect(exportButton, &QPushButton::clicked, this, &SpectrumTableWidget::exportTsv);
+    connect(reset, &QToolButton::clicked, this, &SpectrumTableWidget::resetFilters);
+    connect(exportButton, &QToolButton::clicked, this, &SpectrumTableWidget::exportTsv);
     connect(table_->selectionModel(), &QItemSelectionModel::currentRowChanged,
             this, [this](const QModelIndex& index)
     {
@@ -546,7 +575,8 @@ namespace OpenMSViewer
       table_->selectionModel()->clearSelection();
       return;
     }
-    table_->selectRow(proxyIndex.row());
+    table_->selectionModel()->setCurrentIndex(
+      proxyIndex, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     table_->scrollTo(proxyIndex, QAbstractItemView::PositionAtCenter);
   }
 

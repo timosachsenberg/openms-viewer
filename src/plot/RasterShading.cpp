@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <initializer_list>
+#include <limits>
 
 namespace OpenMSViewer::RasterShading
 {
@@ -16,6 +17,48 @@ namespace OpenMSViewer::RasterShading
       int green;
       int blue;
     };
+
+    bool hasIntensity(float value)
+    {
+      return value > 0.0F && std::isfinite(value);
+    }
+
+    // Datashader's density heuristic: among occupied pixels, measure the fraction
+    // that have at least one other occupied pixel inside the square search radius.
+    double neighborDensity(const std::vector<float>& values,
+                           std::size_t dimA, std::size_t dimB, int radius)
+    {
+      std::size_t occupied = 0;
+      std::size_t withNeighbor = 0;
+      for (std::size_t a = 0; a < dimA; ++a)
+        for (std::size_t b = 0; b < dimB; ++b)
+        {
+          if (!hasIntensity(values[a * dimB + b])) continue;
+          ++occupied;
+          bool found = false;
+          const long a0 = std::max(0L, static_cast<long>(a) - radius);
+          const long a1 = std::min(static_cast<long>(dimA) - 1,
+                                   static_cast<long>(a) + radius);
+          const long b0 = std::max(0L, static_cast<long>(b) - radius);
+          const long b1 = std::min(static_cast<long>(dimB) - 1,
+                                   static_cast<long>(b) + radius);
+          for (long na = a0; na <= a1 && !found; ++na)
+            for (long nb = b0; nb <= b1; ++nb)
+            {
+              if (na == static_cast<long>(a) && nb == static_cast<long>(b)) continue;
+              if (hasIntensity(values[static_cast<std::size_t>(na) * dimB
+                                      + static_cast<std::size_t>(nb)]))
+              {
+                found = true;
+                break;
+              }
+            }
+          if (found) ++withNeighbor;
+        }
+      return occupied == 0
+        ? std::numeric_limits<double>::infinity()
+        : static_cast<double>(withNeighbor) / static_cast<double>(occupied);
+    }
 
     // Build a 256-entry LUT by piecewise-linear interpolation of control points.
     std::array<QRgb, 256> buildLut(std::initializer_list<ColorStop> stops)
@@ -151,30 +194,47 @@ namespace OpenMSViewer::RasterShading
     return low + fraction * (cdf[static_cast<std::size_t>(bin) + 1] - low);
   }
 
-  int dynspreadRadius(double occupancy)
+  int dynspreadRadius(const std::vector<float>& values,
+                      std::size_t dimA, std::size_t dimB,
+                      double threshold, int maxRadius)
   {
-    if (occupancy <= 0.0) return 0;
-    if (occupancy < 0.006) return 3;   // very sparse (deep zoom / thin IM frames)
-    if (occupancy < 0.02) return 2;
-    if (occupancy < 0.05) return 1;
-    return 0;                          // dense views stay crisp
+    if (dimA == 0 || dimB == 0 || values.size() != dimA * dimB || maxRadius <= 0)
+      return 0;
+    threshold = std::clamp(threshold, 0.0, 1.0);
+    int result = 0;
+    for (int candidate = 1; candidate <= maxRadius; ++candidate)
+    {
+      result = candidate;
+      // This matches datashader.transfer_functions.dynspread: its density probe
+      // uses px * 2, then backs off one radius once the threshold is crossed.
+      if (neighborDensity(values, dimA, dimB, candidate * 2) > threshold)
+      {
+        --result;
+        break;
+      }
+    }
+    return result;
   }
 
-  void dilateMax(std::vector<float>& values, std::size_t dimA, std::size_t dimB, int radius)
+  void dilateMaxCircular(std::vector<float>& values, std::size_t dimA,
+                         std::size_t dimB, int radius)
   {
     if (radius <= 0 || dimA == 0 || dimB == 0 || values.size() != dimA * dimB) return;
     std::vector<float> spread(values);
+    const double maskRadius = static_cast<double>(radius) + 0.5;
+    const double maskRadiusSquared = maskRadius * maskRadius;
     for (std::size_t a = 0; a < dimA; ++a)
       for (std::size_t b = 0; b < dimB; ++b)
       {
         const float source = values[a * dimB + b];
-        if (source <= 0.0F) continue;
+        if (!hasIntensity(source)) continue;
         for (int da = -radius; da <= radius; ++da)
         {
           const long na = static_cast<long>(a) + da;
           if (na < 0 || na >= static_cast<long>(dimA)) continue;
           for (int db = -radius; db <= radius; ++db)
           {
+            if (static_cast<double>(da * da + db * db) > maskRadiusSquared) continue;
             const long nb = static_cast<long>(b) + db;
             if (nb < 0 || nb >= static_cast<long>(dimB)) continue;
             float& target = spread[static_cast<std::size_t>(na) * dimB + static_cast<std::size_t>(nb)];

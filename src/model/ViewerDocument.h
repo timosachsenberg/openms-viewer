@@ -161,8 +161,11 @@ namespace OpenMSViewer
     // FeatureMap, rebuilds the derived records and emits featuresChanged. addFeature
     // creates the map if none is loaded, so features can be drawn onto a bare run.
     std::size_t addFeature(double rt, double mz, double intensity, int charge);
+    std::size_t insertFeature(std::size_t index, const OpenMS::Feature& feature);
+    void replaceFeature(std::size_t index, const OpenMS::Feature& feature);
     void updateFeature(std::size_t index, double rt, double mz, double intensity, int charge);
     void removeFeature(std::size_t index);
+    [[nodiscard]] std::optional<OpenMS::Feature> featureCopy(std::size_t index) const;
 
     [[nodiscard]] bool isEmpty() const noexcept;
     [[nodiscard]] const QString& sourcePath() const noexcept;

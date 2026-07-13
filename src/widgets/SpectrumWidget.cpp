@@ -251,6 +251,7 @@ namespace OpenMSViewer
   const std::optional<SpectrumAnnotation>& SpectrumWidget::annotation() const noexcept { return annotation_; }
   bool SpectrumWidget::measurementMode() const noexcept { return measurementMode_; }
   bool SpectrumWidget::labelMode() const noexcept { return labelMode_; }
+  bool SpectrumWidget::showMzLabels() const noexcept { return showMzLabels_; }
   std::optional<std::pair<double, double>> SpectrumWidget::mzView() const noexcept { return mzView_; }
 
   const std::vector<PeakLabel>& SpectrumWidget::labels() const noexcept

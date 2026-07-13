@@ -62,6 +62,7 @@ namespace OpenMSViewer
     [[nodiscard]] const std::optional<SpectrumAnnotation>& annotation() const noexcept;
     [[nodiscard]] bool measurementMode() const noexcept;
     [[nodiscard]] bool labelMode() const noexcept;
+    [[nodiscard]] bool showMzLabels() const noexcept;
     [[nodiscard]] std::optional<std::pair<double, double>> mzView() const noexcept;
     [[nodiscard]] const std::vector<SpectrumMeasurement>& measurements() const noexcept;
     [[nodiscard]] const std::vector<PeakLabel>& labels() const noexcept;
@@ -99,7 +100,7 @@ namespace OpenMSViewer
     bool showUnmatchedTheoretical_{true};
     bool measurementMode_{false};
     bool labelMode_{false};
-    bool showMzLabels_{false};
+    bool showMzLabels_{true};
     bool showGrid_{true};
     bool autoYScale_{true};
     bool rtInMinutes_{false};

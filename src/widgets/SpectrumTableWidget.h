@@ -47,6 +47,7 @@ namespace OpenMSViewer
 
   private:
     void updateCountLabel();
+    void synchronizeSelectedSpectrum();
 
     SpectrumTableModel* model_{nullptr};
     QSortFilterProxyModel* proxy_{nullptr};
@@ -57,10 +58,16 @@ namespace OpenMSViewer
     QLineEdit* maximumRt_{nullptr};
     QLineEdit* sequence_{nullptr};
     QLineEdit* minimumScore_{nullptr};
+    QLabel* scoreThresholdLabel_{nullptr};
     QCheckBox* advanced_{nullptr};
     QCheckBox* metadata_{nullptr};
     QCheckBox* allHits_{nullptr};
     QLabel* countLabel_{nullptr};
+    QWidget* selectionNotice_{nullptr};
+    QLabel* selectionNoticeLabel_{nullptr};
+    std::optional<std::size_t> selectedSpectrumIndex_;
+    std::optional<std::size_t> selectedIdentificationIndex_;
+    std::optional<std::size_t> selectedHitIndex_;
     bool synchronizingSelection_{false};
     bool rtInMinutes_{false};
   };

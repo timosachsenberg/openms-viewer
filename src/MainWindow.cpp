@@ -15,6 +15,7 @@
 #include "widgets/PeakMapWidget.h"
 #include "widgets/PeakSurface3DWidget.h"
 #include "widgets/ChromatogramPanelWidget.h"
+#include "widgets/DataLayersWidget.h"
 #include "widgets/FaimsPanelWidget.h"
 #include "widgets/FeatureTableWidget.h"
 #include "widgets/IdentificationTableWidget.h"
@@ -52,6 +53,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QKeySequence>
 #include <QLabel>
 #include <QListWidget>
@@ -64,7 +66,9 @@
 #include <QPalette>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QResource>
 #include <QScreen>
+#include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStackedWidget>
@@ -73,6 +77,8 @@
 #include <QStyle>
 #include <QToolBar>
 #include <QToolButton>
+#include <QUndoCommand>
+#include <QUndoStack>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWindow>
@@ -81,10 +87,88 @@
 #include <algorithm>
 #include <utility>
 
+static void initializeViewerResources()
+{
+  static const bool initialized = []
+  {
+    Q_INIT_RESOURCE(icons);
+    return true;
+  }();
+  Q_UNUSED(initialized);
+}
+
 namespace OpenMSViewer
 {
   namespace
   {
+    class AddFeatureCommand final : public QUndoCommand
+    {
+    public:
+      AddFeatureCommand(ViewerDocument& document, double rt, double mz, double intensity, int charge)
+        : document_(document), index_(document.features().size()), hadFeatureMap_(document.hasFeatures())
+      {
+        feature_.setRT(rt);
+        feature_.setMZ(mz);
+        feature_.setIntensity(static_cast<OpenMS::Feature::IntensityType>(intensity));
+        feature_.setCharge(charge);
+        feature_.setOverallQuality(1.0);
+        feature_.ensureUniqueId();
+        setText(QObject::tr("Add feature"));
+      }
+
+      void redo() override { index_ = document_.insertFeature(index_, feature_); }
+      void undo() override
+      {
+        if (hadFeatureMap_) document_.removeFeature(index_);
+        else document_.clearFeatures();
+      }
+      [[nodiscard]] std::size_t index() const noexcept { return index_; }
+
+    private:
+      ViewerDocument& document_;
+      OpenMS::Feature feature_;
+      std::size_t index_{0};
+      bool hadFeatureMap_{false};
+    };
+
+    class ReplaceFeatureCommand final : public QUndoCommand
+    {
+    public:
+      ReplaceFeatureCommand(ViewerDocument& document, std::size_t index,
+                            const OpenMS::Feature& before, OpenMS::Feature after,
+                            const QString& text)
+        : document_(document), index_(index), before_(before), after_(std::move(after))
+      {
+        setText(text);
+      }
+      void redo() override { document_.replaceFeature(index_, after_); }
+      void undo() override { document_.replaceFeature(index_, before_); }
+
+    private:
+      ViewerDocument& document_;
+      std::size_t index_{0};
+      OpenMS::Feature before_;
+      OpenMS::Feature after_;
+    };
+
+    class DeleteFeatureCommand final : public QUndoCommand
+    {
+    public:
+      DeleteFeatureCommand(ViewerDocument& document, std::size_t index,
+                           const OpenMS::Feature& feature)
+        : document_(document), index_(index), feature_(feature)
+      {
+        setText(QObject::tr("Delete feature"));
+      }
+      void redo() override { document_.removeFeature(index_); }
+      void undo() override { document_.insertFeature(index_, feature_); }
+
+    private:
+      ViewerDocument& document_;
+      std::size_t index_{0};
+      OpenMS::Feature feature_;
+    };
+
     // On WSLg a floating QDockWidget cannot receive the mouse grab it needs to be
     // moved or docked back (microsoft/wslg#1153); it becomes an input-dead window.
     // There we keep panels non-floating and rely on the native title bar, whose
@@ -303,6 +387,7 @@ namespace OpenMSViewer
 
   MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
   {
+    initializeViewerResources();
     ApplicationLog::install();
     setWindowTitle(tr("OpenMS Viewer"));
     resize(1420, 920);
@@ -311,14 +396,61 @@ namespace OpenMSViewer
                    | QMainWindow::AllowTabbedDocks | QMainWindow::GroupedDragging);
 
     createPanels();
+    featureUndoStack_ = new QUndoStack(this);
     createActions();
     createMenus();
     createToolBars();
     createStatusContext();
-    statusBar()->showMessage(tr("Ready — open or drop mzML, FeatureXML, or idXML files"));
+    statusBar()->showMessage(tr("Ready — open files, a data folder, or drop supported data here"));
 
     connect(welcome_, &WelcomeWidget::openRequested, this, &MainWindow::openFile);
+    connect(welcome_, &WelcomeWidget::openFolderRequested, this, &MainWindow::openDataFolder);
     connect(welcome_, &WelcomeWidget::recentFileRequested, this, &MainWindow::loadFile);
+    connect(featureUndoStack_, &QUndoStack::cleanChanged, this,
+            [this] { updateFeatureEditState(); });
+    connect(featureUndoStack_, &QUndoStack::indexChanged, this, [this]
+    {
+      if (selection_.feature() && *selection_.feature() >= document_.features().size())
+        selection_.setFeature(std::nullopt);
+      updateFeatureEditState();
+    });
+    connect(dataLayers_, &DataLayersWidget::visibilityChanged, this,
+            [this](DataLayersWidget::Layer layer, bool visible)
+    {
+      switch (layer)
+      {
+        case DataLayersWidget::Layer::Features:
+          showCentroidsAction_->setChecked(visible);
+          if (!visible)
+          {
+            showFeatureBoundsAction_->setChecked(false);
+            showFeatureHullsAction_->setChecked(false);
+          }
+          break;
+        case DataLayersWidget::Layer::Identifications:
+          showIdentificationsAction_->setChecked(visible);
+          if (!visible) showIdentificationSequencesAction_->setChecked(false);
+          break;
+        case DataLayersWidget::Layer::Consensus:
+          showConsensusAction_->setChecked(visible);
+          break;
+        case DataLayersWidget::Layer::OpenSwath:
+          if (oswDock_->toggleViewAction()->isEnabled()) oswDock_->setVisible(visible);
+          break;
+        case DataLayersWidget::Layer::Primary:
+        case DataLayersWidget::Layer::Count:
+          break;
+      }
+      updateDataLayers();
+    });
+    connect(dataLayers_, &DataLayersWidget::removeRequested, this,
+            [this](DataLayersWidget::Layer layer) { removeLayer(static_cast<int>(layer)); });
+    for (QAction* action : {showCentroidsAction_, showFeatureBoundsAction_, showFeatureHullsAction_,
+                            showIdentificationsAction_, showIdentificationSequencesAction_,
+                            showConsensusAction_})
+      connect(action, &QAction::toggled, this, [this] { updateDataLayers(); });
+    connect(oswDock_, &QDockWidget::visibilityChanged, this,
+            [this] { updateDataLayers(); });
     connect(loadingOverlay_, &LoadingOverlayWidget::cancelRequested,
             this, &MainWindow::cancelCurrentOperation);
     operationTimer_.setInterval(100);
@@ -361,19 +493,28 @@ namespace OpenMSViewer
     connect(peakMap_, &PeakMapWidget::featureCreateRequested, this, [this](double rt, double mz)
     {
       if (featureLoadWatcher_.isRunning()) return;  // a load is replacing the map
-      const std::size_t index = document_.addFeature(rt, mz, 0.0, 1);
-      selection_.setFeature(index);  // fans out to peak map + table (after featuresChanged)
-      notify(tr("Added feature at RT %1 %2 · m/z %3")
-               .arg(RtUnit::format(rt, rtInMinutes(), 1), RtUnit::unit(rtInMinutes())).arg(mz, 0, 'f', 4),
-             ToastLevel::Info);
+      FeatureEditDialog dialog(rt, mz, 0.0, 1, this);
+      dialog.setWindowTitle(tr("Add feature"));
+      if (dialog.exec() != QDialog::Accepted) return;
+      auto* command = new AddFeatureCommand(document_, dialog.rt(), dialog.mz(),
+                                             dialog.intensity(), dialog.charge());
+      featureUndoStack_->push(command);
+      selection_.setFeature(command->index());
+      notify(tr("Feature added · Ctrl+Z to undo"), ToastLevel::Info);
     });
     connect(peakMap_, &PeakMapWidget::featureMoveRequested, this,
             [this](std::size_t index, double rt, double mz)
     {
       if (featureLoadWatcher_.isRunning()) return;
-      const FeatureRecord* feature = document_.feature(index);
-      if (!feature) return;
-      document_.updateFeature(index, rt, mz, feature->intensity, feature->charge);
+      const auto before = document_.featureCopy(index);
+      if (!before) return;
+      OpenMS::Feature after = *before;
+      const bool moved = after.getRT() != rt || after.getMZ() != mz;
+      after.setRT(rt);
+      after.setMZ(mz);
+      if (moved) after.getConvexHulls().clear();
+      featureUndoStack_->push(new ReplaceFeatureCommand(
+        document_, index, *before, std::move(after), tr("Move feature")));
       selection_.setFeature(index);
     });
     connect(peakMap_, &PeakMapWidget::featureEditRequested, this, [this](std::size_t index)
@@ -381,18 +522,30 @@ namespace OpenMSViewer
       // Block while a load is in flight; the dialog itself is modal, so no new load
       // can start (and swap the map) while it is open.
       if (featureLoadWatcher_.isRunning()) return;
-      const FeatureRecord* feature = document_.feature(index);
-      if (!feature) return;
-      FeatureEditDialog dialog(feature->rt, feature->mz, feature->intensity, feature->charge, this);
+      const auto before = document_.featureCopy(index);
+      if (!before) return;
+      FeatureEditDialog dialog(before->getRT(), before->getMZ(), before->getIntensity(),
+                               before->getCharge(), this);
       if (dialog.exec() != QDialog::Accepted) return;
-      document_.updateFeature(index, dialog.rt(), dialog.mz(), dialog.intensity(), dialog.charge());
+      OpenMS::Feature after = *before;
+      const bool moved = after.getRT() != dialog.rt() || after.getMZ() != dialog.mz();
+      after.setRT(dialog.rt());
+      after.setMZ(dialog.mz());
+      after.setIntensity(static_cast<OpenMS::Feature::IntensityType>(dialog.intensity()));
+      after.setCharge(dialog.charge());
+      if (moved) after.getConvexHulls().clear();
+      featureUndoStack_->push(new ReplaceFeatureCommand(
+        document_, index, *before, std::move(after), tr("Edit feature")));
       selection_.setFeature(index);
     });
     connect(peakMap_, &PeakMapWidget::featureDeleteRequested, this, [this](std::size_t index)
     {
       if (featureLoadWatcher_.isRunning()) return;
-      document_.removeFeature(index);
-      notify(tr("Feature deleted"), ToastLevel::Info);
+      const auto feature = document_.featureCopy(index);
+      if (!feature) return;
+      featureUndoStack_->push(new DeleteFeatureCommand(document_, index, *feature));
+      selection_.setFeature(std::nullopt);
+      notify(tr("Feature deleted · Ctrl+Z to undo"), ToastLevel::Info);
     });
     // SelectionController is the single source of truth: its signals drive the
     // per-panel leaf appliers, so any selection source updates every panel.
@@ -469,6 +622,8 @@ namespace OpenMSViewer
     const bool spectrumGrid = settings.value(QStringLiteral("appearance/spectrumGrid"), true).toBool();
     showSpectrumGridAction_->setChecked(spectrumGrid);
     spectrum_->setShowGrid(spectrumGrid);
+    peakMapRasterWidth_->setValue(settings.value(
+      QStringLiteral("peakMap/rasterWidth"), PeakMapWidget::DefaultRasterWidth).toInt());
     recentFiles_ = settings.value(QStringLiteral("files/recent")).toStringList();
     lastPrimaryPath_ = settings.value(QStringLiteral("files/lastPrimary")).toString();
     rebuildRecentFiles();
@@ -481,6 +636,11 @@ namespace OpenMSViewer
 
   MainWindow::~MainWindow()
   {
+    // Child widgets may already be gone when QObject later deletes the undo stack.
+    // QUndoStack::clear() emits during its destructor, so detach UI callbacks before
+    // the QMainWindow child-destruction phase begins.
+    if (featureUndoStack_) disconnect(featureUndoStack_, nullptr, this, nullptr);
+    if (oswDock_) disconnect(oswDock_, nullptr, this, nullptr);
     if (mzMLCancellation_) mzMLCancellation_->store(true);
     if (loadWatcher_.isRunning()) loadWatcher_.waitForFinished();
     if (featureLoadWatcher_.isRunning()) featureLoadWatcher_.waitForFinished();
@@ -509,9 +669,16 @@ namespace OpenMSViewer
     peakMapControlBar_->setMovable(false);
     peakMapControlBar_->setFloatable(false);
     peakMapControlBar_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    peakMap_ = new PeakMapWidget(peakMapPanel_);
+    peakMapScroll_ = new QScrollArea(peakMapPanel_);
+    peakMapScroll_->setObjectName(QStringLiteral("peakMapScrollArea"));
+    peakMapScroll_->setWidgetResizable(true);
+    peakMapScroll_->setAlignment(Qt::AlignCenter);
+    peakMapScroll_->setFrameShape(QFrame::NoFrame);
+    peakMapScroll_->setSizeAdjustPolicy(QAbstractScrollArea::AdjustIgnored);
+    peakMap_ = new PeakMapWidget;
+    peakMapScroll_->setWidget(peakMap_);
     peakMapLayout->addWidget(peakMapControlBar_);
-    peakMapLayout->addWidget(peakMap_, 1);
+    peakMapLayout->addWidget(peakMapScroll_, 1);
 
     centralStack_->addWidget(welcome_);
     centralStack_->addWidget(peakMapPanel_);
@@ -592,6 +759,14 @@ namespace OpenMSViewer
     addDockWidget(Qt::BottomDockWidgetArea, consensusDock_);
     tabifyDockWidget(oswDock_, consensusDock_);
 
+    dataLayers_ = new DataLayersWidget(this);
+    dataLayersDock_ = new QDockWidget(tr("Data & layers"), this);
+    dataLayersDock_->setObjectName(QStringLiteral("dataLayersDock"));
+    dataLayersDock_->setWidget(dataLayers_);
+    configureDock(dataLayersDock_);
+    dataLayersDock_->setMinimumWidth(380);
+    addDockWidget(Qt::RightDockWidgetArea, dataLayersDock_);
+
     metadata_ = new MetadataBrowserWidget(this);
     metadataDock_ = new QDockWidget(tr("Metadata"), this);
     metadataDock_->setObjectName(QStringLiteral("metadataDock"));
@@ -665,40 +840,39 @@ namespace OpenMSViewer
     closeDataAction_ = new QAction(tr("Close data"), this);
     closeDataAction_->setShortcut(QKeySequence::Close);
     closeDataAction_->setEnabled(false);
-    connect(closeDataAction_, &QAction::triggered, this, [this]
-    {
-      document_.clear();
-      imagingStore_.reset();
-      imagingSummary_ = {};
-      closeSurface3D();
-      peakMap_->clear();
-      tic_->clear();
-      spectrum_->clear();
-      spectra_->clear();
-      chromatograms_->clear();
-      ionMobility_->clear();
-      faims_->clear();
-      imaging_->clear();
-      selection_.clear();
-      setWindowTitle(tr("OpenMS Viewer"));
-      showWelcomePage();
-      updateRunContext();
-      updateSpectrumControls();
-    });
+    connect(closeDataAction_, &QAction::triggered, this, &MainWindow::closeData);
 
     exportMzMLAction_ = new QAction(tr("Export filtered mzML…"), this);
     exportMzMLAction_->setEnabled(false);
     connect(exportMzMLAction_, &QAction::triggered, this, &MainWindow::exportMzML);
 
-    saveFeaturesAction_ = new QAction(tr("Save features as…"), this);
+    saveFeaturesAction_ = new QAction(tr("Save features"), this);
+    saveFeaturesAction_->setShortcut(QKeySequence::Save);
     saveFeaturesAction_->setEnabled(false);
-    connect(saveFeaturesAction_, &QAction::triggered, this, &MainWindow::saveFeatures);
+    connect(saveFeaturesAction_, &QAction::triggered, this, [this] { (void)saveFeatures(false); });
+    saveFeaturesAsAction_ = new QAction(tr("Save features as…"), this);
+    saveFeaturesAsAction_->setEnabled(false);
+    connect(saveFeaturesAsAction_, &QAction::triggered, this, [this] { (void)saveFeatures(true); });
     saveIdentificationsAction_ = new QAction(tr("Save identifications as…"), this);
     saveIdentificationsAction_->setEnabled(false);
     connect(saveIdentificationsAction_, &QAction::triggered, this, &MainWindow::saveIdentifications);
     saveConsensusAction_ = new QAction(tr("Save consensus map as…"), this);
     saveConsensusAction_->setEnabled(false);
     connect(saveConsensusAction_, &QAction::triggered, this, &MainWindow::saveConsensus);
+
+    undoFeatureAction_ = featureUndoStack_->createUndoAction(this, tr("Undo"));
+    redoFeatureAction_ = featureUndoStack_->createRedoAction(this, tr("Redo"));
+    undoFeatureAction_->setObjectName(QStringLiteral("undoFeatureEdit"));
+    redoFeatureAction_->setObjectName(QStringLiteral("redoFeatureEdit"));
+    undoFeatureAction_->setShortcut(QKeySequence::Undo);
+    redoFeatureAction_->setShortcut(QKeySequence::Redo);
+    editFeaturesModeAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-edit.svg")), tr("Edit features mode (E)"), this);
+    editFeaturesModeAction_->setObjectName(QStringLiteral("peakMapEditMode"));
+    editFeaturesModeAction_->setCheckable(true);
+    editFeaturesModeAction_->setData(3);
+    editFeaturesModeAction_->setToolTip(
+      tr("Edit features — drag a feature or click empty space (E)"));
 
     zoomBackAction_ = new QAction(style()->standardIcon(QStyle::SP_ArrowBack), tr("Previous view"), this);
     zoomBackAction_->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Left));
@@ -707,7 +881,7 @@ namespace OpenMSViewer
     connect(zoomBackAction_, &QAction::triggered, peakMap_, &PeakMapWidget::zoomBack);
     peakMapPanel_->addAction(zoomBackAction_);
 
-    resetViewAction_ = new QAction(style()->standardIcon(QStyle::SP_DialogResetButton),
+    resetViewAction_ = new QAction(QIcon(QStringLiteral(":/icons/material-zoom-out-map.svg")),
                                    tr("Reset peak-map view"), this);
     resetViewAction_->setShortcut(Qt::Key_Home);
     resetViewAction_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
@@ -782,6 +956,9 @@ namespace OpenMSViewer
     connect(rtInMinutesAction_, &QAction::toggled, this, [this]
     {
       updateSpectrumStatus();
+      if (spectrumSearch_)
+        spectrumSearch_->setPlaceholderText(
+          tr("Native ID or RT (%1)…").arg(RtUnit::unit(rtInMinutes())));
       if (peakMap_ && peakMap_->hasExperiment()) applyPeakMapViewRange(peakMap_->viewRange());
     });
 
@@ -848,14 +1025,19 @@ namespace OpenMSViewer
     clearFeatureOverlayAction_ = new QAction(tr("Clear feature overlay"), this);
     connect(clearFeatureOverlayAction_, &QAction::triggered, this, [this]
     {
+      if (!confirmFeatureChanges(tr("remove the feature layer"))) return;
       document_.clearFeatures();
+      featureUndoStack_->clear();
+      featureSavePath_.clear();
       statusBar()->showMessage(tr("Feature overlay cleared"), 3000);
+      updateRunContext();
     });
     clearIdentificationOverlayAction_ = new QAction(tr("Clear identification overlay"), this);
     connect(clearIdentificationOverlayAction_, &QAction::triggered, this, [this]
     {
       document_.clearIdentifications();
       statusBar()->showMessage(tr("Identification overlay cleared"), 3000);
+      updateRunContext();
     });
 
     annotateSpectrumAction_ = new QAction(tr("Annotate identified spectra"), this);
@@ -878,13 +1060,15 @@ namespace OpenMSViewer
     connect(showUnmatchedIonsAction_, &QAction::toggled,
             spectrum_, &SpectrumWidget::setShowUnmatchedTheoretical);
 
-    measureSpectrumAction_ = new QAction(tr("Measure peak distance"), this);
+    measureSpectrumAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-straighten.svg")), tr("Measure peak distance"), this);
     measureSpectrumAction_->setCheckable(true);
     measureSpectrumAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M));
     connect(measureSpectrumAction_, &QAction::toggled,
             spectrum_, &SpectrumWidget::setMeasurementMode);
 
-    labelSpectrumAction_ = new QAction(tr("Label peaks"), this);
+    labelSpectrumAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-label.svg")), tr("Label peaks"), this);
     labelSpectrumAction_->setCheckable(true);
     labelSpectrumAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_L));
     labelSpectrumAction_->setStatusTip(
@@ -898,7 +1082,9 @@ namespace OpenMSViewer
     spectrumToolGroup->addAction(labelSpectrumAction_);
 
     showMzLabelsAction_ = new QAction(tr("Automatic m/z labels"), this);
+    showMzLabelsAction_->setObjectName(QStringLiteral("showMzLabels"));
     showMzLabelsAction_->setCheckable(true);
+    showMzLabelsAction_->setChecked(true);
     connect(showMzLabelsAction_, &QAction::toggled,
             spectrum_, &SpectrumWidget::setShowMzLabels);
 
@@ -908,7 +1094,9 @@ namespace OpenMSViewer
     connect(showSpectrumGridAction_, &QAction::toggled,
             spectrum_, &SpectrumWidget::setShowGrid);
 
-    resetSpectrumViewAction_ = new QAction(tr("Reset spectrum m/z view"), this);
+    resetSpectrumViewAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-zoom-out-map.svg")),
+      tr("Reset spectrum m/z view"), this);
     connect(resetSpectrumViewAction_, &QAction::triggered,
             spectrum_, &SpectrumWidget::resetMzView);
 
@@ -920,14 +1108,14 @@ namespace OpenMSViewer
     connect(clearSpectrumLabelsAction_, &QAction::triggered,
             spectrum_, &SpectrumWidget::clearLabels);
 
-    spectrumFirstAction_ = new QAction(style()->standardIcon(QStyle::SP_MediaSkipBackward),
-                                       QStringLiteral("⏮"), this);
-    spectrumPreviousAction_ = new QAction(style()->standardIcon(QStyle::SP_MediaSeekBackward),
-                                          QStringLiteral("◀"), this);
-    spectrumNextAction_ = new QAction(style()->standardIcon(QStyle::SP_MediaSeekForward),
-                                      QStringLiteral("▶"), this);
-    spectrumLastAction_ = new QAction(style()->standardIcon(QStyle::SP_MediaSkipForward),
-                                      QStringLiteral("⏭"), this);
+    spectrumFirstAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-first-page.svg")), tr("First spectrum"), this);
+    spectrumPreviousAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-navigate-before.svg")), tr("Previous spectrum"), this);
+    spectrumNextAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-navigate-next.svg")), tr("Next spectrum"), this);
+    spectrumLastAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-last-page.svg")), tr("Last spectrum"), this);
     spectrumFirstAction_->setToolTip(tr("First spectrum"));
     spectrumPreviousAction_->setToolTip(tr("Previous spectrum"));
     spectrumNextAction_->setToolTip(tr("Next spectrum"));
@@ -967,8 +1155,8 @@ namespace OpenMSViewer
     recentFilesMenu_ = fileMenu->addMenu(tr("Open recent"));
     fileMenu->addAction(closeDataAction_);
     fileMenu->addSeparator();
-    fileMenu->addSeparator();
     fileMenu->addAction(saveFeaturesAction_);
+    fileMenu->addAction(saveFeaturesAsAction_);
     fileMenu->addAction(saveIdentificationsAction_);
     fileMenu->addAction(saveConsensusAction_);
     fileMenu->addSeparator();
@@ -991,6 +1179,12 @@ namespace OpenMSViewer
                         [this] { savePlot(imaging_->imageWidget(), QStringLiteral("ion_image.png")); });
     fileMenu->addSeparator();
     fileMenu->addAction(tr("E&xit"), QKeySequence::Quit, this, &QWidget::close);
+
+    auto* editMenu = menuBar()->addMenu(tr("&Edit"));
+    editMenu->addAction(undoFeatureAction_);
+    editMenu->addAction(redoFeatureAction_);
+    editMenu->addSeparator();
+    editMenu->addAction(editFeaturesModeAction_);
 
     // View holds only global chrome; peak-map and spectrum options now live in
     // the peak-map / spectrum panel control bars.
@@ -1016,6 +1210,7 @@ namespace OpenMSViewer
       {spectrumDock_, tr("Spectrum")}, {ticDock_, tr("Total ion chromatogram")},
       {featuresDock_, tr("Features")}, {identificationsDock_, tr("Identifications")},
       {spectraDock_, tr("Spectra")}, {chromatogramsDock_, tr("Chromatograms")},
+      {dataLayersDock_, tr("Data & layers")},
       {ionMobilityDock_, tr("Ion mobility")}, {faimsDock_, tr("FAIMS")},
       {imagingDock_, tr("Imaging")}, {oswDock_, tr("OpenSWATH")},
       {consensusDock_, tr("Consensus")}, {metadataDock_, tr("Metadata")},
@@ -1042,6 +1237,7 @@ namespace OpenMSViewer
     viewMenu->addAction(identificationsDock_->toggleViewAction());
     viewMenu->addAction(spectraDock_->toggleViewAction());
     viewMenu->addAction(chromatogramsDock_->toggleViewAction());
+    viewMenu->addAction(dataLayersDock_->toggleViewAction());
     viewMenu->addAction(ionMobilityDock_->toggleViewAction());
     viewMenu->addAction(faimsDock_->toggleViewAction());
     viewMenu->addAction(imagingDock_->toggleViewAction());
@@ -1051,6 +1247,16 @@ namespace OpenMSViewer
     viewMenu->addAction(logDock_->toggleViewAction());
 
     auto* helpMenu = menuBar()->addMenu(tr("&Help"));
+    helpMenu->addAction(tr("Getting started…"), this, [this]
+    {
+      QMessageBox::information(this, tr("Getting started"),
+        tr("1. Open a spectra run, imaging dataset, or supported data folder.\n"
+           "2. Open matching FeatureXML, identification, consensus, or OSW result files as layers.\n"
+           "3. Use Data & layers to see each source, hide overlays, or remove them.\n\n"
+           "Feature edits are undoable with Ctrl+Z. Modified features are marked in the window "
+           "title and are offered for saving before they are replaced or closed.\n\n"
+           "Tip: you can select several related files in one Open dialog, or drag them onto the window."));
+    });
     auto* shortcutsAction = new QAction(tr("Plot interactions and shortcuts…"), this);
     shortcutsAction->setShortcut(QKeySequence::HelpContents);
     addAction(shortcutsAction);
@@ -1067,7 +1273,8 @@ namespace OpenMSViewer
            "  Wheel: zoom   drag: select range   double-click: reset\n"
            "  Ctrl+M: measure spectrum peak distance\n\n"
            "Files and window\n"
-           "  Ctrl+O: open   Ctrl+R: reload   Ctrl+W: close data   F11: fullscreen"));
+           "  Ctrl+O: open   Ctrl+S: save features   Ctrl+Z/Y: undo/redo feature edit\n"
+           "  Ctrl+R: reload   Ctrl+W: close data   F11: fullscreen"));
     });
     helpMenu->addAction(tr("About OpenMS Viewer"), this, [this]
     {
@@ -1087,50 +1294,61 @@ namespace OpenMSViewer
     // ---- Peak-map options live in the peak-map panel's control bar ----
     peakMapControlBar_->addAction(zoomBackAction_);
     peakMapControlBar_->addAction(resetViewAction_);
+    if (auto* resetButton = qobject_cast<QToolButton*>(
+          peakMapControlBar_->widgetForAction(resetViewAction_)))
+    {
+      resetButton->setObjectName(QStringLiteral("peakMapResetView"));
+      resetButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+      resetButton->setAccessibleName(tr("Reset peak-map view"));
+      resetButton->setToolTip(tr("Reset peak-map view (Home)"));
+    }
 
-    auto* modeLabel = new QLabel(tr("Mode"), peakMapControlBar_);
-    modeLabel->setObjectName(QStringLiteral("peakMapModeLabel"));
-    peakMapControlBar_->addWidget(modeLabel);
-    auto* interactionMode = new QComboBox(peakMapControlBar_);
-    interactionMode->setObjectName(QStringLiteral("peakMapInteractionMode"));
-    interactionMode->addItems({tr("Zoom (Z)"), tr("Pan (P)"), tr("Measure (M)"), tr("Edit features (E)")});
-    interactionMode->setToolTip(tr("Choose what dragging in the peak map does"));
-    interactionMode->setAccessibleName(tr("Peak-map interaction mode"));
-    peakMapControlBar_->addWidget(interactionMode);
-    connect(interactionMode, qOverload<int>(&QComboBox::currentIndexChanged),
-            peakMap_, &PeakMapWidget::setInteractionMode);
-    connect(peakMap_, &PeakMapWidget::interactionModeChanged, interactionMode,
-            [interactionMode](int modeIndex)
+    auto* interactionModes = new QWidget(peakMapControlBar_);
+    interactionModes->setObjectName(QStringLiteral("peakMapInteractionModes"));
+    auto* interactionLayout = new QHBoxLayout(interactionModes);
+    interactionLayout->setContentsMargins(0, 0, 0, 0);
+    interactionLayout->setSpacing(1);
+    auto* interactionGroup = new QActionGroup(interactionModes);
+    interactionGroup->setObjectName(QStringLiteral("peakMapInteractionModeGroup"));
+    interactionGroup->setExclusive(true);
+    const auto addInteractionButton = [&](int id, const QString& objectName,
+                                          const QString& iconPath, const QString& hint)
+    {
+      auto* action = new QAction(QIcon(iconPath), hint, interactionGroup);
+      action->setObjectName(objectName + QStringLiteral("Action"));
+      action->setCheckable(true);
+      action->setData(id);
+      action->setToolTip(hint);
+      auto* button = new QToolButton(interactionModes);
+      button->setObjectName(objectName);
+      button->setDefaultAction(action);
+      button->setIconSize(QSize(22, 22));
+      button->setAutoRaise(true);
+      button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+      button->setAccessibleName(hint);
+      interactionLayout->addWidget(button);
+      return action;
+    };
+    auto* zoomMode = addInteractionButton(
+      0, QStringLiteral("peakMapZoomMode"), QStringLiteral(":/icons/material-zoom-in.svg"),
+      tr("Zoom — drag a rectangle (Z)"));
+    addInteractionButton(
+      1, QStringLiteral("peakMapPanMode"), QStringLiteral(":/icons/material-pan-tool.svg"),
+      tr("Pan — drag to move the view (P)"));
+    addInteractionButton(
+      2, QStringLiteral("peakMapMeasureMode"), QStringLiteral(":/icons/material-straighten.svg"),
+      tr("Measure — drag between peaks (M)"));
+    interactionGroup->addAction(editFeaturesModeAction_);
+    zoomMode->setChecked(true);
+    peakMapControlBar_->addWidget(interactionModes);
+    connect(interactionGroup, &QActionGroup::triggered, peakMap_,
+            [this](QAction* action) { peakMap_->setInteractionMode(action->data().toInt()); });
+    connect(peakMap_, &PeakMapWidget::interactionModeChanged, interactionGroup,
+            [interactionGroup](int modeIndex)
             {
-              const QSignalBlocker blocker(interactionMode);
-              interactionMode->setCurrentIndex(modeIndex);
+              for (QAction* action : interactionGroup->actions())
+                if (action->data().toInt() == modeIndex) { action->setChecked(true); break; }
             });
-
-    auto* colorLabel = new QLabel(tr("Color"), peakMapControlBar_);
-    colorLabel->setObjectName(QStringLiteral("peakMapColorLabel"));
-    peakMapControlBar_->addWidget(colorLabel);
-    auto* colorMap = new QComboBox(peakMapControlBar_);
-    colorMap->setObjectName(QStringLiteral("peakMapColorMap"));
-    colorMap->addItems({tr("Viridis"), tr("Plasma"), tr("Inferno"), tr("Magma"),
-                        tr("Jet"), tr("Hot"), tr("Grayscale")});
-    colorMap->setMaximumWidth(110);
-    colorMap->setAccessibleName(tr("Peak-map color map"));
-    peakMapControlBar_->addWidget(colorMap);
-    connect(colorMap, qOverload<int>(&QComboBox::currentIndexChanged),
-            peakMap_, &PeakMapWidget::setColorMap);
-    connect(colorMap, qOverload<int>(&QComboBox::currentIndexChanged),
-            ionMobility_, &IonMobilityPanelWidget::setColorMap);
-    connect(colorMap, qOverload<int>(&QComboBox::currentIndexChanged),
-            faims_, &FaimsPanelWidget::setColorMap);
-
-    auto* scale = new QComboBox(peakMapControlBar_);
-    scale->setObjectName(QStringLiteral("peakMapIntensityScale"));
-    scale->addItems({tr("Equalize"), tr("Log"), tr("Square root"), tr("Linear")});
-    scale->setToolTip(tr("Peak-map intensity normalization"));
-    scale->setAccessibleName(tr("Peak-map intensity scale"));
-    peakMapControlBar_->addWidget(scale);
-    connect(scale, qOverload<int>(&QComboBox::currentIndexChanged),
-            peakMap_, &PeakMapWidget::setIntensityScale);
 
     auto* display = new QToolButton(peakMapControlBar_);
     display->setObjectName(QStringLiteral("peakMapDisplayOptions"));
@@ -1138,6 +1356,62 @@ namespace OpenMSViewer
     display->setPopupMode(QToolButton::InstantPopup);
     display->setAccessibleName(tr("Peak-map display options"));
     auto* displayMenu = new QMenu(display);
+    displayMenu->setObjectName(QStringLiteral("peakMapDisplayMenu"));
+    const auto addDisplayControl = [displayMenu](const QString& labelText, QWidget* control)
+    {
+      auto* row = new QWidget(displayMenu);
+      auto* layout = new QHBoxLayout(row);
+      layout->setContentsMargins(10, 4, 10, 4);
+      layout->setSpacing(12);
+      auto* label = new QLabel(labelText, row);
+      label->setMinimumWidth(118);
+      control->setParent(row);
+      control->setMinimumWidth(130);
+      layout->addWidget(label);
+      layout->addWidget(control, 1);
+      auto* action = new QWidgetAction(displayMenu);
+      action->setDefaultWidget(row);
+      displayMenu->addAction(action);
+    };
+
+    auto* colorMap = new QComboBox(displayMenu);
+    colorMap->setObjectName(QStringLiteral("peakMapColorMap"));
+    colorMap->addItems({tr("Viridis"), tr("Plasma"), tr("Inferno"), tr("Magma"),
+                        tr("Jet"), tr("Hot"), tr("Grayscale")});
+    colorMap->setAccessibleName(tr("Peak-map color map"));
+    addDisplayControl(tr("Color map"), colorMap);
+    connect(colorMap, qOverload<int>(&QComboBox::currentIndexChanged),
+            peakMap_, &PeakMapWidget::setColorMap);
+    connect(colorMap, qOverload<int>(&QComboBox::currentIndexChanged),
+            ionMobility_, &IonMobilityPanelWidget::setColorMap);
+    connect(colorMap, qOverload<int>(&QComboBox::currentIndexChanged),
+            faims_, &FaimsPanelWidget::setColorMap);
+
+    auto* scale = new QComboBox(displayMenu);
+    scale->setObjectName(QStringLiteral("peakMapIntensityScale"));
+    scale->addItems({tr("Equalize"), tr("Log"), tr("Square root")});
+    scale->setToolTip(tr("Peak-map intensity normalization"));
+    scale->setAccessibleName(tr("Peak-map intensity scale"));
+    addDisplayControl(tr("Intensity scale"), scale);
+    connect(scale, qOverload<int>(&QComboBox::currentIndexChanged),
+            peakMap_, &PeakMapWidget::setIntensityScale);
+
+    peakMapRasterWidth_ = new QSpinBox(displayMenu);
+    peakMapRasterWidth_->setObjectName(QStringLiteral("peakMapRasterWidth"));
+    peakMapRasterWidth_->setRange(PeakMapWidget::MinimumRasterWidth,
+                                  PeakMapWidget::MaximumRasterWidth);
+    peakMapRasterWidth_->setSingleStep(128);
+    peakMapRasterWidth_->setValue(PeakMapWidget::DefaultRasterWidth);
+    peakMapRasterWidth_->setSuffix(tr(" px"));
+    peakMapRasterWidth_->setKeyboardTracking(false);
+    peakMapRasterWidth_->setToolTip(
+      tr("Maximum peak-map raster size; smaller viewports render a smaller 1:1 raster"));
+    peakMapRasterWidth_->setAccessibleName(tr("Peak-map maximum raster width"));
+    addDisplayControl(tr("Raster max width"), peakMapRasterWidth_);
+    connect(peakMapRasterWidth_, qOverload<int>(&QSpinBox::valueChanged),
+            peakMap_, &PeakMapWidget::setRasterWidth);
+
+    displayMenu->addSeparator();
     displayMenu->addAction(swapAxesAction_);
     displayMenu->addAction(showMinimapAction_);
     displayMenu->addSeparator();
@@ -1167,24 +1441,23 @@ namespace OpenMSViewer
     peakMapControlBar_->addWidget(overlays);
 
     // ---- Spectrum options live in the spectrum panel's control bar ----
-    const auto addNavigationButton = [this](QAction* action, const QString& glyph,
-                                            const QString& accessibleName)
+    const auto addSpectrumActionButton = [this](QAction* action, const QString& objectName)
     {
       auto* button = new QToolButton(spectrumControlBar_);
+      button->setObjectName(objectName);
       button->setDefaultAction(action);
-      button->setText(glyph);
-      button->setToolTip(accessibleName);
-      button->setAccessibleName(accessibleName);
-      button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+      button->setAutoRaise(true);
+      button->setIconSize(QSize(20, 20));
+      button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+      button->setAccessibleName(action->text());
       spectrumControlBar_->addWidget(button);
     };
-    addNavigationButton(spectrumFirstAction_, QStringLiteral("⏮"), tr("First spectrum"));
-    addNavigationButton(spectrumPreviousAction_, QStringLiteral("◀"), tr("Previous spectrum"));
-    addNavigationButton(spectrumNextAction_, QStringLiteral("▶"), tr("Next spectrum"));
-    addNavigationButton(spectrumLastAction_, QStringLiteral("⏭"), tr("Last spectrum"));
+    addSpectrumActionButton(spectrumFirstAction_, QStringLiteral("spectrumFirst"));
+    addSpectrumActionButton(spectrumPreviousAction_, QStringLiteral("spectrumPrevious"));
+    addSpectrumActionButton(spectrumNextAction_, QStringLiteral("spectrumNext"));
+    addSpectrumActionButton(spectrumLastAction_, QStringLiteral("spectrumLast"));
     spectrumControlBar_->addSeparator();
 
-    spectrumControlBar_->addWidget(new QLabel(tr("Level"), spectrumControlBar_));
     spectrumLevel_ = new QComboBox(spectrumControlBar_);
     spectrumLevel_->setObjectName(QStringLiteral("spectrumLevelFilter"));
     spectrumLevel_->addItems({tr("All"), tr("MS1"), tr("MS2")});
@@ -1206,7 +1479,8 @@ namespace OpenMSViewer
 
     spectrumSearch_ = new QLineEdit(spectrumControlBar_);
     spectrumSearch_->setObjectName(QStringLiteral("spectrumSearch"));
-    spectrumSearch_->setPlaceholderText(tr("Native ID or RT…"));
+    spectrumSearch_->setPlaceholderText(
+      tr("Native ID or RT (%1)…").arg(RtUnit::unit(rtInMinutes())));
     spectrumSearch_->setClearButtonEnabled(true);
     spectrumSearch_->setMaximumWidth(175);
     spectrumSearch_->setAccessibleName(tr("Find spectrum by native ID or retention time"));
@@ -1216,7 +1490,7 @@ namespace OpenMSViewer
       const QString query = spectrumSearch_->text().trimmed();
       if (query.isEmpty() || document_.isEmpty()) return;
       bool numeric = false;
-      const double rt = query.toDouble(&numeric);
+      const double rt = query.toDouble(&numeric) * RtUnit::scale(rtInMinutes());
       if (numeric)
       {
         if (const auto index = document_.nearestSpectrumIndex(rt, navigationMsLevel()))
@@ -1243,15 +1517,8 @@ namespace OpenMSViewer
     });
 
     spectrumControlBar_->addSeparator();
-    auto* measureButton = new QToolButton(spectrumControlBar_);
-    measureButton->setDefaultAction(measureSpectrumAction_);
-    measureButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    spectrumControlBar_->addWidget(measureButton);
-
-    auto* labelButton = new QToolButton(spectrumControlBar_);
-    labelButton->setDefaultAction(labelSpectrumAction_);
-    labelButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    spectrumControlBar_->addWidget(labelButton);
+    addSpectrumActionButton(measureSpectrumAction_, QStringLiteral("spectrumMeasureMode"));
+    addSpectrumActionButton(labelSpectrumAction_, QStringLiteral("spectrumLabelMode"));
 
     auto* annotationButton = new QToolButton(spectrumControlBar_);
     annotationButton->setText(tr("Annotation"));
@@ -1391,9 +1658,14 @@ namespace OpenMSViewer
     {
       // Bruker .d datasets are directories, so keep those alongside plain files.
       const QFileInfo info(path);
-      const bool isBrukerDir = info.isDir()
-        && info.suffix().compare(QStringLiteral("d"), Qt::CaseInsensitive) == 0;
-      if ((info.isFile() || isBrukerDir) && !valid.contains(info.absoluteFilePath()))
+      const auto format = FormatRegistry::detect(path);
+      const bool isSupportedDirectory = info.isDir()
+        && (info.suffix().compare(QStringLiteral("d"), Qt::CaseInsensitive) == 0
+            || (format.supported
+                && (format.category == FormatRegistry::Category::Features
+                    || format.category == FormatRegistry::Category::Identifications
+                    || format.category == FormatRegistry::Category::Consensus)));
+      if ((info.isFile() || isSupportedDirectory) && !valid.contains(info.absoluteFilePath()))
         valid.push_back(info.absoluteFilePath());
     }
     recentFiles_ = valid.mid(0, 10);
@@ -1444,6 +1716,7 @@ namespace OpenMSViewer
     setPeakMapControlsEnabled(false);
     closeDataAction_->setEnabled(false);
     if (saveFeaturesAction_) saveFeaturesAction_->setEnabled(false);
+    if (saveFeaturesAsAction_) saveFeaturesAsAction_->setEnabled(false);
     if (saveIdentificationsAction_) saveIdentificationsAction_->setEnabled(false);
     if (saveConsensusAction_) saveConsensusAction_->setEnabled(false);
     setDockAvailable(ticDock_, false);
@@ -1452,6 +1725,7 @@ namespace OpenMSViewer
     setDockAvailable(identificationsDock_, false);
     setDockAvailable(spectraDock_, false);
     setDockAvailable(chromatogramsDock_, false);
+    setDockAvailable(dataLayersDock_, false);
     setDockAvailable(ionMobilityDock_, false);
     setDockAvailable(faimsDock_, false);
     setDockAvailable(imagingDock_, false);
@@ -1485,6 +1759,7 @@ namespace OpenMSViewer
       {ticDock_->objectName(), true}, {spectrumDock_->objectName(), true},
       {featuresDock_->objectName(), true}, {identificationsDock_->objectName(), true},
       {spectraDock_->objectName(), false}, {chromatogramsDock_->objectName(), true},
+      {dataLayersDock_->objectName(), true},
       {ionMobilityDock_->objectName(), true}, {faimsDock_->objectName(), true},
       {imagingDock_->objectName(), true}, {oswDock_->objectName(), true},
       {consensusDock_->objectName(), true}, {metadataDock_->objectName(), false},
@@ -1492,7 +1767,7 @@ namespace OpenMSViewer
     };
     QSettings settings;
     for (QDockWidget* dock : {ticDock_, spectrumDock_, featuresDock_, identificationsDock_,
-                              spectraDock_, chromatogramsDock_, ionMobilityDock_, faimsDock_,
+                              spectraDock_, chromatogramsDock_, dataLayersDock_, ionMobilityDock_, faimsDock_,
                               imagingDock_, oswDock_, consensusDock_, metadataDock_, logDock_})
     {
       const QString key = QStringLiteral("docks/%1/preferredVisible").arg(dock->objectName());
@@ -1648,6 +1923,7 @@ namespace OpenMSViewer
     dockVisibilityPreference_[identificationsDock_->objectName()] = true;
     dockVisibilityPreference_[spectraDock_->objectName()] = false;
     dockVisibilityPreference_[chromatogramsDock_->objectName()] = true;
+    dockVisibilityPreference_[dataLayersDock_->objectName()] = true;
     dockVisibilityPreference_[ionMobilityDock_->objectName()] = true;
     dockVisibilityPreference_[faimsDock_->objectName()] = true;
     dockVisibilityPreference_[imagingDock_->objectName()] = true;
@@ -1657,13 +1933,16 @@ namespace OpenMSViewer
     dockVisibilityPreference_[logDock_->objectName()] = false;
 
     for (QDockWidget* dock : {ticDock_, spectrumDock_, featuresDock_, identificationsDock_,
-                              spectraDock_, chromatogramsDock_, ionMobilityDock_, faimsDock_,
+                              spectraDock_, chromatogramsDock_, dataLayersDock_, ionMobilityDock_, faimsDock_,
                               imagingDock_, oswDock_, consensusDock_, metadataDock_, logDock_})
       dock->setFloating(false);
 
     arrangeDocksDefault();
+    updateDataLayers();
 
-    if (document_.isEmpty() && !imagingStore_ && !hasOswData_ && !hasConsensusData_) showWelcomePage();
+    if (document_.isEmpty() && !document_.hasFeatures() && !document_.hasIdentifications()
+        && !imagingStore_ && !hasOswData_ && !hasConsensusData_)
+      showWelcomePage();
     else if (hasOswData_)
     {
       setDockAvailable(oswDock_, true);
@@ -1718,6 +1997,7 @@ namespace OpenMSViewer
       previous = dock;
     }
     featuresDock_->raise();
+    addDockWidget(Qt::RightDockWidgetArea, dataLayersDock_);
   }
 
   void MainWindow::applyLayoutPreset(LayoutPreset preset)
@@ -1801,12 +2081,56 @@ namespace OpenMSViewer
   void MainWindow::updateSaveActions()
   {
     saveFeaturesAction_->setEnabled(document_.hasFeatures());
+    saveFeaturesAsAction_->setEnabled(document_.hasFeatures());
     saveIdentificationsAction_->setEnabled(document_.hasIdentifications());
     saveConsensusAction_->setEnabled(hasConsensusData_);
   }
 
+  void MainWindow::updateDataLayers()
+  {
+    if (!dataLayers_) return;
+    const bool hasPrimary = imagingStore_ || !document_.isEmpty();
+    const QString primaryPath = imagingStore_ ? imagingSummary_.sourcePath : document_.sourcePath();
+    const QString primarySummary = imagingStore_
+      ? tr("%1 pixels").arg(imagingSummary_.pixels.size())
+      : hasPrimary ? tr("%1 spectra").arg(document_.statistics().spectrumCount) : QString{};
+    dataLayers_->setLayer(DataLayersWidget::Layer::Primary, primaryPath, primarySummary, hasPrimary);
+
+    const bool featureVisible = showCentroidsAction_->isChecked()
+      || showFeatureBoundsAction_->isChecked() || showFeatureHullsAction_->isChecked();
+    dataLayers_->setLayer(DataLayersWidget::Layer::Features,
+      featureSavePath_.isEmpty() ? document_.featuresPath() : featureSavePath_,
+      tr("%1 features").arg(document_.features().size()), document_.hasFeatures(),
+      featureVisible, featureUndoStack_ && !featureUndoStack_->isClean());
+
+    const bool idsVisible = showIdentificationsAction_->isChecked()
+      || showIdentificationSequencesAction_->isChecked();
+    dataLayers_->setLayer(DataLayersWidget::Layer::Identifications,
+      document_.identificationsPath(), tr("%1 identifications").arg(document_.identifications().size()),
+      document_.hasIdentifications(), idsVisible);
+    dataLayers_->setLayer(DataLayersWidget::Layer::Consensus, consensusSourcePath_,
+      consensusMap_ ? tr("%1 consensus features").arg(consensusMap_->size()) : QString{},
+      hasConsensusData_, showConsensusAction_->isChecked());
+    dataLayers_->setLayer(DataLayersWidget::Layer::OpenSwath, oswSourcePath_,
+      hasOswData_ ? tr("OpenSWATH results") : QString{}, hasOswData_,
+      oswDock_ && oswDock_->isVisible());
+
+    const bool anything = hasPrimary || document_.hasFeatures() || document_.hasIdentifications()
+      || hasConsensusData_ || hasOswData_;
+    if (dataLayersDock_->toggleViewAction()->isEnabled() != anything)
+      setDockAvailable(dataLayersDock_, anything);
+  }
+
+  void MainWindow::updateFeatureEditState()
+  {
+    updateSaveActions();
+    updateDataLayers();
+    updateWindowTitle();
+  }
+
   void MainWindow::updateRunContext()
   {
+    updateDataLayers();
     reloadAction_->setEnabled(!lastPrimaryPath_.isEmpty() && QFileInfo::exists(lastPrimaryPath_));
     // A bare feature/id overlay (no raw run) is still closable: keep "Close data"
     // reachable whenever anything is loaded, since it is the only UI that clears an
@@ -1840,7 +2164,8 @@ namespace OpenMSViewer
       overlaysOnly += results;
       if (!overlaysOnly.isEmpty())
       {
-        const QString source = document_.hasFeatures() ? document_.featuresPath()
+        const QString source = document_.hasFeatures()
+          ? (featureSavePath_.isEmpty() ? document_.featuresPath() : featureSavePath_)
           : document_.hasIdentifications() ? document_.identificationsPath()
           : hasConsensusData_ ? consensusSourcePath_ : oswSourcePath_;
         runContext_->setText(tr("%1 · %2").arg(QFileInfo(source).fileName(),
@@ -1876,6 +2201,13 @@ namespace OpenMSViewer
     QString primary;
     if (imagingStore_) primary = QFileInfo(imagingSummary_.sourcePath).fileName();
     else if (!document_.isEmpty()) primary = QFileInfo(document_.sourcePath()).fileName();
+    else if (document_.hasFeatures())
+    {
+      const QString path = featureSavePath_.isEmpty() ? document_.featuresPath() : featureSavePath_;
+      primary = path.isEmpty() ? tr("Unsaved features") : QFileInfo(path).fileName();
+    }
+    else if (document_.hasIdentifications())
+      primary = QFileInfo(document_.identificationsPath()).fileName();
 
     QStringList results;
     if (hasConsensusData_ && !consensusSourcePath_.isEmpty())
@@ -1886,12 +2218,15 @@ namespace OpenMSViewer
     // With no raw run, the first results view becomes the primary label itself.
     if (primary.isEmpty() && !results.isEmpty()) primary = results.takeFirst();
 
+    QString title;
     if (primary.isEmpty())
-      setWindowTitle(tr("OpenMS Viewer"));
+      title = tr("OpenMS Viewer");
     else if (results.isEmpty())
-      setWindowTitle(tr("%1 — OpenMS Viewer").arg(primary));
+      title = tr("%1 — OpenMS Viewer").arg(primary);
     else
-      setWindowTitle(tr("%1 (+ %2) — OpenMS Viewer").arg(primary, results.join(QStringLiteral(", "))));
+      title = tr("%1 (+ %2) — OpenMS Viewer").arg(primary, results.join(QStringLiteral(", ")));
+    if (featureUndoStack_ && !featureUndoStack_->isClean()) title.prepend(QStringLiteral("* "));
+    setWindowTitle(title);
   }
 
   void MainWindow::onConsensusFeatureActivated(qint64 index)
@@ -1988,6 +2323,8 @@ namespace OpenMSViewer
       peakMapControlBar_->setEnabled(enabled);
       peakMapControlBar_->setVisible(enabled);
     }
+    if (editFeaturesModeAction_) editFeaturesModeAction_->setEnabled(enabled);
+    if (!enabled && peakMap_) peakMap_->setInteractionMode(0);
     resetViewAction_->setEnabled(enabled);
     if (!enabled) zoomBackAction_->setEnabled(false);
   }
@@ -2102,6 +2439,10 @@ namespace OpenMSViewer
 
   void MainWindow::loadFile(const QString& path)
   {
+    if (path.isEmpty()) return;
+    if (editedFeaturesWouldBeReplacedBy(path)
+        && !confirmFeatureChanges(tr("open %1").arg(QFileInfo(path).fileName())))
+      return;
     const QString suffix = QFileInfo(path).suffix();
     if (suffix.compare(QStringLiteral("imzML"), Qt::CaseInsensitive) == 0)
     {
@@ -2466,6 +2807,11 @@ namespace OpenMSViewer
     const QString sourcePath = result.sourcePath;
     selection_.clear();
     document_.adopt(std::move(result));
+    if (!document_.hasFeatures())
+    {
+      featureUndoStack_->clear();
+      featureSavePath_.clear();
+    }
     imagingStore_.reset();
     imagingSummary_ = {};
     imaging_->clear();
@@ -2518,7 +2864,11 @@ namespace OpenMSViewer
     const QString filename = QFileInfo(result.sourcePath).fileName();
     const QString sourcePath = result.sourcePath;
     document_.adoptFeatures(std::move(result));
+    featureSavePath_ = sourcePath;
+    featureUndoStack_->clear();
+    featureUndoStack_->setClean();
     rememberRecentFile(sourcePath);
+    showDataPage();
     updateRunContext();
     qInfo().noquote() << QStringLiteral("Loaded FeatureXML: %1 features").arg(count);
     statusBar()->showMessage(tr("Loaded %1 features from %2").arg(count).arg(filename), 8000);
@@ -2584,6 +2934,8 @@ namespace OpenMSViewer
     }
 
     document_.clear();
+    featureUndoStack_->clear();
+    featureSavePath_.clear();
     closeSurface3D();
     peakMap_->clear();
     peakMap_->setPrecursorMarkers({});  // the imaging run has no MS/MS precursors
@@ -2805,21 +3157,149 @@ namespace OpenMSViewer
     return path;
   }
 
-  void MainWindow::saveFeatures()
+  bool MainWindow::saveFeatures(bool choosePath)
   {
-    if (!document_.hasFeatures()) return;
-    const QString path = askSavePath(tr("Save features"), document_.featuresPath(),
-                                     QStringLiteral("features"), QStringLiteral(".featureXML"));
-    if (path.isEmpty()) return;
+    if (!document_.hasFeatures()) return false;
+    QString path = featureSavePath_.isEmpty() ? document_.featuresPath() : featureSavePath_;
+    if (choosePath || path.isEmpty())
+      path = askSavePath(tr("Save features"), path,
+                         QStringLiteral("features"), QStringLiteral(".featureXML"));
+    if (path.isEmpty()) return false;
     statusBar()->showMessage(tr("Saving features…"));
     QApplication::setOverrideCursor(Qt::WaitCursor);  // large maps write on the GUI thread
     QString error;
     const bool saved = document_.saveFeatures(path, error);
     QApplication::restoreOverrideCursor();
     if (saved)
+    {
+      featureSavePath_ = QFileInfo(path).absoluteFilePath();
+      featureUndoStack_->setClean();
+      updateFeatureEditState();
       notify(tr("Saved features to %1").arg(QFileInfo(path).fileName()), ToastLevel::Success);
+    }
     else
       showOperationError(tr("Could not save features"), tr("Writing the feature map failed."), error);
+    return saved;
+  }
+
+  bool MainWindow::confirmFeatureChanges(const QString& action)
+  {
+    if (!featureUndoStack_ || featureUndoStack_->isClean()) return true;
+    QMessageBox prompt(QMessageBox::Warning, tr("Unsaved feature changes"),
+      tr("Save the changes to the feature layer before you %1?").arg(action),
+      QMessageBox::NoButton, this);
+    QPushButton* save = prompt.addButton(tr("Save"), QMessageBox::AcceptRole);
+    QPushButton* discard = prompt.addButton(tr("Discard changes"), QMessageBox::DestructiveRole);
+    QPushButton* cancel = prompt.addButton(QMessageBox::Cancel);
+    prompt.setDefaultButton(save);
+    prompt.exec();
+    if (prompt.clickedButton() == save) return saveFeatures(false);
+    if (prompt.clickedButton() == cancel) return false;
+    if (prompt.clickedButton() == discard)
+    {
+      selection_.setFeature(std::nullopt);
+      document_.clearFeatures();
+      featureUndoStack_->clear();
+      featureSavePath_.clear();
+      updateFeatureEditState();
+      return true;
+    }
+    return false;
+  }
+
+  bool MainWindow::editedFeaturesWouldBeReplacedBy(const QString& path) const
+  {
+    if (!featureUndoStack_ || featureUndoStack_->isClean() || !document_.hasFeatures()) return false;
+    const QFileInfo input(path);
+    const auto format = FormatRegistry::detect(path);
+    if (format.supported && format.category == FormatRegistry::Category::Features) return true;
+
+    const QString suffix = input.suffix().toLower();
+    const bool primaryInput = suffix == QStringLiteral("mzml")
+      || suffix == QStringLiteral("mzxml") || suffix == QStringLiteral("mzdata")
+      || suffix == QStringLiteral("sqmass") || suffix == QStringLiteral("raw")
+      || suffix == QStringLiteral("d") || suffix == QStringLiteral("imzml")
+      || (format.supported && format.category == FormatRegistry::Category::Experiment);
+    if (!primaryInput) return false;
+    // Imaging adoption clears the in-memory ViewerDocument even when no spectra run
+    // was previously loaded, so a feature-only session still needs protection.
+    if (suffix == QStringLiteral("imzml")) return true;
+#ifdef WITH_OPENTIMS
+    if (suffix == QStringLiteral("d")
+        && OpenMS::BrukerTimsImagingFile::isImagingDataset(path.toStdString()))
+      return true;
+#endif
+    if (document_.sourcePath().isEmpty()) return false;
+    return QFileInfo(document_.sourcePath()).absoluteFilePath() != input.absoluteFilePath();
+  }
+
+  void MainWindow::closeData()
+  {
+    if (!confirmFeatureChanges(tr("close the data session"))) return;
+    document_.clear();
+    featureUndoStack_->clear();
+    featureSavePath_.clear();
+    imagingStore_.reset();
+    imagingSummary_ = {};
+    closeSurface3D();
+    peakMap_->clear();
+    tic_->clear();
+    spectrum_->clear();
+    spectra_->clear();
+    chromatograms_->clear();
+    ionMobility_->clear();
+    faims_->clear();
+    imaging_->clear();
+    selection_.clear();
+    showWelcomePage();
+    updateWindowTitle();
+    updateRunContext();
+    updateSpectrumControls();
+  }
+
+  void MainWindow::removeLayer(int layerValue)
+  {
+    const auto layer = static_cast<DataLayersWidget::Layer>(layerValue);
+    switch (layer)
+    {
+      case DataLayersWidget::Layer::Primary:
+        closeData();
+        return;
+      case DataLayersWidget::Layer::Features:
+        if (!confirmFeatureChanges(tr("remove the feature layer"))) return;
+        document_.clearFeatures();
+        featureUndoStack_->clear();
+        featureSavePath_.clear();
+        break;
+      case DataLayersWidget::Layer::Identifications:
+        document_.clearIdentifications();
+        break;
+      case DataLayersWidget::Layer::Consensus:
+        hasConsensusData_ = false;
+        consensusMap_.reset();
+        consensusColumns_.clear();
+        consensusSourcePath_.clear();
+        consensus_->clear();
+        peakMap_->setConsensusFeatures({});
+        showConsensusAction_->setChecked(false);
+        showConsensusAction_->setEnabled(false);
+        setDockAvailable(consensusDock_, false);
+        break;
+      case DataLayersWidget::Layer::OpenSwath:
+        hasOswData_ = false;
+        oswSourcePath_.clear();
+        osw_->clear();
+        setDockAvailable(oswDock_, false);
+        break;
+      case DataLayersWidget::Layer::Count:
+        return;
+    }
+    const bool anything = imagingStore_ || !document_.isEmpty() || document_.hasFeatures()
+      || document_.hasIdentifications() || hasConsensusData_ || hasOswData_;
+    if (!anything) showWelcomePage();
+    updateRunContext();
+    updateWindowTitle();
+    updateSaveActions();
   }
 
   void MainWindow::saveIdentifications()
@@ -2945,8 +3425,13 @@ namespace OpenMSViewer
       }
     }
 
-    // Panels refresh through applySpectrumSelection (spectrumChanged signal).
+    // Panels normally refresh through applySpectrumSelection (spectrumChanged
+    // signal). Re-apply an unchanged selection as well: the user may have
+    // cleared or filtered a panel since the spectrum was first selected, and a
+    // fresh click on its peak-map precursor must restore the linked table row.
+    const bool reselected = selection_.spectrum() && *selection_.spectrum() == index;
     selection_.setSpectrum(index);
+    if (reselected) applySpectrumSelection(static_cast<qint64>(index));
     // Keep the selection visible in the peak map from every source (including
     // re-selecting the current spectrum), preserving the current RT span.
     const PlotRange view = peakMap_->viewRange();
@@ -3359,11 +3844,17 @@ namespace OpenMSViewer
 
   void MainWindow::closeEvent(QCloseEvent* event)
   {
+    if (!confirmFeatureChanges(tr("exit OpenMS Viewer")))
+    {
+      event->ignore();
+      return;
+    }
     QSettings settings;
     settings.setValue(QStringLiteral("main/geometry"), saveGeometry());
     settings.setValue(QStringLiteral("main/state"), saveState());
     settings.setValue(QStringLiteral("appearance/dark"), darkThemeAction_->isChecked());
     settings.setValue(QStringLiteral("appearance/spectrumGrid"), showSpectrumGridAction_->isChecked());
+    settings.setValue(QStringLiteral("peakMap/rasterWidth"), peakMapRasterWidth_->value());
     settings.setValue(QStringLiteral("files/recent"), recentFiles_);
     settings.setValue(QStringLiteral("files/lastPrimary"), lastPrimaryPath_);
     for (auto it = dockVisibilityPreference_.cbegin(); it != dockVisibilityPreference_.cend(); ++it)

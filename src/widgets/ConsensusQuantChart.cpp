@@ -66,7 +66,9 @@ namespace OpenMSViewer
 
   QRectF ConsensusQuantChart::plotRect() const
   {
-    return QRectF(rect()).adjusted(60.0, 10.0, -10.0, -40.0);
+    // Rotated map labels extend roughly 50 px below the baseline. Reserve that
+    // space instead of clipping their lower halves at the widget boundary.
+    return QRectF(rect()).adjusted(60.0, 10.0, -10.0, -58.0);
   }
 
   void ConsensusQuantChart::paintEvent(QPaintEvent*)

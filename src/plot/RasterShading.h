@@ -27,12 +27,17 @@ namespace OpenMSViewer::RasterShading
   };
   [[nodiscard]] EqualizationCdf buildEqualization(const std::vector<float>& values);
 
-  // Occupancy-driven spread radius (0 = leave dense views untouched), shared by
-  // the peak-map and ion-mobility rasterizers so sparse views stay visible.
-  [[nodiscard]] int dynspreadRadius(double occupancy);
+  // Datashader-compatible dynspread radius. For candidate radii 1..maxRadius,
+  // measure the fraction of occupied pixels that have another occupied pixel
+  // within twice that radius. Stop just before the fraction exceeds `threshold`.
+  [[nodiscard]] int dynspreadRadius(const std::vector<float>& values,
+                                    std::size_t dimA, std::size_t dimB,
+                                    double threshold = 0.5, int maxRadius = 4);
 
-  // In-place max-dilation of every occupied cell into a (2r+1)² neighbourhood.
+  // In-place max-dilation of every occupied cell through Datashader's default
+  // circular mask (distance <= radius + 0.5), rather than a blocky square.
   // Layout is row-major `values[a * dimB + b]`, which fits both the RT/m-z grid
   // (a = m/z, b = RT) and the m-z/mobility grid (a = m/z, b = mobility).
-  void dilateMax(std::vector<float>& values, std::size_t dimA, std::size_t dimB, int radius);
+  void dilateMaxCircular(std::vector<float>& values, std::size_t dimA,
+                         std::size_t dimB, int radius);
 }

@@ -91,6 +91,7 @@ target_link_libraries(openms_viewer_core
 target_compile_features(openms_viewer_core PUBLIC cxx_std_23)
 
 add_library(openms_viewer_ui STATIC
+  src/icons/icons.qrc
   src/export/PlotExporter.cpp
   src/export/PlotExporter.h
   src/export/MzMLExportDialog.cpp
@@ -103,6 +104,9 @@ add_library(openms_viewer_ui STATIC
   src/widgets/PeakSurface3DWidget.h
   src/widgets/ChromatogramPanelWidget.cpp
   src/widgets/ChromatogramPanelWidget.h
+  src/widgets/CompactControls.h
+  src/widgets/DataLayersWidget.cpp
+  src/widgets/DataLayersWidget.h
   src/widgets/FeatureTableWidget.cpp
   src/widgets/FeatureTableWidget.h
   src/widgets/FeatureEditDialog.cpp
@@ -176,7 +180,8 @@ if(OPENMS_VIEWER_STANDALONE)
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     BUNDLE DESTINATION .
   )
-  install(FILES README.md LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
+  install(FILES README.md LICENSE THIRD_PARTY_NOTICES.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+  install(FILES LICENSES/Apache-2.0.txt DESTINATION ${CMAKE_INSTALL_DOCDIR}/licenses)
   install(DIRECTORY docs/ DESTINATION ${CMAKE_INSTALL_DOCDIR})
 else()
   # Embedded: install into the parent's tree under a component it packages (the

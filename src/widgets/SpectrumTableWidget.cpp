@@ -1,22 +1,26 @@
 #include "widgets/SpectrumTableWidget.h"
+#include "widgets/CompactControls.h"
 
 #include "model/RtUnit.h"
 
 #include <QAbstractTableModel>
+#include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleValidator>
 #include <QFileDialog>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
-#include <QPushButton>
+#include <QMenu>
 #include <QSaveFile>
 #include <QScopedValueRollback>
 #include <QSortFilterProxyModel>
 #include <QTableView>
 #include <QTextStream>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -41,6 +45,15 @@ namespace OpenMSViewer
           values.push_back(QStringLiteral("Hit:%1=%2").arg(key, value));
       }
       return values.join(QStringLiteral("; "));
+    }
+
+    void setNumericValidity(QLineEdit* edit, bool valid, const QString& normalTip,
+                            const QString& errorTip = {})
+    {
+      edit->setProperty("invalidInput", !valid);
+      edit->setStyleSheet(valid ? QString{}
+                                : QStringLiteral("QLineEdit { border: 1px solid #c43c3c; }"));
+      edit->setToolTip(valid ? normalTip : errorTip);
     }
   }
 
@@ -317,13 +330,14 @@ namespace OpenMSViewer
     void setMinimumRt(std::optional<double> value) { minimumRt_ = value; invalidateRowsFilter(); }
     void setMaximumRt(std::optional<double> value) { maximumRt_ = value; invalidateRowsFilter(); }
     void setSequence(const QString& value) { sequence_ = value; invalidateRowsFilter(); }
-    void setMinimumScore(std::optional<double> value) { minimumScore_ = value; invalidateRowsFilter(); }
+    void setScoreThreshold(std::optional<double> value) { scoreThreshold_ = value; invalidateRowsFilter(); }
 
   protected:
     bool filterAcceptsRow(int sourceRow, const QModelIndex&) const override
     {
       const auto* model = static_cast<const SpectrumTableModel*>(sourceModel());
       const SpectrumRecord* spectrum = model ? model->spectrumForRow(sourceRow) : nullptr;
+      const IdentificationRecord* identification = model ? model->identificationForRow(sourceRow) : nullptr;
       const PeptideHitRecord* hit = model ? model->hitForRow(sourceRow) : nullptr;
       if (!spectrum) return false;
       if (mode_ == 1 && spectrum->msLevel != 2) return false;
@@ -332,7 +346,13 @@ namespace OpenMSViewer
       if (maximumRt_ && spectrum->rt > *maximumRt_) return false;
       if (!sequence_.isEmpty() && (!hit || !hit->sequence.contains(sequence_, Qt::CaseInsensitive)))
         return false;
-      if (minimumScore_ && (!hit || hit->score < *minimumScore_)) return false;
+      if (scoreThreshold_)
+      {
+        if (!hit || !identification) return false;
+        const bool keep = identification->higherScoreBetter ? hit->score >= *scoreThreshold_
+                                                            : hit->score <= *scoreThreshold_;
+        if (!keep) return false;
+      }
       return true;
     }
 
@@ -341,7 +361,7 @@ namespace OpenMSViewer
     std::optional<double> minimumRt_;
     std::optional<double> maximumRt_;
     QString sequence_;
-    std::optional<double> minimumScore_;
+    std::optional<double> scoreThreshold_;
   };
 
   SpectrumTableWidget::SpectrumTableWidget(QWidget* parent) : QWidget(parent)
@@ -354,58 +374,119 @@ namespace OpenMSViewer
     mode_->setObjectName(QStringLiteral("spectrumModeFilter"));
     mode_->addItems({tr("All spectra"), tr("MS2"), tr("Identified")});
     first->addWidget(mode_);
+    sequence_ = new QLineEdit(this);
+    sequence_->setObjectName(QStringLiteral("spectrumSequenceFilter"));
+    sequence_->setPlaceholderText(tr("Sequence contains…"));
+    sequence_->setClearButtonEnabled(true);
+    sequence_->setMaximumWidth(220);
+    first->addWidget(sequence_, 1);
+
+    auto* filters = new QToolButton(this);
+    filters->setObjectName(QStringLiteral("spectrumFilterOptions"));
+    filters->setText(tr("Filters"));
+    filters->setPopupMode(QToolButton::InstantPopup);
+    filters->setAccessibleName(tr("Spectrum table filters"));
+    auto* filterMenu = new QMenu(filters);
+    filterMenu->setObjectName(QStringLiteral("spectrumFilterMenu"));
     rtFilterLabel_ = new QLabel(RtUnit::columnHeader(rtInMinutes_), this);
-    first->addWidget(rtFilterLabel_);
     minimumRt_ = new QLineEdit(this);
     minimumRt_->setObjectName(QStringLiteral("spectrumMinimumRt"));
     minimumRt_->setPlaceholderText(tr("minimum"));
     minimumRt_->setMaximumWidth(85);
-    first->addWidget(minimumRt_);
-    first->addWidget(new QLabel(QStringLiteral("–"), this));
+    auto* rtValidator = new QDoubleValidator(0.0, 1.0e300, 12, minimumRt_);
+    rtValidator->setNotation(QDoubleValidator::ScientificNotation);
+    minimumRt_->setValidator(rtValidator);
     maximumRt_ = new QLineEdit(this);
     maximumRt_->setObjectName(QStringLiteral("spectrumMaximumRt"));
     maximumRt_->setPlaceholderText(tr("maximum"));
     maximumRt_->setMaximumWidth(85);
-    first->addWidget(maximumRt_);
-    sequence_ = new QLineEdit(this);
-    sequence_->setObjectName(QStringLiteral("spectrumSequenceFilter"));
-    sequence_->setPlaceholderText(tr("Sequence contains…"));
-    sequence_->setMaximumWidth(180);
-    first->addWidget(sequence_);
+    auto* maximumRtValidator = new QDoubleValidator(0.0, 1.0e300, 12, maximumRt_);
+    maximumRtValidator->setNotation(QDoubleValidator::ScientificNotation);
+    maximumRt_->setValidator(maximumRtValidator);
+    auto* rtRange = new QWidget(filterMenu);
+    auto* rtRangeLayout = new QHBoxLayout(rtRange);
+    rtRangeLayout->setContentsMargins(0, 0, 0, 0);
+    rtRangeLayout->setSpacing(6);
+    rtRangeLayout->addWidget(minimumRt_);
+    rtRangeLayout->addWidget(new QLabel(QStringLiteral("–"), rtRange));
+    rtRangeLayout->addWidget(maximumRt_);
+    CompactControls::addLabeledMenuControl(filterMenu, rtFilterLabel_, rtRange, 110, 190);
+    scoreThresholdLabel_ = new QLabel(tr("Score threshold"), this);
+    scoreThresholdLabel_->setObjectName(QStringLiteral("spectrumScoreThresholdLabel"));
     minimumScore_ = new QLineEdit(this);
     minimumScore_->setObjectName(QStringLiteral("spectrumMinimumScore"));
-    minimumScore_->setPlaceholderText(tr("Minimum score"));
+    minimumScore_->setPlaceholderText(tr("threshold"));
     minimumScore_->setMaximumWidth(105);
-    first->addWidget(minimumScore_);
-    auto* reset = new QPushButton(tr("Reset"), this);
-    first->addWidget(reset);
+    auto* scoreValidator = new QDoubleValidator(-1.0e300, 1.0e300, 12, minimumScore_);
+    scoreValidator->setNotation(QDoubleValidator::ScientificNotation);
+    minimumScore_->setValidator(scoreValidator);
+    CompactControls::addLabeledMenuControl(
+      filterMenu, scoreThresholdLabel_, minimumScore_, 150, 110);
+    allHits_ = new QCheckBox(tr("All peptide hits"), this);
+    allHits_->setObjectName(QStringLiteral("spectrumAllHits"));
+    CompactControls::addMenuControl(filterMenu, allHits_);
+    filterMenu->addSeparator();
+    auto* reset = filterMenu->addAction(
+      QIcon(QStringLiteral(":/icons/material-clear-all.svg")), tr("Reset filters"));
+    reset->setObjectName(QStringLiteral("spectrumResetFilters"));
+    reset->setToolTip(tr("Reset all spectrum table filters"));
+    filters->setMenu(filterMenu);
+    first->addWidget(filters);
+
+    auto* display = new QToolButton(this);
+    display->setObjectName(QStringLiteral("spectrumColumnOptions"));
+    display->setText(tr("Columns"));
+    display->setPopupMode(QToolButton::InstantPopup);
+    display->setAccessibleName(tr("Spectrum table columns"));
+    auto* displayMenu = new QMenu(display);
+    displayMenu->setObjectName(QStringLiteral("spectrumColumnMenu"));
+    advanced_ = new QCheckBox(tr("Advanced statistics"), this);
+    advanced_->setObjectName(QStringLiteral("spectrumAdvancedColumns"));
+    CompactControls::addMenuControl(displayMenu, advanced_);
+    metadata_ = new QCheckBox(tr("Metadata"), this);
+    metadata_->setObjectName(QStringLiteral("spectrumMetadataColumn"));
+    CompactControls::addMenuControl(displayMenu, metadata_);
+    display->setMenu(displayMenu);
+    first->addWidget(display);
     first->addStretch();
     countLabel_ = new QLabel(this);
     countLabel_->setObjectName(QStringLiteral("spectrumCountLabel"));
     first->addWidget(countLabel_);
-    auto* exportButton = new QPushButton(tr("Export TSV…"), this);
+    auto* exportButton = CompactControls::makeIconButton(
+      this, QIcon(QStringLiteral(":/icons/material-file-download.svg")),
+      tr("Export filtered spectra as TSV"), QStringLiteral("spectrumExportTsv"));
     first->addWidget(exportButton);
     layout->addLayout(first);
 
-    auto* options = new QHBoxLayout;
-    advanced_ = new QCheckBox(tr("Advanced statistics"), this);
-    advanced_->setObjectName(QStringLiteral("spectrumAdvancedColumns"));
-    metadata_ = new QCheckBox(tr("Metadata"), this);
-    metadata_->setObjectName(QStringLiteral("spectrumMetadataColumn"));
-    allHits_ = new QCheckBox(tr("All peptide hits"), this);
-    allHits_->setObjectName(QStringLiteral("spectrumAllHits"));
-    options->addWidget(advanced_);
-    options->addWidget(metadata_);
-    options->addWidget(allHits_);
-    options->addStretch();
-    options->addWidget(new QLabel(tr("Click a row to open that spectrum"), this));
-    layout->addLayout(options);
+    selectionNotice_ = new QWidget(this);
+    selectionNotice_->setObjectName(QStringLiteral("spectrumHiddenSelectionNotice"));
+    auto* selectionNoticeLayout = new QHBoxLayout(selectionNotice_);
+    selectionNoticeLayout->setContentsMargins(6, 2, 2, 2);
+    selectionNoticeLayout->setSpacing(6);
+    selectionNoticeLabel_ = new QLabel(selectionNotice_);
+    selectionNoticeLabel_->setObjectName(QStringLiteral("spectrumHiddenSelectionLabel"));
+    selectionNoticeLabel_->setStyleSheet(QStringLiteral("color: palette(placeholder-text);"));
+    selectionNoticeLayout->addWidget(selectionNoticeLabel_, 1);
+    auto* resetHiddenSelectionFilters = new QToolButton(selectionNotice_);
+    resetHiddenSelectionFilters->setObjectName(
+      QStringLiteral("spectrumResetHiddenSelectionFilters"));
+    resetHiddenSelectionFilters->setIcon(
+      QIcon(QStringLiteral(":/icons/material-clear-all.svg")));
+    resetHiddenSelectionFilters->setText(tr("Reset filters"));
+    resetHiddenSelectionFilters->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    resetHiddenSelectionFilters->setAutoRaise(true);
+    resetHiddenSelectionFilters->setToolTip(tr("Show the selected spectrum in the table"));
+    selectionNoticeLayout->addWidget(resetHiddenSelectionFilters);
+    selectionNotice_->setVisible(false);
+    layout->addWidget(selectionNotice_);
 
     model_ = new SpectrumTableModel(this);
     proxy_ = new SpectrumFilterProxyModel(this);
     proxy_->setSourceModel(model_);
     table_ = new QTableView(this);
     table_->setObjectName(QStringLiteral("spectraTable"));
+    table_->setAccessibleName(tr("Filtered spectrum table"));
+    table_->setToolTip(tr("Click a row to open that spectrum"));
     table_->setModel(proxy_);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -430,9 +511,12 @@ namespace OpenMSViewer
       model_->setAllHits(enabled);
       updateColumns();
       updateCountLabel();
+      synchronizeSelectedSpectrum();
     });
-    connect(reset, &QPushButton::clicked, this, &SpectrumTableWidget::resetFilters);
-    connect(exportButton, &QPushButton::clicked, this, &SpectrumTableWidget::exportTsv);
+    connect(reset, &QAction::triggered, this, &SpectrumTableWidget::resetFilters);
+    connect(resetHiddenSelectionFilters, &QToolButton::clicked,
+            this, &SpectrumTableWidget::resetFilters);
+    connect(exportButton, &QToolButton::clicked, this, &SpectrumTableWidget::exportTsv);
     connect(table_->selectionModel(), &QItemSelectionModel::currentRowChanged,
             this, [this](const QModelIndex& index)
     {
@@ -458,6 +542,40 @@ namespace OpenMSViewer
                                     const std::vector<IdentificationRecord>& identifications)
   {
     model_->setData(spectra, identifications);
+    bool haveScores = false;
+    bool mixedDirection = false;
+    bool higherIsBetter = true;
+    QString scoreType;
+    bool mixedTypes = false;
+    for (const IdentificationRecord& identification : identifications)
+    {
+      if (identification.hits.empty()) continue;
+      if (!haveScores)
+      {
+        haveScores = true;
+        higherIsBetter = identification.higherScoreBetter;
+        scoreType = identification.scoreType;
+      }
+      else
+      {
+        mixedDirection |= higherIsBetter != identification.higherScoreBetter;
+        mixedTypes |= scoreType != identification.scoreType;
+      }
+    }
+    const QString scoreName = !mixedTypes && !scoreType.isEmpty() ? scoreType : tr("Score");
+    const bool scoreFilterable = haveScores && !mixedTypes && !mixedDirection;
+    scoreThresholdLabel_->setText(mixedTypes || mixedDirection
+      ? tr("Mixed score semantics") : !haveScores ? tr("Score threshold")
+      : tr("%1 %2").arg(scoreName, higherIsBetter ? QStringLiteral("≥") : QStringLiteral("≤")));
+    minimumScore_->setEnabled(scoreFilterable);
+    if (!scoreFilterable) minimumScore_->clear();
+    minimumScore_->setToolTip(!haveScores
+      ? tr("Load identifications to filter by score")
+      : !scoreFilterable
+      ? tr("Score filtering is disabled because the loaded score types are not comparable")
+      : higherIsBetter ? tr("Keep hits with a score greater than or equal to this value")
+                       : tr("Keep hits with a score less than or equal to this value"));
+    updateFilters();
     updateColumns();
     table_->resizeColumnsToContents();
     updateCountLabel();
@@ -465,26 +583,52 @@ namespace OpenMSViewer
 
   void SpectrumTableWidget::clear()
   {
-    model_->setData({}, {});
-    updateCountLabel();
+    selectedSpectrumIndex_.reset();
+    selectedIdentificationIndex_.reset();
+    selectedHitIndex_.reset();
+    selectionNotice_->setVisible(false);
+    setData({}, {});
   }
 
   void SpectrumTableWidget::selectSpectrum(
     std::size_t spectrumIndex, std::optional<std::size_t> identificationIndex,
     std::optional<std::size_t> hitIndex)
   {
-    const int row = model_->rowForSpectrumSelection(spectrumIndex, identificationIndex, hitIndex);
-    const QModelIndex proxyIndex = row < 0 ? QModelIndex()
-                                           : proxy_->mapFromSource(model_->index(row, 0));
-    QScopedValueRollback guard(synchronizingSelection_, true);
-    if (!proxyIndex.isValid())
+    selectedSpectrumIndex_ = spectrumIndex;
+    selectedIdentificationIndex_ = identificationIndex;
+    selectedHitIndex_ = hitIndex;
+    synchronizeSelectedSpectrum();
+  }
+
+  void SpectrumTableWidget::synchronizeSelectedSpectrum()
+  {
+    if (!selectedSpectrumIndex_)
     {
-      // The active spectrum is hidden by the current filter; drop the stale
-      // highlight so the table never contradicts the spectrum view.
-      table_->selectionModel()->clearSelection();
+      selectionNotice_->setVisible(false);
       return;
     }
-    table_->selectRow(proxyIndex.row());
+    const int row = model_->rowForSpectrumSelection(
+      *selectedSpectrumIndex_, selectedIdentificationIndex_, selectedHitIndex_);
+    QScopedValueRollback guard(synchronizingSelection_, true);
+    if (row < 0)
+    {
+      table_->selectionModel()->clear();
+      selectionNotice_->setVisible(false);
+      return;
+    }
+    const QModelIndex proxyIndex = proxy_->mapFromSource(model_->index(row, 0));
+    if (!proxyIndex.isValid())
+    {
+      table_->selectionModel()->clear();
+      selectionNoticeLabel_->setText(
+        tr("Spectrum #%1 is hidden by the current filters.")
+          .arg(*selectedSpectrumIndex_ + 1));
+      selectionNotice_->setVisible(true);
+      return;
+    }
+    selectionNotice_->setVisible(false);
+    table_->selectionModel()->setCurrentIndex(
+      proxyIndex, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     table_->scrollTo(proxyIndex, QAbstractItemView::PositionAtCenter);
   }
 
@@ -501,10 +645,18 @@ namespace OpenMSViewer
 
   void SpectrumTableWidget::updateFilters()
   {
-    auto optionalNumber = [](const QString& text) -> std::optional<double>
+    auto optionalNumber = [](QLineEdit* edit, const QString& normalTip) -> std::optional<double>
     {
+      const QString text = edit->text().trimmed();
+      if (text.isEmpty())
+      {
+        setNumericValidity(edit, true, normalTip);
+        return std::nullopt;
+      }
       bool valid = false;
-      const double value = text.trimmed().toDouble(&valid);
+      const double value = text.toDouble(&valid);
+      valid = valid && edit->hasAcceptableInput();
+      setNumericValidity(edit, valid, normalTip, QObject::tr("Enter a valid number"));
       return valid ? std::optional<double>{value} : std::nullopt;
     };
     // RT boxes are entered in the displayed unit; the proxy filters raw seconds.
@@ -514,12 +666,28 @@ namespace OpenMSViewer
       return value ? std::optional<double>{*value * rtScale} : std::nullopt;
     };
     auto* filter = static_cast<SpectrumFilterProxyModel*>(proxy_);
+    const QString rtTip = tr("Enter retention time in %1").arg(RtUnit::unit(rtInMinutes_));
+    std::optional<double> minimumRt = optionalNumber(minimumRt_, rtTip);
+    std::optional<double> maximumRt = optionalNumber(maximumRt_, rtTip);
+    if (minimumRt && maximumRt && *minimumRt > *maximumRt)
+    {
+      const QString error = tr("Minimum RT must not exceed maximum RT");
+      setNumericValidity(minimumRt_, false, rtTip, error);
+      setNumericValidity(maximumRt_, false, rtTip, error);
+      minimumRt.reset();
+      maximumRt.reset();
+    }
+    const QString scoreTip = scoreThresholdLabel_->text().contains(QChar(0x2264))
+      ? tr("Keep hits at or below this score") : scoreThresholdLabel_->text().contains(QChar(0x2265))
+      ? tr("Keep hits at or above this score") : tr("Filter using each score type's confidence direction");
     filter->setMode(mode_->currentIndex());
-    filter->setMinimumRt(toSeconds(optionalNumber(minimumRt_->text())));
-    filter->setMaximumRt(toSeconds(optionalNumber(maximumRt_->text())));
+    filter->setMinimumRt(toSeconds(minimumRt));
+    filter->setMaximumRt(toSeconds(maximumRt));
     filter->setSequence(sequence_->text().trimmed());
-    filter->setMinimumScore(optionalNumber(minimumScore_->text()));
+    filter->setScoreThreshold(minimumScore_->isEnabled()
+      ? optionalNumber(minimumScore_, scoreTip) : std::nullopt);
     updateCountLabel();
+    synchronizeSelectedSpectrum();
   }
 
   void SpectrumTableWidget::updateColumns()
@@ -540,6 +708,7 @@ namespace OpenMSViewer
     maximumRt_->clear();
     sequence_->clear();
     minimumScore_->clear();
+    allHits_->setChecked(false);
     updateFilters();
   }
 

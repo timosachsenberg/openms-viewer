@@ -1,8 +1,10 @@
 #include "widgets/FeatureTableWidget.h"
+#include "widgets/CompactControls.h"
 
 #include "model/RtUnit.h"
 
 #include <QAbstractTableModel>
+#include <QAction>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -11,12 +13,13 @@
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
-#include <QPushButton>
+#include <QMenu>
 #include <QSaveFile>
 #include <QScopedValueRollback>
 #include <QSortFilterProxyModel>
 #include <QTableView>
 #include <QTextStream>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -178,46 +181,54 @@ namespace OpenMSViewer
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(6, 6, 6, 6);
 
-    auto* help = new QLabel(tr("Click a row to select and zoom to that feature"), this);
-    help->setWordWrap(true);
-    layout->addWidget(help);
-
     auto* filters = new QHBoxLayout;
     search_ = new QLineEdit(this);
     search_->setObjectName(QStringLiteral("featureSearch"));
     search_->setPlaceholderText(tr("Search features…"));
     search_->setClearButtonEnabled(true);
     search_->setAccessibleName(tr("Search features"));
-    filters->addWidget(search_);
-    filters->addWidget(new QLabel(tr("Minimum intensity"), this));
+    filters->addWidget(search_, 1);
+
+    auto* filterButton = new QToolButton(this);
+    filterButton->setObjectName(QStringLiteral("featureFilterOptions"));
+    filterButton->setText(tr("Filters"));
+    filterButton->setPopupMode(QToolButton::InstantPopup);
+    filterButton->setAccessibleName(tr("Feature table filters"));
+    auto* filterMenu = new QMenu(filterButton);
+    filterMenu->setObjectName(QStringLiteral("featureFilterMenu"));
     minimumIntensity_ = new QDoubleSpinBox(this);
     minimumIntensity_->setRange(0.0, std::numeric_limits<double>::max());
     minimumIntensity_->setDecimals(0);
     minimumIntensity_->setSpecialValueText(tr("Any"));
     minimumIntensity_->setMaximumWidth(140);
-    filters->addWidget(minimumIntensity_);
+    CompactControls::addLabeledMenuControl(
+      filterMenu, tr("Minimum intensity"), minimumIntensity_);
 
-    filters->addWidget(new QLabel(tr("Minimum quality"), this));
     minimumQuality_ = new QDoubleSpinBox(this);
     minimumQuality_->setRange(0.0, 1.0);
     minimumQuality_->setDecimals(3);
     minimumQuality_->setSingleStep(0.05);
     minimumQuality_->setSpecialValueText(tr("Any"));
     minimumQuality_->setMaximumWidth(100);
-    filters->addWidget(minimumQuality_);
+    CompactControls::addLabeledMenuControl(
+      filterMenu, tr("Minimum quality"), minimumQuality_);
 
-    filters->addWidget(new QLabel(tr("Charge"), this));
     charge_ = new QComboBox(this);
     charge_->addItems({tr("All"), QStringLiteral("1"), QStringLiteral("2"),
                        QStringLiteral("3"), QStringLiteral("4"), QStringLiteral("5+")});
-    filters->addWidget(charge_);
-
-    auto* reset = new QPushButton(tr("Reset"), this);
-    filters->addWidget(reset);
-    filters->addStretch();
+    CompactControls::addLabeledMenuControl(filterMenu, tr("Charge"), charge_);
+    filterMenu->addSeparator();
+    auto* reset = filterMenu->addAction(
+      QIcon(QStringLiteral(":/icons/material-clear-all.svg")), tr("Reset filters"));
+    reset->setObjectName(QStringLiteral("featureResetFilters"));
+    reset->setToolTip(tr("Reset all feature table filters"));
+    filterButton->setMenu(filterMenu);
+    filters->addWidget(filterButton);
     countLabel_ = new QLabel(this);
     filters->addWidget(countLabel_);
-    auto* exportButton = new QPushButton(tr("Export TSV…"), this);
+    auto* exportButton = CompactControls::makeIconButton(
+      this, QIcon(QStringLiteral(":/icons/material-file-download.svg")),
+      tr("Export filtered features as TSV"), QStringLiteral("featureExportTsv"));
     filters->addWidget(exportButton);
     layout->addLayout(filters);
 
@@ -229,6 +240,7 @@ namespace OpenMSViewer
     table_ = new QTableView(this);
     table_->setObjectName(QStringLiteral("featureTable"));
     table_->setAccessibleName(tr("Filtered feature table"));
+    table_->setToolTip(tr("Click a row to select and zoom to that feature"));
     table_->setModel(proxy_);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -246,8 +258,8 @@ namespace OpenMSViewer
             this, &FeatureTableWidget::updateFilters);
     connect(charge_, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &FeatureTableWidget::updateFilters);
-    connect(reset, &QPushButton::clicked, this, &FeatureTableWidget::resetFilters);
-    connect(exportButton, &QPushButton::clicked, this, &FeatureTableWidget::exportTsv);
+    connect(reset, &QAction::triggered, this, &FeatureTableWidget::resetFilters);
+    connect(exportButton, &QToolButton::clicked, this, &FeatureTableWidget::exportTsv);
     const auto activateRow = [this](const QModelIndex& proxyIndex)
     {
       if (!proxyIndex.isValid() || synchronizingSelection_) return;
@@ -286,7 +298,8 @@ namespace OpenMSViewer
     const QModelIndex proxy = proxy_->mapFromSource(source);
     if (!proxy.isValid()) return;
     QScopedValueRollback guard(synchronizingSelection_, true);
-    table_->selectRow(proxy.row());
+    table_->selectionModel()->setCurrentIndex(
+      proxy, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     table_->scrollTo(proxy, QAbstractItemView::PositionAtCenter);
   }
 

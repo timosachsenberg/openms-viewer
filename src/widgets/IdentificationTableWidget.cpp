@@ -1,23 +1,27 @@
 #include "widgets/IdentificationTableWidget.h"
+#include "widgets/CompactControls.h"
 
 #include "model/RtUnit.h"
 
 #include <QAbstractTableModel>
+#include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleValidator>
 #include <QFileDialog>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPlainTextEdit>
-#include <QPushButton>
 #include <QSaveFile>
 #include <QScopedValueRollback>
 #include <QSortFilterProxyModel>
 #include <QTableView>
 #include <QTextStream>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -27,6 +31,18 @@
 
 namespace OpenMSViewer
 {
+  namespace
+  {
+    void setNumericValidity(QLineEdit* edit, bool valid, const QString& normalTip,
+                            const QString& errorTip = {})
+    {
+      edit->setProperty("invalidInput", !valid);
+      edit->setStyleSheet(valid ? QString{}
+                                : QStringLiteral("QLineEdit { border: 1px solid #c43c3c; }"));
+      edit->setToolTip(valid ? normalTip : errorTip);
+    }
+  }
+
   class IdentificationTableModel final : public QAbstractTableModel
   {
   public:
@@ -201,7 +217,7 @@ namespace OpenMSViewer
 
     void setLinkedOnly(bool linkedOnly) { linkedOnly_ = linkedOnly; invalidateRowsFilter(); }
     void setSequence(QString sequence) { sequence_ = std::move(sequence); invalidateRowsFilter(); }
-    void setMinimumScore(std::optional<double> score) { minimumScore_ = score; invalidateRowsFilter(); }
+    void setScoreThreshold(std::optional<double> score) { scoreThreshold_ = score; invalidateRowsFilter(); }
 
   protected:
     bool filterAcceptsRow(int sourceRow, const QModelIndex&) const override
@@ -212,13 +228,13 @@ namespace OpenMSViewer
       if (!identification) return false;
       if (linkedOnly_ && !identification->spectrumIndex) return false;
       if (!sequence_.isEmpty() && (!hit || !hit->sequence.contains(sequence_, Qt::CaseInsensitive))) return false;
-      if (minimumScore_)
+      if (scoreThreshold_)
       {
         if (!hit) return false;
         // The box keeps confident hits: a floor for higher-is-better score types,
         // but a ceiling for lower-is-better ones (q-value, E-value, PEP, FDR).
-        const bool keep = identification->higherScoreBetter ? hit->score >= *minimumScore_
-                                                            : hit->score <= *minimumScore_;
+        const bool keep = identification->higherScoreBetter ? hit->score >= *scoreThreshold_
+                                                            : hit->score <= *scoreThreshold_;
         if (!keep) return false;
       }
       return true;
@@ -227,35 +243,58 @@ namespace OpenMSViewer
   private:
     bool linkedOnly_{false};
     QString sequence_;
-    std::optional<double> minimumScore_;
+    std::optional<double> scoreThreshold_;
   };
 
   IdentificationTableWidget::IdentificationTableWidget(QWidget* parent) : QWidget(parent)
   {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(6, 6, 6, 6);
-    layout->addWidget(new QLabel(tr("Select an identification to open its linked MS/MS spectrum"), this));
 
     auto* controls = new QHBoxLayout;
     viewMode_ = new QComboBox(this);
+    viewMode_->setObjectName(QStringLiteral("identificationModeFilter"));
     viewMode_->addItems({tr("All identifications"), tr("Linked only")});
     controls->addWidget(viewMode_);
     sequenceFilter_ = new QLineEdit(this);
+    sequenceFilter_->setObjectName(QStringLiteral("identificationSequenceFilter"));
     sequenceFilter_->setPlaceholderText(tr("Sequence filter"));
     sequenceFilter_->setClearButtonEnabled(true);
-    controls->addWidget(sequenceFilter_);
+    controls->addWidget(sequenceFilter_, 1);
+
+    auto* filters = new QToolButton(this);
+    filters->setObjectName(QStringLiteral("identificationFilterOptions"));
+    filters->setText(tr("Filters"));
+    filters->setPopupMode(QToolButton::InstantPopup);
+    filters->setAccessibleName(tr("Identification table filters"));
+    auto* filterMenu = new QMenu(filters);
+    filterMenu->setObjectName(QStringLiteral("identificationFilterMenu"));
+    scoreThresholdLabel_ = new QLabel(tr("Score threshold"), this);
+    scoreThresholdLabel_->setObjectName(QStringLiteral("identificationScoreThresholdLabel"));
     minimumScore_ = new QLineEdit(this);
-    minimumScore_->setPlaceholderText(tr("Minimum score"));
+    minimumScore_->setObjectName(QStringLiteral("identificationScoreThreshold"));
+    minimumScore_->setPlaceholderText(tr("threshold"));
     minimumScore_->setMaximumWidth(120);
-    controls->addWidget(minimumScore_);
+    auto* validator = new QDoubleValidator(-1.0e300, 1.0e300, 12, minimumScore_);
+    validator->setNotation(QDoubleValidator::ScientificNotation);
+    minimumScore_->setValidator(validator);
+    CompactControls::addLabeledMenuControl(
+      filterMenu, scoreThresholdLabel_, minimumScore_, 150, 110);
     showAllHits_ = new QCheckBox(tr("All hits"), this);
-    controls->addWidget(showAllHits_);
-    auto* reset = new QPushButton(tr("Reset"), this);
-    controls->addWidget(reset);
-    controls->addStretch();
+    showAllHits_->setObjectName(QStringLiteral("identificationAllHits"));
+    CompactControls::addMenuControl(filterMenu, showAllHits_);
+    filterMenu->addSeparator();
+    auto* reset = filterMenu->addAction(
+      QIcon(QStringLiteral(":/icons/material-clear-all.svg")), tr("Reset filters"));
+    reset->setObjectName(QStringLiteral("identificationResetFilters"));
+    reset->setToolTip(tr("Reset all identification table filters"));
+    filters->setMenu(filterMenu);
+    controls->addWidget(filters);
     countLabel_ = new QLabel(this);
     controls->addWidget(countLabel_);
-    auto* exportButton = new QPushButton(tr("Export TSV…"), this);
+    auto* exportButton = CompactControls::makeIconButton(
+      this, QIcon(QStringLiteral(":/icons/material-file-download.svg")),
+      tr("Export filtered identifications as TSV"), QStringLiteral("identificationExportTsv"));
     controls->addWidget(exportButton);
     layout->addLayout(controls);
 
@@ -265,6 +304,7 @@ namespace OpenMSViewer
     table_ = new QTableView(this);
     table_->setObjectName(QStringLiteral("identificationTable"));
     table_->setAccessibleName(tr("Filtered identification table"));
+    table_->setToolTip(tr("Select an identification to open its linked MS/MS spectrum"));
     table_->setModel(proxy_);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -286,7 +326,7 @@ namespace OpenMSViewer
     connect(sequenceFilter_, &QLineEdit::textChanged, this, &IdentificationTableWidget::updateFilters);
     connect(minimumScore_, &QLineEdit::textChanged, this, &IdentificationTableWidget::updateFilters);
     connect(showAllHits_, &QCheckBox::toggled, this, &IdentificationTableWidget::rebuildRows);
-    connect(reset, &QPushButton::clicked, this, [this]
+    connect(reset, &QAction::triggered, this, [this]
     {
       viewMode_->setCurrentIndex(0);
       sequenceFilter_->clear();
@@ -294,7 +334,7 @@ namespace OpenMSViewer
       showAllHits_->setChecked(false);
       updateFilters();
     });
-    connect(exportButton, &QPushButton::clicked, this, &IdentificationTableWidget::exportTsv);
+    connect(exportButton, &QToolButton::clicked, this, &IdentificationTableWidget::exportTsv);
     connect(table_->selectionModel(), &QItemSelectionModel::currentRowChanged,
             this, [this](const QModelIndex& proxyIndex)
     {
@@ -312,15 +352,41 @@ namespace OpenMSViewer
   void IdentificationTableWidget::setIdentifications(const std::vector<IdentificationRecord>& identifications)
   {
     model_->setIdentifications(identifications);
+    bool haveScores = false;
+    bool mixedDirection = false;
+    bool higherIsBetter = true;
+    bool mixedTypes = false;
+    QString scoreType;
+    for (const IdentificationRecord& identification : identifications)
+    {
+      if (identification.hits.empty()) continue;
+      if (!haveScores)
+      {
+        haveScores = true;
+        higherIsBetter = identification.higherScoreBetter;
+        scoreType = identification.scoreType;
+      }
+      else
+      {
+        mixedDirection |= higherIsBetter != identification.higherScoreBetter;
+        mixedTypes |= scoreType != identification.scoreType;
+      }
+    }
+    const QString scoreName = !mixedTypes && !scoreType.isEmpty() ? scoreType : tr("Score");
+    const bool scoreFilterable = haveScores && !mixedTypes && !mixedDirection;
+    scoreThresholdLabel_->setText(mixedTypes || mixedDirection
+      ? tr("Mixed score semantics") : !haveScores ? tr("Score threshold")
+      : tr("%1 %2").arg(scoreName, higherIsBetter ? QStringLiteral("≥") : QStringLiteral("≤")));
+    minimumScore_->setEnabled(scoreFilterable);
+    if (!scoreFilterable) minimumScore_->clear();
+    updateFilters();
     details_->clear();
     updateCountLabel();
   }
 
   void IdentificationTableWidget::clear()
   {
-    model_->setIdentifications({});
-    details_->clear();
-    updateCountLabel();
+    setIdentifications({});
   }
 
   void IdentificationTableWidget::selectIdentification(std::size_t identificationIndex, std::size_t hitIndex)
@@ -330,7 +396,8 @@ namespace OpenMSViewer
     const QModelIndex proxyIndex = proxy_->mapFromSource(model_->index(row, 0));
     if (!proxyIndex.isValid()) return;
     QScopedValueRollback guard(synchronizingSelection_, true);
-    table_->selectRow(proxyIndex.row());
+    table_->selectionModel()->setCurrentIndex(
+      proxyIndex, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     table_->scrollTo(proxyIndex, QAbstractItemView::PositionAtCenter);
     updateDetails(row);
   }
@@ -350,9 +417,24 @@ namespace OpenMSViewer
     auto* proxy = static_cast<IdentificationFilterProxy*>(proxy_);
     proxy->setLinkedOnly(viewMode_->currentIndex() == 1);
     proxy->setSequence(sequenceFilter_->text().trimmed());
+    const QString normalTip = !minimumScore_->isEnabled()
+      ? tr("Score filtering is disabled because the loaded score types are not comparable")
+      : scoreThresholdLabel_->text().contains(QChar(0x2264))
+      ? tr("Keep hits at or below this score") : scoreThresholdLabel_->text().contains(QChar(0x2265))
+      ? tr("Keep hits at or above this score") : tr("Filter using each score type's confidence direction");
+    const QString text = minimumScore_->text().trimmed();
+    if (text.isEmpty())
+    {
+      setNumericValidity(minimumScore_, true, normalTip);
+      proxy->setScoreThreshold(std::nullopt);
+      updateCountLabel();
+      return;
+    }
     bool valid = false;
-    const double score = minimumScore_->text().toDouble(&valid);
-    proxy->setMinimumScore(valid ? std::optional<double>{score} : std::nullopt);
+    const double score = text.toDouble(&valid);
+    valid = valid && minimumScore_->hasAcceptableInput();
+    setNumericValidity(minimumScore_, valid, normalTip, tr("Enter a valid numeric score"));
+    proxy->setScoreThreshold(valid ? std::optional<double>{score} : std::nullopt);
     updateCountLabel();
   }
 

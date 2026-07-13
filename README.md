@@ -248,8 +248,9 @@ Run the app (all file arguments optional, any order):
 A Bruker `.d` dataset is a directory — open it via **File → Open data folder…** or
 drag the folder in. Thermo `.raw` needs a .NET runtime available (set
 `DOTNET_ROOT` if it is not auto-detected); a missing runtime fails with a clear
-message rather than a crash. Vendor loading requires the linked OpenMS to be built
-with `WITH_THERMO_RAW` / `WITH_OPENTIMS`.
+message rather than a crash. The Windows portable artifact bundles and selects
+its own .NET 8 runtime. Vendor loading requires the linked OpenMS to be built with
+`WITH_THERMO_RAW` / `WITH_OPENTIMS`.
 
 Default build type is `RelWithDebInfo`; `CMAKE_CXX_STANDARD` is 23; Qt AUTOMOC/
 AUTOUIC/AUTORCC are on.

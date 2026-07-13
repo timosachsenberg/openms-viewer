@@ -27,9 +27,11 @@
 #include <QDockWidget>
 #include <QLabel>
 #include <QListWidget>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QSettings>
 #include <QSignalSpy>
+#include <QScrollArea>
 #include <QSpinBox>
 #include <QAbstractItemModel>
 #include <QStackedWidget>
@@ -43,6 +45,15 @@ class UxWorkflowTest final : public QObject
   Q_OBJECT
 
 private slots:
+  void automaticMzLabelsAreEnabledByDefault()
+  {
+    QSettings().clear();
+    OpenMSViewer::MainWindow window;
+    auto* action = window.findChild<QAction*>(QStringLiteral("showMzLabels"));
+    QVERIFY(action != nullptr);
+    QVERIFY(action->isChecked());
+  }
+
   void rtInMinutesFormatsHelperAndTable()
   {
     // The shared helper is the single source of truth for RT display.
@@ -147,28 +158,94 @@ private slots:
     auto* stack = window.findChild<QStackedWidget*>(QStringLiteral("centralStack"));
     auto* welcome = window.findChild<OpenMSViewer::WelcomeWidget*>();
     auto* peakMap = window.findChild<OpenMSViewer::PeakMapWidget*>();
-    auto* interaction = window.findChild<QComboBox*>(QStringLiteral("peakMapInteractionMode"));
+    auto* interactionModes = window.findChild<QWidget*>(QStringLiteral("peakMapInteractionModes"));
+    auto* zoomMode = window.findChild<QToolButton*>(QStringLiteral("peakMapZoomMode"));
+    auto* panMode = window.findChild<QToolButton*>(QStringLiteral("peakMapPanMode"));
+    auto* measureMode = window.findChild<QToolButton*>(QStringLiteral("peakMapMeasureMode"));
+    auto* resetView = window.findChild<QToolButton*>(QStringLiteral("peakMapResetView"));
+    auto* displayOptions = window.findChild<QToolButton*>(QStringLiteral("peakMapDisplayOptions"));
+    auto* spectrumFirst = window.findChild<QToolButton*>(QStringLiteral("spectrumFirst"));
+    auto* spectrumPrevious = window.findChild<QToolButton*>(QStringLiteral("spectrumPrevious"));
+    auto* spectrumNext = window.findChild<QToolButton*>(QStringLiteral("spectrumNext"));
+    auto* spectrumLast = window.findChild<QToolButton*>(QStringLiteral("spectrumLast"));
+    auto* spectrumMeasure = window.findChild<QToolButton*>(QStringLiteral("spectrumMeasureMode"));
+    auto* spectrumLabel = window.findChild<QToolButton*>(QStringLiteral("spectrumLabelMode"));
+    auto* editMode = window.findChild<QAction*>(QStringLiteral("peakMapEditMode"));
+    auto* colorMap = window.findChild<QComboBox*>(QStringLiteral("peakMapColorMap"));
+    auto* intensityScale = window.findChild<QComboBox*>(QStringLiteral("peakMapIntensityScale"));
     auto* level = window.findChild<QComboBox*>(QStringLiteral("spectrumLevelFilter"));
     auto* scan = window.findChild<QSpinBox*>(QStringLiteral("spectrumIndex"));
+    auto* rasterWidth = window.findChild<QSpinBox*>(QStringLiteral("peakMapRasterWidth"));
     auto* runContext = window.findChild<QLabel*>(QStringLiteral("runContext"));
     auto* loading = window.findChild<OpenMSViewer::LoadingOverlayWidget*>();
     auto* ticDock = window.findChild<QDockWidget*>(QStringLiteral("ticDock"));
-    QVERIFY(stack && welcome && peakMap && interaction && level && scan && runContext && loading && ticDock);
+    QVERIFY(stack && welcome && peakMap && interactionModes && zoomMode && panMode
+            && measureMode && resetView && displayOptions && editMode && colorMap
+            && intensityScale && level && scan && rasterWidth && runContext && loading
+            && ticDock && spectrumFirst && spectrumPrevious && spectrumNext
+            && spectrumLast && spectrumMeasure && spectrumLabel);
+    QCOMPARE(resetView->toolButtonStyle(), Qt::ToolButtonIconOnly);
+    QVERIFY(!resetView->icon().isNull());
+    QVERIFY(!resetView->toolTip().isEmpty());
+    QVERIFY(displayOptions->menu() != nullptr);
+    QVERIFY(displayOptions->menu()->isAncestorOf(colorMap));
+    QVERIFY(displayOptions->menu()->isAncestorOf(intensityScale));
+    QVERIFY(displayOptions->menu()->isAncestorOf(rasterWidth));
+    for (QToolButton* button : {spectrumFirst, spectrumPrevious, spectrumNext,
+                                spectrumLast, spectrumMeasure, spectrumLabel})
+    {
+      QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonIconOnly);
+      QVERIFY(!button->icon().isNull());
+      QVERIFY(!button->toolTip().isEmpty());
+    }
+    QCOMPARE(rasterWidth->value(), OpenMSViewer::PeakMapWidget::DefaultRasterWidth);
+    rasterWidth->setValue(768);
     QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(welcome));
     QVERIFY(!ticDock->toggleViewAction()->isEnabled());
-    QCOMPARE(interaction->count(), 4);  // Zoom / Pan / Measure / Edit
+    for (QToolButton* mode : {zoomMode, panMode, measureMode})
+    {
+      QVERIFY(!mode->icon().isNull());
+      QVERIFY(mode->isCheckable());
+      QVERIFY(!mode->toolTip().isEmpty());
+    }
+    QVERIFY(!editMode->icon().isNull());
+    QVERIFY(editMode->isCheckable());
+    QVERIFY(!editMode->toolTip().isEmpty());
+    QVERIFY(window.findChild<QToolButton*>(QStringLiteral("peakMapEditMode")) == nullptr);
+    QVERIFY(zoomMode->isChecked());
+    QCOMPARE(intensityScale->count(), 3);
+    QCOMPARE(intensityScale->findText(QStringLiteral("Linear")), -1);
     QCOMPARE(level->count(), 3);
-    QVERIFY(!interaction->isVisible());
+    QVERIFY(!interactionModes->isVisible());
     QVERIFY(!peakMap->accessibleName().isEmpty());
     auto* peakMapPanel = window.findChild<QWidget*>(QStringLiteral("peakMapPanel"));
+    auto* peakMapScroll = window.findChild<QScrollArea*>(QStringLiteral("peakMapScrollArea"));
     QVERIFY(peakMapPanel != nullptr);
-    QCOMPARE(peakMap->parentWidget(), peakMapPanel);
+    QVERIFY(peakMapScroll != nullptr);
+    QVERIFY(peakMapScroll->widgetResizable());
+    QCOMPARE(peakMapScroll->widget(), peakMap);
+    QCOMPARE(peakMap->parentWidget(), peakMapScroll->viewport());
     window.loadFile(path);
     QTRY_VERIFY_WITH_TIMEOUT(peakMap->hasExperiment(), 5000);
+    displayOptions->menu()->popup(
+      displayOptions->mapToGlobal(QPoint(0, displayOptions->height())));
+    QTRY_VERIFY(displayOptions->menu()->isVisible());
+    QVERIFY(colorMap->isVisible());
+    QVERIFY(intensityScale->isVisible());
+    QVERIFY(rasterWidth->isVisible());
+    displayOptions->menu()->hide();
+    QTRY_COMPARE_WITH_TIMEOUT(peakMap->rasterImage().size(),
+                              QSize(peakMap->width() - 90, peakMap->height() - 72), 3000);
+    QVERIFY(peakMap->rasterImage().width() <= 768);
+    QVERIFY(peakMap->rasterImage().height() <= 384);
     QCOMPARE(stack->currentWidget(), peakMapPanel);
     QCOMPARE(scan->maximum(), 3);
     QCOMPARE(scan->text(), QStringLiteral("Scan 1"));
-    QVERIFY(interaction->isVisible());
+    QVERIFY(interactionModes->isVisible());
+    measureMode->click();
+    QVERIFY(measureMode->isChecked());
+    zoomMode->click();
+    QVERIFY(zoomMode->isChecked());
     QVERIFY(runContext->text().contains(QStringLiteral("3 spectra")));
     QVERIFY(!loading->isVisible());
     auto* recent = welcome->findChild<QListWidget*>(QStringLiteral("recentFiles"));
@@ -339,36 +416,43 @@ private slots:
     QSettings().clear();
   }
 
-  void keyboardModeSwitchSyncsToolbarCombo()
+  void keyboardModeSwitchSyncsToolbarButtons()
   {
     OpenMSViewer::MainWindow window;
     window.show();
 
     auto* peakMap = window.findChild<OpenMSViewer::PeakMapWidget*>();
-    auto* interaction =
-      window.findChild<QComboBox*>(QStringLiteral("peakMapInteractionMode"));
+    auto* zoomMode = window.findChild<QToolButton*>(QStringLiteral("peakMapZoomMode"));
+    auto* panMode = window.findChild<QToolButton*>(QStringLiteral("peakMapPanMode"));
+    auto* measureMode = window.findChild<QToolButton*>(QStringLiteral("peakMapMeasureMode"));
+    auto* editMode = window.findChild<QAction*>(QStringLiteral("peakMapEditMode"));
     QVERIFY(peakMap != nullptr);
-    QVERIFY(interaction != nullptr);
-    QCOMPARE(interaction->currentIndex(), 0);
+    QVERIFY(zoomMode && panMode && measureMode && editMode);
+    QVERIFY(zoomMode->isChecked());
 
-    // Keyboard mode changes on the plot must keep the toolbar combo in sync.
+    // Keyboard mode changes on the plot must keep the toolbar buttons in sync.
     QSignalSpy modeSpy(peakMap, &OpenMSViewer::PeakMapWidget::interactionModeChanged);
     peakMap->setFocus();
     QTest::keyClick(peakMap, Qt::Key_P);
-    QCOMPARE(interaction->currentIndex(), 1);
+    QVERIFY(panMode->isChecked());
     QTest::keyClick(peakMap, Qt::Key_M);
-    QCOMPARE(interaction->currentIndex(), 2);
+    QVERIFY(measureMode->isChecked());
+    QTest::keyClick(peakMap, Qt::Key_E);
+    QVERIFY(editMode->isChecked());
     QTest::keyClick(peakMap, Qt::Key_Z);
-    QCOMPARE(interaction->currentIndex(), 0);
-    QCOMPARE(modeSpy.count(), 3);
+    QVERIFY(zoomMode->isChecked());
+    QVERIFY(!editMode->isChecked());
+    QCOMPARE(modeSpy.count(), 4);
 
     // Selecting the same mode again must not re-emit or loop.
     peakMap->setInteractionMode(0);
-    QCOMPARE(modeSpy.count(), 3);
-
-    // The combo still drives the plot in the other direction.
-    interaction->setCurrentIndex(2);
     QCOMPARE(modeSpy.count(), 4);
+
+    // The button's action still drives the plot in the other direction. The
+    // toolbar itself is hidden/disabled here because this window has no data.
+    measureMode->defaultAction()->trigger();
+    QVERIFY(measureMode->isChecked());
+    QCOMPARE(modeSpy.count(), 5);
   }
 
   void toastOverlayStacksColourCodedAndCaps()

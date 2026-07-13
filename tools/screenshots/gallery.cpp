@@ -414,8 +414,7 @@ static void realPeakMapAndMetadata()
     skip(QStringLiteral("peak-map.png"), QStringLiteral("raster never rendered"));
   else
   {
-    peakMap->resize(1180, 780);
-    pump(3000);  // let the resize-triggered raster finish before grabbing
+    pump(300);  // the bounded peak-map canvas is already rendered 1:1
     saveGrab(*peakMap, QStringLiteral("peak-map.png"));
   }
 

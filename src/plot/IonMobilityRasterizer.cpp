@@ -55,14 +55,12 @@ namespace OpenMSViewer
 
     // Mobilogram and stats come from the original frame, before any visual spread.
     result.mobilogram.assign(mobilityBins, 0.0F);
-    std::size_t occupied = 0;
     for (std::size_t mz = 0; mz < mzBins; ++mz)
     {
       for (std::size_t mobility = 0; mobility < mobilityBins; ++mobility)
       {
         const float intensity = values[mz * mobilityBins + mobility];
         result.maximumIntensity = std::max(result.maximumIntensity, intensity);
-        if (intensity > 0.0F) ++occupied;
         result.mobilogram[mobility] += intensity;
       }
     }
@@ -78,9 +76,8 @@ namespace OpenMSViewer
 
     // Adaptive point-spreading so sparse/zoomed TIMS frames are not near-invisible
     // single pixels — the same dynspread the main peak map uses.
-    const double occupancy = values.empty()
-      ? 0.0 : static_cast<double>(occupied) / static_cast<double>(values.size());
-    RasterShading::dilateMax(values, mzBins, mobilityBins, RasterShading::dynspreadRadius(occupancy));
+    const int spreadRadius = RasterShading::dynspreadRadius(values, mzBins, mobilityBins);
+    RasterShading::dilateMaxCircular(values, mzBins, mobilityBins, spreadRadius);
 
     for (std::size_t mz = 0; mz < mzBins; ++mz)
     {

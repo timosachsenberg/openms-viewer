@@ -1,5 +1,6 @@
 #include "widgets/WelcomeWidget.h"
 
+#include <QDir>
 #include <QFileInfo>
 #include <QFont>
 #include <QFrame>
@@ -38,20 +39,32 @@ namespace OpenMSViewer
     layout->addWidget(title);
 
     auto* description = new QLabel(
-      tr("Open or drop an mzML run, an imzML imaging dataset, or matching "
-         "FeatureXML and idXML overlays."), card);
+      tr("Start with a spectra run or imaging dataset, then add matching feature, "
+         "identification, consensus, or OpenSWATH result layers."), card);
     description->setWordWrap(true);
     description->setAlignment(Qt::AlignCenter);
     layout->addWidget(description);
 
     auto* open = new QPushButton(style()->standardIcon(QStyle::SP_DialogOpenButton),
-                                 tr("Open data…"), card);
+                                 tr("Open files…"), card);
     open->setObjectName(QStringLiteral("welcomeOpenButton"));
     open->setDefault(true);
     open->setMinimumHeight(40);
     open->setAccessibleDescription(tr("Choose mass-spectrometry files to open"));
-    layout->addWidget(open, 0, Qt::AlignHCenter);
+    auto* folder = new QPushButton(style()->standardIcon(QStyle::SP_DirOpenIcon),
+                                   tr("Open data folder…"), card);
+    folder->setObjectName(QStringLiteral("welcomeOpenFolderButton"));
+    folder->setMinimumHeight(40);
+    folder->setAccessibleDescription(tr("Choose a Bruker .d dataset or OpenMS Parquet bundle"));
+
+    auto* openRow = new QHBoxLayout;
+    openRow->addStretch();
+    openRow->addWidget(open);
+    openRow->addWidget(folder);
+    openRow->addStretch();
+    layout->addLayout(openRow);
     connect(open, &QPushButton::clicked, this, &WelcomeWidget::openRequested);
+    connect(folder, &QPushButton::clicked, this, &WelcomeWidget::openFolderRequested);
 
     auto* dropHint = new QLabel(tr("You can also drag files anywhere onto this window"), card);
     dropHint->setAlignment(Qt::AlignCenter);
@@ -76,7 +89,8 @@ namespace OpenMSViewer
     });
 
     auto* formats = new QLabel(
-      tr("Supported: mzML · imzML/IBD · FeatureXML · idXML"), card);
+      tr("Files: mzML/mzXML/mzData/sqMass · imzML/IBD · Thermo RAW\n"
+         "Layers: FeatureXML · idXML/mzIdentML · consensusXML · OSW/XIC · Parquet bundles"), card);
     formats->setAlignment(Qt::AlignCenter);
     formats->setStyleSheet(QStringLiteral("color: palette(placeholder-text);"));
     layout->addWidget(formats);
@@ -97,7 +111,10 @@ namespace OpenMSViewer
     for (const QString& path : paths)
     {
       const QFileInfo info(path);
-      auto* item = new QListWidgetItem(info.fileName(), recentFiles_);
+      const QString location = info.dir().dirName();
+      auto* item = new QListWidgetItem(
+        location.isEmpty() ? info.fileName()
+                           : tr("%1  —  %2").arg(info.fileName(), location), recentFiles_);
       item->setData(Qt::UserRole, info.absoluteFilePath());
       item->setToolTip(info.absoluteFilePath());
       item->setStatusTip(info.absoluteFilePath());

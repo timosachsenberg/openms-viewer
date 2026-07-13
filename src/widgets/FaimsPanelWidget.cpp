@@ -233,7 +233,9 @@ namespace OpenMSViewer
 
   QRect FaimsTracePlotWidget::plotRect() const
   {
-    return rect().adjusted(64, 34, -18, -40);
+    // The end ticks are centred on the plot edges. Keep half a label's width on
+    // the right so the final RT value is not clipped by the widget boundary.
+    return rect().adjusted(64, 34, -36, -40);
   }
 
   void FaimsTracePlotWidget::paintEvent(QPaintEvent*)
@@ -361,13 +363,15 @@ namespace OpenMSViewer
     selector_ = new QComboBox(this);
     selector_->setObjectName(QStringLiteral("faimsChannelSelector"));
     selector_->setMinimumWidth(180);
+    selector_->setToolTip(tr("Filter the peak maps by compensation voltage"));
+    selector_->setAccessibleName(tr("Peak-map compensation-voltage filter"));
     controls->addWidget(selector_);
     controls->addStretch();
-    controls->addWidget(new QLabel(tr("Separate per-CV TIC traces; click a trace to select a scan"), this));
     layout->addLayout(controls);
 
     table_ = new QTableWidget(this);
     table_->setObjectName(QStringLiteral("faimsChannelTable"));
+    table_->setToolTip(tr("Select a compensation-voltage channel"));
     table_->setColumnCount(4);
     table_->setHorizontalHeaderLabels({tr("CV (V)"), tr("MS1 scans"),
                                        tr("RT range (%1)").arg(RtUnit::unit(rtInMinutes_)),
@@ -379,6 +383,7 @@ namespace OpenMSViewer
     table_->setMaximumHeight(150);
     layout->addWidget(table_);
     plot_ = new FaimsTracePlotWidget(this);
+    plot_->setToolTip(tr("Click a per-CV TIC trace to select its nearest scan"));
     layout->addWidget(plot_, 1);
     peakMaps_ = new FaimsPeakMapsWidget(this);
     layout->addWidget(peakMaps_, 1);

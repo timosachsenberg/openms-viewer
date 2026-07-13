@@ -3,6 +3,7 @@
 #include "MainWindow.h"
 #include "model/ViewerDocument.h"
 #include "widgets/ChromatogramPanelWidget.h"
+#include "widgets/IdentificationTableWidget.h"
 #include "widgets/PeakMapWidget.h"
 #include "widgets/SpectrumTableWidget.h"
 #include "widgets/SpectrumWidget.h"
@@ -12,13 +13,18 @@
 #include <OpenMS/FORMAT/MzMLFile.h>
 
 #include <QCheckBox>
+#include <QAction>
 #include <QComboBox>
 #include <QDockWidget>
 #include <QItemSelectionModel>
 #include <QLineEdit>
+#include <QLabel>
+#include <QMenu>
+#include <QSpinBox>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QToolButton>
 
 class DataPanelsWorkflowTest final : public QObject
 {
@@ -53,10 +59,29 @@ private slots:
     auto* mode = spectra.findChild<QComboBox*>(QStringLiteral("spectrumModeFilter"));
     auto* sequence = spectra.findChild<QLineEdit*>(QStringLiteral("spectrumSequenceFilter"));
     auto* allHits = spectra.findChild<QCheckBox*>(QStringLiteral("spectrumAllHits"));
+    auto* minimumRt = spectra.findChild<QLineEdit*>(QStringLiteral("spectrumMinimumRt"));
+    auto* score = spectra.findChild<QLineEdit*>(QStringLiteral("spectrumMinimumScore"));
+    auto* scoreLabel = spectra.findChild<QLabel*>(QStringLiteral("spectrumScoreThresholdLabel"));
+    auto* filters = spectra.findChild<QToolButton*>(QStringLiteral("spectrumFilterOptions"));
+    auto* resetFilters = spectra.findChild<QAction*>(QStringLiteral("spectrumResetFilters"));
+    auto* columns = spectra.findChild<QToolButton*>(QStringLiteral("spectrumColumnOptions"));
+    auto* advanced = spectra.findChild<QCheckBox*>(QStringLiteral("spectrumAdvancedColumns"));
     QVERIFY(spectraTable != nullptr);
     QVERIFY(mode != nullptr);
     QVERIFY(sequence != nullptr);
     QVERIFY(allHits != nullptr);
+    QVERIFY(minimumRt != nullptr);
+    QVERIFY(score != nullptr);
+    QVERIFY(scoreLabel != nullptr);
+    QVERIFY(filters != nullptr && filters->menu() != nullptr);
+    QVERIFY(resetFilters != nullptr);
+    QCOMPARE(resetFilters->text(), QStringLiteral("Reset filters"));
+    QVERIFY(!resetFilters->icon().isNull());
+    QVERIFY(columns != nullptr && columns->menu() != nullptr);
+    QVERIFY(filters->menu()->isAncestorOf(minimumRt));
+    QVERIFY(filters->menu()->isAncestorOf(score));
+    QVERIFY(filters->menu()->isAncestorOf(allHits));
+    QVERIFY(columns->menu()->isAncestorOf(advanced));
     QCOMPARE(spectraTable->model()->rowCount(), 3);
     mode->setCurrentIndex(1);
     QCOMPARE(spectraTable->model()->rowCount(), 1);
@@ -69,6 +94,20 @@ private slots:
     sequence->clear();
     mode->setCurrentIndex(0);
     QCOMPARE(spectraTable->model()->rowCount(), 4);
+    QVERIFY(scoreLabel->text().contains(QStringLiteral("≥")));
+    score->setText(QStringLiteral("35"));
+    QCOMPARE(spectraTable->model()->rowCount(), 1);  // hyperscore: higher is better
+    score->setText(QStringLiteral("not-a-number"));
+    QVERIFY(score->property("invalidInput").toBool());
+    QCOMPARE(spectraTable->model()->rowCount(), 4);  // invalid input is visible, not silently applied
+    score->clear();
+    spectra.setRtInMinutes(true);
+    minimumRt->setText(QStringLiteral("0.3"));  // 18 seconds
+    QCOMPARE(spectraTable->model()->rowCount(), 1);
+    minimumRt->clear();
+    resetFilters->trigger();
+    QVERIFY(!allHits->isChecked());
+    QCOMPARE(spectraTable->model()->rowCount(), 3);
 
     std::optional<std::size_t> activatedSpectrum;
     connect(&spectra, &OpenMSViewer::SpectrumTableWidget::spectrumActivated,
@@ -84,7 +123,14 @@ private slots:
     chromatograms.setChromatograms(document.chromatograms());
     chromatograms.setPeakMapRange({11.0, 17.0, 0.0, 1.0});
     auto* chromatogramTable = chromatograms.findChild<QTableView*>(QStringLiteral("chromatogramTable"));
+    auto* chromatogramDisplay = chromatograms.findChild<QToolButton*>(
+      QStringLiteral("chromatogramDisplayOptions"));
+    auto* chromatogramSmooth = chromatograms.findChild<QCheckBox*>(
+      QStringLiteral("chromatogramSmooth"));
     QVERIFY(chromatogramTable != nullptr);
+    QVERIFY(chromatogramDisplay != nullptr && chromatogramDisplay->menu() != nullptr);
+    QVERIFY(chromatogramSmooth != nullptr);
+    QVERIFY(chromatogramDisplay->menu()->isAncestorOf(chromatogramSmooth));
     QCOMPARE(chromatogramTable->model()->rowCount(), 2);
     chromatogramTable->selectRow(0);
     chromatogramTable->selectionModel()->select(
@@ -104,6 +150,38 @@ private slots:
     QVERIFY(*activatedRt > 13.0 && *activatedRt < 17.0);
   }
 
+  void lowerIsBetterScoreThresholdIsExplicit()
+  {
+    OpenMSViewer::IdentificationRecord confident;
+    confident.index = 0;
+    confident.scoreType = QStringLiteral("q-value");
+    confident.higherScoreBetter = false;
+    confident.hits.push_back({0, QStringLiteral("PEPTIDE"), 0.01, 2, {}, {}});
+    OpenMSViewer::IdentificationRecord weak = confident;
+    weak.index = 1;
+    weak.hits.front().score = 0.2;
+
+    OpenMSViewer::IdentificationTableWidget identifications;
+    identifications.setIdentifications({confident, weak});
+    auto* table = identifications.findChild<QTableView*>(QStringLiteral("identificationTable"));
+    auto* threshold = identifications.findChild<QLineEdit*>(QStringLiteral("identificationScoreThreshold"));
+    auto* label = identifications.findChild<QLabel*>(QStringLiteral("identificationScoreThresholdLabel"));
+    auto* filters = identifications.findChild<QToolButton*>(
+      QStringLiteral("identificationFilterOptions"));
+    QVERIFY(table != nullptr);
+    QVERIFY(threshold != nullptr);
+    QVERIFY(label != nullptr);
+    QVERIFY(filters != nullptr && filters->menu() != nullptr);
+    QVERIFY(filters->menu()->isAncestorOf(threshold));
+    QVERIFY(label->text().contains(QStringLiteral("q-value")));
+    QVERIFY(label->text().contains(QStringLiteral("≤")));
+    threshold->setText(QStringLiteral("0.05"));
+    QCOMPARE(table->model()->rowCount(), 1);
+    threshold->setText(QStringLiteral("."));
+    QVERIFY(threshold->property("invalidInput").toBool());
+    QCOMPARE(table->model()->rowCount(), 2);
+  }
+
   void synchronizesSpectrumTableWithMainWindow()
   {
     QTemporaryDir directory;
@@ -120,14 +198,39 @@ private slots:
     auto* spectrum = window.findChild<OpenMSViewer::SpectrumWidget*>();
     auto* peakMap = window.findChild<OpenMSViewer::PeakMapWidget*>();
     auto* tic = window.findChild<OpenMSViewer::TicWidget*>();
+    auto* search = window.findChild<QLineEdit*>(QStringLiteral("spectrumSearch"));
+    auto* spectrumIndex = window.findChild<QSpinBox*>(QStringLiteral("spectrumIndex"));
+    auto* mode = spectra
+      ? spectra->findChild<QComboBox*>(QStringLiteral("spectrumModeFilter")) : nullptr;
+    auto* hiddenSelectionNotice = spectra
+      ? spectra->findChild<QWidget*>(QStringLiteral("spectrumHiddenSelectionNotice")) : nullptr;
+    auto* hiddenSelectionLabel = spectra
+      ? spectra->findChild<QLabel*>(QStringLiteral("spectrumHiddenSelectionLabel")) : nullptr;
+    auto* resetHiddenSelectionFilters = spectra
+      ? spectra->findChild<QToolButton*>(
+          QStringLiteral("spectrumResetHiddenSelectionFilters")) : nullptr;
     QVERIFY(spectra != nullptr);
     QVERIFY(spectraDock != nullptr);
     QVERIFY(spectrum != nullptr);
     QVERIFY(peakMap != nullptr);
     QVERIFY(tic != nullptr);
+    QVERIFY(search != nullptr);
+    QVERIFY(spectrumIndex != nullptr);
+    QVERIFY(mode != nullptr);
+    QVERIFY(hiddenSelectionNotice != nullptr);
+    QVERIFY(hiddenSelectionLabel != nullptr);
+    QVERIFY(resetHiddenSelectionFilters != nullptr);
     auto* table = spectra->findChild<QTableView*>(QStringLiteral("spectraTable"));
     QVERIFY(table != nullptr);
     QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 3, 5000);
+    QAction* rtMinutes = nullptr;
+    for (QAction* action : window.findChildren<QAction*>())
+      if (action->text() == QStringLiteral("RT in minutes")) { rtMinutes = action; break; }
+    QVERIFY(rtMinutes != nullptr);
+    rtMinutes->setChecked(true);
+    search->setText(QStringLiteral("0.3333"));  // approximately 20 seconds
+    QTest::keyClick(search, Qt::Key_Return);
+    QTRY_COMPARE(spectrumIndex->value(), 3);
     spectraDock->raise();
     QTest::qWait(30);
     const QModelIndex row = table->model()->index(1, 0);
@@ -155,6 +258,43 @@ private slots:
     QTRY_VERIFY(peakMap->viewRange().rtMin > 15.9);
     QTRY_VERIFY(peakMap->viewRange().rtMax > 19.9);
     QVERIFY(qAbs(peakMap->viewRange().rtSpan() - 4.0) < 1e-9);
+
+    // Clicking a peak-map precursor selects its MS/MS scan in the spectra
+    // table, including when that same precursor is clicked again after the
+    // table selection was cleared independently.
+    QAction* showPrecursors = nullptr;
+    for (QAction* action : window.findChildren<QAction*>())
+      if (action->text() == QStringLiteral("MS/MS precursors + isolation windows"))
+      {
+        showPrecursors = action;
+        break;
+      }
+    QVERIFY(showPrecursors != nullptr);
+    showPrecursors->setChecked(true);
+    peakMap->resetView();
+    const QPoint precursor = peakMap->mapDataToWidget(11.0, 500.2).toPoint();
+    QTest::mouseClick(peakMap, Qt::LeftButton, Qt::NoModifier, precursor);
+    QTRY_COMPARE(spectrum->spectrumIndex(), std::size_t{1});
+    QTRY_VERIFY(table->currentIndex().isValid());
+    QCOMPARE(table->currentIndex().data(Qt::UserRole).toULongLong(), qulonglong{1});
+
+    table->selectionModel()->clear();
+    QVERIFY(!table->currentIndex().isValid());
+    QTest::mouseClick(peakMap, Qt::LeftButton, Qt::NoModifier, precursor);
+    QTRY_VERIFY(table->currentIndex().isValid());
+    QCOMPARE(table->currentIndex().data(Qt::UserRole).toULongLong(), qulonglong{1});
+
+    mode->setCurrentIndex(2);  // no identifications are loaded, hiding the MS/MS row
+    QTRY_COMPARE(table->model()->rowCount(), 0);
+    QVERIFY(!hiddenSelectionNotice->isHidden());
+    QVERIFY(hiddenSelectionLabel->text().contains(QStringLiteral("Spectrum #2")));
+    QVERIFY(!table->currentIndex().isValid());
+    resetHiddenSelectionFilters->click();
+    QTRY_COMPARE(mode->currentIndex(), 0);
+    QTRY_COMPARE(table->model()->rowCount(), 3);
+    QVERIFY(hiddenSelectionNotice->isHidden());
+    QTRY_VERIFY(table->currentIndex().isValid());
+    QCOMPARE(table->currentIndex().data(Qt::UserRole).toULongLong(), qulonglong{1});
   }
 };
 

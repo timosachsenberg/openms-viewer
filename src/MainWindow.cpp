@@ -1695,12 +1695,12 @@ namespace OpenMSViewer
 
   void MainWindow::arrangeDocksDefault()
   {
-    // Everything lives in the bottom area — nothing in the narrow right column,
-    // where wide tables would be squeezed. A plots row on top (TIC beside the
-    // spectrum) sits over a FULL-WIDTH tabbed row of tables and panels below.
-    addDockWidget(Qt::BottomDockWidgetArea, ticDock_);
-    splitDockWidget(ticDock_, featuresDock_, Qt::Vertical);    // full-width row below the plots
-    splitDockWidget(ticDock_, spectrumDock_, Qt::Horizontal);  // plots row: TIC | spectrum
+    // Everything lives in the bottom area, stacked in full-width rows — nothing in
+    // the narrow right column, and no half-width plots. Spectrum over TIC over a
+    // full-width tabbed row of tables/panels; every panel spans the full width.
+    addDockWidget(Qt::BottomDockWidgetArea, spectrumDock_);
+    splitDockWidget(spectrumDock_, ticDock_, Qt::Vertical);   // TIC full-width below the spectrum
+    splitDockWidget(ticDock_, featuresDock_, Qt::Vertical);   // tables full-width below the TIC
     QDockWidget* previous = featuresDock_;
     for (QDockWidget* dock : {identificationsDock_, spectraDock_, chromatogramsDock_,
                               ionMobilityDock_, imagingDock_, faimsDock_, oswDock_,
@@ -1757,10 +1757,9 @@ namespace OpenMSViewer
         break;
 
       case LayoutPreset::Imaging:
-        // MSI: the ion image beside the spectrum.
+        // MSI: the ion image full width over the spectrum.
         addDockWidget(Qt::BottomDockWidgetArea, imagingDock_);
-        addDockWidget(Qt::BottomDockWidgetArea, spectrumDock_);
-        splitDockWidget(imagingDock_, spectrumDock_, Qt::Horizontal);
+        splitDockWidget(imagingDock_, spectrumDock_, Qt::Vertical);
         feature(imagingDock_, true);
         feature(spectrumDock_, true);
         hideRest({imagingDock_, spectrumDock_});
@@ -1769,11 +1768,11 @@ namespace OpenMSViewer
         break;
 
       case LayoutPreset::Dia:
-        // Targeted DIA: the OpenSWATH panel full width on top, spectrum beside the
-        // chromatograms in a plots row below.
+        // Targeted DIA: OpenSWATH panel, spectrum, and chromatograms as full-width
+        // rows stacked top to bottom.
         addDockWidget(Qt::BottomDockWidgetArea, oswDock_);
         splitDockWidget(oswDock_, spectrumDock_, Qt::Vertical);
-        splitDockWidget(spectrumDock_, chromatogramsDock_, Qt::Horizontal);
+        splitDockWidget(spectrumDock_, chromatogramsDock_, Qt::Vertical);
         feature(oswDock_, true);
         feature(spectrumDock_, true);
         feature(chromatogramsDock_, true);

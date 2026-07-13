@@ -995,7 +995,16 @@ namespace OpenMSViewer
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
     viewMenu->addAction(darkThemeAction_);
     viewMenu->addAction(rtInMinutesAction_);
-    viewMenu->addAction(tr("Reset panel layout"), this, &MainWindow::resetDockLayout);
+    auto* layoutMenu = viewMenu->addMenu(tr("Layout"));
+    const auto addPreset = [this, layoutMenu](const QString& text, LayoutPreset preset, const QString& objectName)
+    {
+      QAction* action = layoutMenu->addAction(text, this, [this, preset] { applyLayoutPreset(preset); });
+      action->setObjectName(objectName);
+    };
+    addPreset(tr("Overview (reset)"), LayoutPreset::Overview, QStringLiteral("layoutOverview"));
+    addPreset(tr("Identification"), LayoutPreset::Identification, QStringLiteral("layoutIdentification"));
+    addPreset(tr("Imaging"), LayoutPreset::Imaging, QStringLiteral("layoutImaging"));
+    addPreset(tr("DIA / OpenSWATH"), LayoutPreset::Dia, QStringLiteral("layoutDia"));
 
     // Explicit re-docking. Drag-to-dock is blocked by the custom header (desktop)
     // and by WSLg, so offer every panel a Left/Right (vertical column), Top, or
@@ -1704,6 +1713,89 @@ namespace OpenMSViewer
     // is loaded, which would otherwise leave a loaded map unsaveable.
     updateSaveActions();
     statusBar()->showMessage(tr("Panel layout reset"), 3000);
+  }
+
+  void MainWindow::applyLayoutPreset(LayoutPreset preset)
+  {
+    if (preset == LayoutPreset::Overview) { resetDockLayout(); return; }
+
+    const std::vector<QDockWidget*> allDocks = {
+      ticDock_, spectrumDock_, featuresDock_, identificationsDock_, spectraDock_,
+      chromatogramsDock_, ionMobilityDock_, faimsDock_, imagingDock_, oswDock_,
+      consensusDock_, metadataDock_, logDock_};
+    for (QDockWidget* dock : allDocks) dock->setFloating(false);
+
+    // A dock is only worth showing if its data is present; setDockAvailable keeps
+    // the toggle action's enabled state in sync with that.
+    const auto available = [](QDockWidget* dock) { return dock->toggleViewAction()->isEnabled(); };
+    // Feature a dock (record the preference + show it if it has data), or hide it.
+    const auto feature = [&](QDockWidget* dock, bool wanted)
+    {
+      dockVisibilityPreference_[dock->objectName()] = wanted;
+      dock->setVisible(wanted && available(dock));
+    };
+    const auto hideRest = [&](std::initializer_list<QDockWidget*> featured)
+    {
+      for (QDockWidget* dock : allDocks)
+        if (std::find(featured.begin(), featured.end(), dock) == featured.end())
+          feature(dock, false);
+    };
+
+    QString name;
+    QDockWidget* focus = nullptr;
+    switch (preset)
+    {
+      case LayoutPreset::Identification:
+        // Analyte-centric: ID + spectra tables stacked at right, spectrum + TIC below.
+        addDockWidget(Qt::RightDockWidgetArea, identificationsDock_);
+        addDockWidget(Qt::RightDockWidgetArea, spectraDock_);
+        splitDockWidget(identificationsDock_, spectraDock_, Qt::Vertical);
+        addDockWidget(Qt::BottomDockWidgetArea, spectrumDock_);
+        addDockWidget(Qt::BottomDockWidgetArea, ticDock_);
+        splitDockWidget(spectrumDock_, ticDock_, Qt::Horizontal);
+        feature(identificationsDock_, true);
+        feature(spectraDock_, true);
+        feature(spectrumDock_, true);
+        feature(ticDock_, true);
+        hideRest({identificationsDock_, spectraDock_, spectrumDock_, ticDock_});
+        focus = identificationsDock_;
+        name = tr("Identification");
+        break;
+
+      case LayoutPreset::Imaging:
+        // MSI: the ion image beside the spectrum.
+        addDockWidget(Qt::BottomDockWidgetArea, imagingDock_);
+        addDockWidget(Qt::BottomDockWidgetArea, spectrumDock_);
+        splitDockWidget(imagingDock_, spectrumDock_, Qt::Horizontal);
+        feature(imagingDock_, true);
+        feature(spectrumDock_, true);
+        hideRest({imagingDock_, spectrumDock_});
+        focus = imagingDock_;
+        name = tr("Imaging");
+        break;
+
+      case LayoutPreset::Dia:
+        // Targeted DIA: OpenSWATH peak groups across the bottom, spectrum +
+        // chromatograms stacked at right.
+        addDockWidget(Qt::BottomDockWidgetArea, oswDock_);
+        addDockWidget(Qt::RightDockWidgetArea, spectrumDock_);
+        addDockWidget(Qt::RightDockWidgetArea, chromatogramsDock_);
+        splitDockWidget(spectrumDock_, chromatogramsDock_, Qt::Vertical);
+        feature(oswDock_, true);
+        feature(spectrumDock_, true);
+        feature(chromatogramsDock_, true);
+        hideRest({oswDock_, spectrumDock_, chromatogramsDock_});
+        focus = oswDock_;
+        name = tr("DIA / OpenSWATH");
+        break;
+
+      case LayoutPreset::Overview:
+        break;  // handled above
+    }
+
+    if (focus && available(focus)) focus->raise();
+    updateSaveActions();
+    statusBar()->showMessage(tr("Applied %1 layout").arg(name), 3000);
   }
 
   void MainWindow::updateSaveActions()

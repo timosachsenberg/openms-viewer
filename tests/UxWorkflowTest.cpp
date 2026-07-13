@@ -13,6 +13,7 @@
 #include "widgets/TransitionGroupPlot.h"
 #include "widgets/WelcomeWidget.h"
 
+#include <OpenMS/FORMAT/FeatureXMLFile.h>
 #include <OpenMS/FORMAT/MzMLFile.h>
 
 #include <algorithm>
@@ -73,6 +74,38 @@ private slots:
     table.setRtInMinutes(true);
     QVERIFY(model->headerData(rtColumn, Qt::Horizontal).toString().contains(QStringLiteral("(min)")));
     QCOMPARE(model->index(0, rtColumn).data().toString(), QStringLiteral("2.000"));
+  }
+
+  void layoutPresetsFeatureAndHideRelevantPanels()
+  {
+    QSettings().clear();
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString mzml = dir.filePath(QStringLiteral("preset.mzML"));
+    const QString feat = dir.filePath(QStringLiteral("preset.featureXML"));
+    OpenMS::MzMLFile().store(mzml.toStdString(), OpenMSViewer::TestData::experiment());
+    OpenMS::FeatureXMLFile().store(feat.toStdString(), OpenMSViewer::TestData::featureMap());
+
+    OpenMSViewer::MainWindow window;
+    window.resize(1200, 800);
+    window.show();
+    window.loadFiles({mzml, feat});
+    auto* featuresDock = window.findChild<QDockWidget*>(QStringLiteral("featuresDock"));
+    auto* spectrumDock = window.findChild<QDockWidget*>(QStringLiteral("spectrumDock"));
+    auto* imaging = window.findChild<QAction*>(QStringLiteral("layoutImaging"));
+    auto* overview = window.findChild<QAction*>(QStringLiteral("layoutOverview"));
+    QVERIFY(featuresDock && spectrumDock && imaging && overview);
+    QTRY_VERIFY_WITH_TIMEOUT(featuresDock->toggleViewAction()->isEnabled(), 5000);  // features loaded
+
+    // The Imaging preset declutters: it hides the (available) features table and
+    // keeps the spectrum visible.
+    imaging->trigger();
+    QVERIFY(!featuresDock->isVisible());
+    QVERIFY(spectrumDock->isVisible());
+
+    // Overview brings the features table back.
+    overview->trigger();
+    QVERIFY(featuresDock->isVisible());
   }
 
   void dockPanelMoveActionsRedockVertically()
@@ -187,9 +220,7 @@ private slots:
     QVERIFY(peakMap->hasExperiment());
     QVERIFY(!ticDock->isVisible());
 
-    QAction* resetLayout = nullptr;
-    for (QAction* action : window.findChildren<QAction*>())
-      if (action->text() == QStringLiteral("Reset panel layout")) resetLayout = action;
+    QAction* resetLayout = window.findChild<QAction*>(QStringLiteral("layoutOverview"));
     QVERIFY(resetLayout != nullptr);
     resetLayout->trigger();
     QTRY_VERIFY(ticDock->isVisible());

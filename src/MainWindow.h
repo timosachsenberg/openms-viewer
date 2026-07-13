@@ -92,6 +92,12 @@ namespace OpenMSViewer
     void closeSurface3D();
 
   private:
+    // Task-oriented panel arrangements. Overview is the general default
+    // (resetDockLayout); the others declutter to the panels a task needs and
+    // stack them sensibly. Only panels with data are actually shown.
+    enum class LayoutPreset { Overview, Identification, Imaging, Dia };
+    void applyLayoutPreset(LayoutPreset preset);
+
     void createActions();
     void createMenus();
     void createToolBars();

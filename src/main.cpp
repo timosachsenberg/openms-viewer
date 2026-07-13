@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDebug>
+#include <QDir>
 #include <QFileInfo>
 #include <QThread>
 #include <QThreadPool>
@@ -28,6 +29,19 @@ namespace
       qputenv("QT_QPA_PLATFORM", "xcb");
     if (qEnvironmentVariableIsEmpty("XCURSOR_SIZE"))
       qputenv("XCURSOR_SIZE", "24");
+  }
+
+  void applyBundledDotNetDefault()
+  {
+    // Portable packages place the .NET runtime next to bin/. Honour an
+    // administrator/user override, otherwise let the Thermo bridge's nethost
+    // loader resolve the bundled runtime when a RAW file is opened.
+    if (!qEnvironmentVariableIsEmpty("DOTNET_ROOT")) return;
+
+    const QDir applicationDirectory(QApplication::applicationDirPath());
+    const QString bundledRoot = QDir::cleanPath(applicationDirectory.filePath("../dotnet"));
+    if (QFileInfo::exists(QDir(bundledRoot).filePath("host/fxr")))
+      qputenv("DOTNET_ROOT", QDir::toNativeSeparators(bundledRoot).toUtf8());
   }
 
   void configureWorkerThreads()
@@ -58,6 +72,7 @@ int main(int argc, char* argv[])
   applyWslPlatformDefaults();
 
   QApplication application(argc, argv);
+  applyBundledDotNetDefault();
   QApplication::setApplicationName(QStringLiteral("OpenMS Viewer"));
   QApplication::setApplicationVersion(QStringLiteral("0.1.0"));
   QApplication::setOrganizationName(QStringLiteral("OpenMS"));

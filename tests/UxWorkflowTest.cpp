@@ -37,6 +37,29 @@ class UxWorkflowTest final : public QObject
   Q_OBJECT
 
 private slots:
+  void dockPanelMoveActionsRedockVertically()
+  {
+    OpenMSViewer::MainWindow window;
+    auto* spectrumDock = window.findChild<QDockWidget*>(QStringLiteral("spectrumDock"));
+    auto* moveLeft = window.findChild<QAction*>(QStringLiteral("spectrumDockMoveLeft"));
+    auto* moveRight = window.findChild<QAction*>(QStringLiteral("spectrumDockMoveRight"));
+    QVERIFY(spectrumDock && moveLeft && moveRight);
+
+    // The spectrum (bottom by default) can be re-docked into a vertical side column.
+    moveLeft->trigger();
+    QCOMPARE(window.dockWidgetArea(spectrumDock), Qt::LeftDockWidgetArea);
+
+    // A table joins the same column instead of only tabbing on the right.
+    auto* featuresDock = window.findChild<QDockWidget*>(QStringLiteral("featuresDock"));
+    auto* featuresLeft = window.findChild<QAction*>(QStringLiteral("featuresDockMoveLeft"));
+    QVERIFY(featuresDock && featuresLeft);
+    featuresLeft->trigger();
+    QCOMPARE(window.dockWidgetArea(featuresDock), Qt::LeftDockWidgetArea);
+
+    moveRight->trigger();
+    QCOMPARE(window.dockWidgetArea(spectrumDock), Qt::RightDockWidgetArea);
+  }
+
   void welcomeNavigationRecentFilesAndDockPreference()
   {
     QSettings().clear();

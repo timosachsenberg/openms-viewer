@@ -144,6 +144,27 @@ namespace OpenMSViewer
         connect(closeMenuAction, &QAction::triggered, dock,
                 [dock] { dock->toggleViewAction()->trigger(); });
 
+        // Explicit re-docking, since this custom header's drag floats the panel
+        // rather than invoking Qt's native drag-to-dock.
+        auto* dockToMenu = contextMenu_->addMenu(tr("Dock to"));
+        const auto addMove = [this, dockToMenu](const QString& text, Qt::DockWidgetArea area)
+        {
+          dockToMenu->addAction(text, this, [this, area]
+          {
+            if (auto* main = qobject_cast<QMainWindow*>(dock_->parentWidget()))
+            {
+              dock_->setFloating(false);
+              main->addDockWidget(area, dock_);
+              dock_->setVisible(true);
+              dock_->raise();
+            }
+          });
+        };
+        addMove(tr("Left (vertical)"), Qt::LeftDockWidgetArea);
+        addMove(tr("Right (vertical)"), Qt::RightDockWidgetArea);
+        addMove(tr("Top"), Qt::TopDockWidgetArea);
+        addMove(tr("Bottom"), Qt::BottomDockWidgetArea);
+
         connect(dock, &QDockWidget::windowTitleChanged, this, [this](const QString& title)
         {
           title_->setText(QStringLiteral("⠿  %1").arg(title));
@@ -955,6 +976,34 @@ namespace OpenMSViewer
     viewMenu->addAction(darkThemeAction_);
     viewMenu->addAction(rtInMinutesAction_);
     viewMenu->addAction(tr("Reset panel layout"), this, &MainWindow::resetDockLayout);
+
+    // Explicit re-docking. Drag-to-dock is blocked by the custom header (desktop)
+    // and by WSLg, so offer every panel a Left/Right (vertical column), Top, or
+    // Bottom placement from the menu.
+    auto* dockMenu = viewMenu->addMenu(tr("Dock panel"));
+    const std::pair<QDockWidget*, QString> layoutPanels[] = {
+      {spectrumDock_, tr("Spectrum")}, {ticDock_, tr("Total ion chromatogram")},
+      {featuresDock_, tr("Features")}, {identificationsDock_, tr("Identifications")},
+      {spectraDock_, tr("Spectra")}, {chromatogramsDock_, tr("Chromatograms")},
+      {ionMobilityDock_, tr("Ion mobility")}, {faimsDock_, tr("FAIMS")},
+      {imagingDock_, tr("Imaging")}, {oswDock_, tr("OpenSWATH")},
+      {consensusDock_, tr("Consensus")}, {metadataDock_, tr("Metadata")},
+      {logDock_, tr("Log")}};
+    for (const auto& panel : layoutPanels)
+    {
+      QDockWidget* dock = panel.first;
+      auto* sub = dockMenu->addMenu(panel.second);
+      const auto add = [&](const QString& text, const QString& suffix, Qt::DockWidgetArea area)
+      {
+        QAction* action = sub->addAction(text, this, [this, dock, area] { moveDock(dock, area); });
+        action->setObjectName(dock->objectName() + suffix);
+      };
+      add(tr("Dock left (vertical)"), QStringLiteral("MoveLeft"), Qt::LeftDockWidgetArea);
+      add(tr("Dock right (vertical)"), QStringLiteral("MoveRight"), Qt::RightDockWidgetArea);
+      add(tr("Dock top"), QStringLiteral("MoveTop"), Qt::TopDockWidgetArea);
+      add(tr("Dock bottom"), QStringLiteral("MoveBottom"), Qt::BottomDockWidgetArea);
+    }
+
     viewMenu->addSeparator();
     viewMenu->addAction(ticDock_->toggleViewAction());
     viewMenu->addAction(spectrumDock_->toggleViewAction());
@@ -1423,6 +1472,19 @@ namespace OpenMSViewer
               });
     }
     setDockAvailable(logDock_, true);
+  }
+
+  void MainWindow::moveDock(QDockWidget* dock, Qt::DockWidgetArea area)
+  {
+    if (!dock) return;
+    if (dock->isFloating()) dock->setFloating(false);
+    // addDockWidget removes the panel from its current spot first; moving to a side
+    // area with existing panels splits (stacks) rather than tabs, so panels can be
+    // arranged vertically in a column.
+    addDockWidget(area, dock);
+    dock->setVisible(true);
+    dock->raise();
+    dockVisibilityPreference_[dock->objectName()] = true;
   }
 
   void MainWindow::configureDock(QDockWidget* dock)

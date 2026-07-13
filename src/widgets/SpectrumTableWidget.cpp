@@ -354,7 +354,8 @@ namespace OpenMSViewer
     mode_->setObjectName(QStringLiteral("spectrumModeFilter"));
     mode_->addItems({tr("All spectra"), tr("MS2"), tr("Identified")});
     first->addWidget(mode_);
-    first->addWidget(new QLabel(tr("RT"), this));
+    rtFilterLabel_ = new QLabel(RtUnit::columnHeader(rtInMinutes_), this);
+    first->addWidget(rtFilterLabel_);
     minimumRt_ = new QLineEdit(this);
     minimumRt_->setObjectName(QStringLiteral("spectrumMinimumRt"));
     minimumRt_->setPlaceholderText(tr("minimum"));
@@ -411,7 +412,9 @@ namespace OpenMSViewer
     table_->setSortingEnabled(true);
     table_->sortByColumn(SpectrumTableModel::Index, Qt::AscendingOrder);
     table_->verticalHeader()->setVisible(false);
-    table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    // Interactive (not ResizeToContents) so the header is not re-measured on every
+    // filter keystroke; widths are fitted once per data load in setData().
+    table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     table_->horizontalHeader()->setStretchLastSection(true);
     layout->addWidget(table_);
 
@@ -456,6 +459,7 @@ namespace OpenMSViewer
   {
     model_->setData(spectra, identifications);
     updateColumns();
+    table_->resizeColumnsToContents();
     updateCountLabel();
   }
 
@@ -470,17 +474,30 @@ namespace OpenMSViewer
     std::optional<std::size_t> hitIndex)
   {
     const int row = model_->rowForSpectrumSelection(spectrumIndex, identificationIndex, hitIndex);
-    if (row < 0) return;
-    const QModelIndex proxyIndex = proxy_->mapFromSource(model_->index(row, 0));
-    if (!proxyIndex.isValid()) return;
+    const QModelIndex proxyIndex = row < 0 ? QModelIndex()
+                                           : proxy_->mapFromSource(model_->index(row, 0));
     QScopedValueRollback guard(synchronizingSelection_, true);
+    if (!proxyIndex.isValid())
+    {
+      // The active spectrum is hidden by the current filter; drop the stale
+      // highlight so the table never contradicts the spectrum view.
+      table_->selectionModel()->clearSelection();
+      return;
+    }
     table_->selectRow(proxyIndex.row());
     table_->scrollTo(proxyIndex, QAbstractItemView::PositionAtCenter);
   }
 
   int SpectrumTableWidget::filteredRowCount() const noexcept { return proxy_->rowCount(); }
 
-  void SpectrumTableWidget::setRtInMinutes(bool minutes) { model_->setRtInMinutes(minutes); }
+  void SpectrumTableWidget::setRtInMinutes(bool minutes)
+  {
+    rtInMinutes_ = minutes;
+    model_->setRtInMinutes(minutes);
+    if (rtFilterLabel_) rtFilterLabel_->setText(RtUnit::columnHeader(minutes));
+    // Re-run so the RT boxes are re-interpreted in the newly active unit.
+    updateFilters();
+  }
 
   void SpectrumTableWidget::updateFilters()
   {
@@ -490,10 +507,16 @@ namespace OpenMSViewer
       const double value = text.trimmed().toDouble(&valid);
       return valid ? std::optional<double>{value} : std::nullopt;
     };
+    // RT boxes are entered in the displayed unit; the proxy filters raw seconds.
+    const double rtScale = RtUnit::scale(rtInMinutes_);
+    auto toSeconds = [rtScale](std::optional<double> value) -> std::optional<double>
+    {
+      return value ? std::optional<double>{*value * rtScale} : std::nullopt;
+    };
     auto* filter = static_cast<SpectrumFilterProxyModel*>(proxy_);
     filter->setMode(mode_->currentIndex());
-    filter->setMinimumRt(optionalNumber(minimumRt_->text()));
-    filter->setMaximumRt(optionalNumber(maximumRt_->text()));
+    filter->setMinimumRt(toSeconds(optionalNumber(minimumRt_->text())));
+    filter->setMaximumRt(toSeconds(optionalNumber(maximumRt_->text())));
     filter->setSequence(sequence_->text().trimmed());
     filter->setMinimumScore(optionalNumber(minimumScore_->text()));
     updateCountLabel();

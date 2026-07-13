@@ -1,5 +1,7 @@
 #include "export/MzMLExportDialog.h"
 
+#include "model/RtUnit.h"
+
 #include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -19,9 +21,9 @@ namespace OpenMSViewer
   MzMLExportDialog::MzMLExportDialog(
     const PlotRange& fullRange, const PlotRange& currentRange,
     const std::set<unsigned int>& msLevels, const std::vector<SpectrumRecord>& spectra,
-    std::optional<double> activeFaimsCv, QWidget* parent)
+    std::optional<double> activeFaimsCv, QWidget* parent, bool rtInMinutes)
     : QDialog(parent), fullRange_(fullRange), currentRange_(currentRange), spectra_(spectra),
-      activeFaimsCv_(activeFaimsCv)
+      activeFaimsCv_(activeFaimsCv), rtInMinutes_(rtInMinutes)
   {
     setWindowTitle(tr("Export filtered mzML"));
     setMinimumWidth(480);
@@ -53,7 +55,7 @@ namespace OpenMSViewer
     rtLayout->addWidget(rtMinimum_);
     rtLayout->addWidget(new QLabel(tr("to"), this));
     rtLayout->addWidget(rtMaximum_);
-    form->addRow(tr("RT (seconds)"), rtRow);
+    form->addRow(RtUnit::columnHeader(rtInMinutes_), rtRow);
     auto* mzRow = new QWidget(this);
     auto* mzLayout = new QHBoxLayout(mzRow);
     mzLayout->setContentsMargins(0, 0, 0, 0);
@@ -112,7 +114,8 @@ namespace OpenMSViewer
   MzMLExportFilter MzMLExportDialog::filter() const
   {
     MzMLExportFilter result;
-    result.range = {rtMinimum_->value(), rtMaximum_->value(),
+    const double rtScale = RtUnit::scale(rtInMinutes_);
+    result.range = {rtMinimum_->value() * rtScale, rtMaximum_->value() * rtScale,
                     mzMinimum_->value(), mzMaximum_->value()};
     for (const auto& [level, check] : levelChecks_)
       if (check->isChecked()) result.msLevels.insert(level);
@@ -140,8 +143,9 @@ namespace OpenMSViewer
 
   void MzMLExportDialog::setRange(const PlotRange& range)
   {
-    rtMinimum_->setValue(range.rtMin);
-    rtMaximum_->setValue(range.rtMax);
+    const double rtScale = RtUnit::scale(rtInMinutes_);
+    rtMinimum_->setValue(range.rtMin / rtScale);
+    rtMaximum_->setValue(range.rtMax / rtScale);
     mzMinimum_->setValue(range.mzMin);
     mzMaximum_->setValue(range.mzMax);
     updatePreview();

@@ -2,7 +2,7 @@
 
 #include <QWidget>
 
-#include <vector>
+#include <deque>
 
 class QComboBox;
 class QLineEdit;
@@ -23,6 +23,7 @@ namespace OpenMSViewer
   private slots:
     void appendMessage(int severity, const QString& message);
     void updateFilter();
+    void copyAll();
     void saveLog();
 
   private:
@@ -33,7 +34,11 @@ namespace OpenMSViewer
       QString message;
     };
 
-    std::vector<Entry> entries_;
+    [[nodiscard]] bool accepted(const Entry& entry) const;
+    [[nodiscard]] static QString formatEntry(const Entry& entry);
+    [[nodiscard]] QString allText() const;
+
+    std::deque<Entry> entries_;
     QComboBox* severity_{nullptr};
     QLineEdit* search_{nullptr};
     QPlainTextEdit* output_{nullptr};

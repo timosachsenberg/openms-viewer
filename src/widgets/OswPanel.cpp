@@ -244,10 +244,13 @@ namespace OpenMSViewer
     splitter->addWidget(precursorView_);
 
     peakGroupModel_ = new OswPeakGroupModel(this);
+    peakGroupProxy_ = new QSortFilterProxyModel(this);
+    peakGroupProxy_->setSourceModel(peakGroupModel_);
+    peakGroupProxy_->setSortRole(Qt::UserRole);
     peakGroupView_ = new QTableView(this);
     peakGroupView_->setObjectName(QStringLiteral("oswPeakGroupTable"));
-    peakGroupView_->setModel(peakGroupModel_);
-    peakGroupView_->setSortingEnabled(false);
+    peakGroupView_->setModel(peakGroupProxy_);
+    peakGroupView_->setSortingEnabled(true);
     peakGroupView_->setSelectionBehavior(QAbstractItemView::SelectRows);
     peakGroupView_->setSelectionMode(QAbstractItemView::SingleSelection);
     peakGroupView_->horizontalHeader()->setStretchLastSection(true);
@@ -323,6 +326,10 @@ namespace OpenMSViewer
     plot_->clear();
     scoreTable_->setRowCount(0);
     chromatogramNote_->setText(chromatograms_ ? QString() : chromatogramNote);
+    // Without a sibling chromatogram source the plot has no traces, so the
+    // trace-display toggles have nothing to act on: disable them.
+    showAllTransitions_->setEnabled(static_cast<bool>(chromatograms_));
+    smoothTraces_->setEnabled(static_cast<bool>(chromatograms_));
 
     {
       // Populate the run selector without its currentIndexChanged handler firing.
@@ -403,7 +410,8 @@ namespace OpenMSViewer
   int OswPanel::selectedPeakGroupRow() const
   {
     const QModelIndex index = peakGroupView_->currentIndex();
-    return index.isValid() ? index.row() : (peakGroups_.empty() ? -1 : 0);
+    if (!index.isValid()) return peakGroups_.empty() ? -1 : 0;
+    return peakGroupProxy_->mapToSource(index).row();
   }
 
   void OswPanel::onPeakGroupActivated()
@@ -427,6 +435,10 @@ namespace OpenMSViewer
       refreshPlot();
       return;
     }
+    // Show an empty plot while the fetch runs so the previous precursor's traces
+    // don't linger under the new peak-group boundaries (currentTransitions_ was
+    // just cleared above).
+    refreshPlot();
     // Off-thread fetch; QFutureWatcher::setFuture drops any earlier in-flight
     // result, so only the latest selection is applied.
     pendingPrecursor_ = precursorId;

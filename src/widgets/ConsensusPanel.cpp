@@ -237,7 +237,12 @@ namespace OpenMSViewer
         return;
       }
     }
-    clearDetails();  // the requested feature is filtered out of the current view
+    // the requested feature is filtered out of the current view: clear the stale
+    // highlight too, so the selected row and the (blank) details stay consistent
+    QScopedValueRollback<bool> guard(synchronizing_, true);
+    view_->selectionModel()->clearSelection();
+    view_->selectionModel()->clearCurrentIndex();
+    clearDetails();
   }
 
   void ConsensusPanel::clearDetails()

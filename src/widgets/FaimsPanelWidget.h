@@ -1,6 +1,7 @@
 #pragma once
 
 #include "model/RunData.h"
+#include "plot/PeakMapRasterizer.h"
 #include "plot/PlotRange.h"
 
 #include <OpenMS/KERNEL/MSExperiment.h>
@@ -34,6 +35,7 @@ namespace OpenMSViewer
                  const PlotRange& bounds);
     void setViewRange(const PlotRange& range);
     void setSelectedChannel(int channelIndex);
+    void setColorMap(PeakMapColorMap colorMap);
     [[nodiscard]] const std::vector<QImage>& images() const noexcept;
 
   signals:
@@ -54,6 +56,7 @@ namespace OpenMSViewer
     PlotRange bounds_;
     PlotRange view_;
     std::vector<QImage> images_;
+    PeakMapColorMap colorMap_{PeakMapColorMap::Viridis};
     int selectedChannel_{-1};
     std::uint64_t desiredGeneration_{0};
     std::uint64_t activeGeneration_{0};
@@ -104,6 +107,7 @@ namespace OpenMSViewer
     void clear();
     void setPeakMapRange(const PlotRange& range);
     void setSelectedChannel(int channelIndex);
+    void setColorMap(int colorMapIndex);
     void setRtInMinutes(bool minutes);
     [[nodiscard]] std::size_t channelCount() const noexcept;
     [[nodiscard]] int selectedChannel() const noexcept;

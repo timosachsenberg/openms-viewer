@@ -3,7 +3,9 @@
 #include "plot/PlotAxis.h"
 
 #include <QFileInfo>
+#include <QMouseEvent>
 #include <QPainter>
+#include <QToolTip>
 
 #include <algorithm>
 #include <cmath>
@@ -35,6 +37,9 @@ namespace OpenMSViewer
     setMinimumHeight(160);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAccessibleName(tr("Per-map intensity"));
+    // Hover to identify a column: the dot strip (many maps) drops the rotated
+    // axis labels, so a tooltip is the only way to read which run a slot is.
+    setMouseTracking(true);
   }
 
   void ConsensusQuantChart::setData(std::vector<ConsensusHandle> handles,
@@ -162,5 +167,38 @@ namespace OpenMSViewer
         painter.restore();
       }
     }
+  }
+
+  void ConsensusQuantChart::mouseMoveEvent(QMouseEvent* event)
+  {
+    const QRectF area = plotRect();
+    const int columnCount = static_cast<int>(columns_.size());
+    if (columnCount == 0 || area.width() <= 0.0)
+    {
+      QToolTip::hideText();
+      QWidget::mouseMoveEvent(event);
+      return;
+    }
+
+    // Map the cursor to the nearest column slot; this is the only per-map
+    // identification available in the dot strip, where axis labels are dropped.
+    const double x = event->position().x();
+    int index = static_cast<int>((x - area.left()) / (area.width() / columnCount));
+    index = std::clamp(index, 0, columnCount - 1);
+    const ConsensusColumn& column = columns_[static_cast<std::size_t>(index)];
+
+    double intensity = 0.0;
+    bool present = false;
+    for (const ConsensusHandle& handle : handles_)
+      if (handle.mapIndex == column.mapIndex && std::isfinite(handle.intensity))
+      {
+        intensity += handle.intensity;
+        present = true;
+      }
+
+    const QString value = present ? QString::number(intensity, 'g', 6) : tr("not quantified");
+    QToolTip::showText(event->globalPosition().toPoint(),
+                       QStringLiteral("%1\n%2").arg(columnLabel(column), value), this);
+    QWidget::mouseMoveEvent(event);
   }
 }

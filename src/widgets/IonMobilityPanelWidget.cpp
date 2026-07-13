@@ -602,10 +602,10 @@ namespace OpenMSViewer
     smoothMobilogram->setObjectName(QStringLiteral("ionMobilitySmooth"));
     smoothMobilogram->setToolTip(tr("Overlay a Savitzky-Golay lowpass of the mobilogram"));
     controls->addWidget(smoothMobilogram);
-    auto* diaWindows = new QCheckBox(tr("DIA windows"), this);
-    diaWindows->setObjectName(QStringLiteral("ionMobilityDiaWindows"));
-    diaWindows->setToolTip(tr("Overlay the diaPASEF isolation window groups (m/z × ion mobility)"));
-    controls->addWidget(diaWindows);
+    diaWindows_ = new QCheckBox(tr("DIA windows"), this);
+    diaWindows_->setObjectName(QStringLiteral("ionMobilityDiaWindows"));
+    diaWindows_->setToolTip(tr("Overlay the diaPASEF isolation window groups (m/z × ion mobility)"));
+    controls->addWidget(diaWindows_);
     linkMz_ = new QCheckBox(tr("Link spectrum m/z"), this);
     linkMz_->setObjectName(QStringLiteral("ionMobilityLinkMz"));
     controls->addWidget(linkMz_);
@@ -631,8 +631,11 @@ namespace OpenMSViewer
         frameSelector_->setCurrentIndex(frameSelector_->currentIndex() + 1);
     });
     connect(mobilogram_, &QCheckBox::toggled, plot_, &IonMobilityPlotWidget::setShowMobilogram);
+    // Smoothing only restyles the mobilogram trace, so it is interactive only while
+    // the mobilogram is shown.
+    connect(mobilogram_, &QCheckBox::toggled, smoothMobilogram, &QWidget::setEnabled);
     connect(smoothMobilogram, &QCheckBox::toggled, plot_, &IonMobilityPlotWidget::setSmoothMobilogram);
-    connect(diaWindows, &QCheckBox::toggled, plot_, &IonMobilityPlotWidget::setShowDiaWindows);
+    connect(diaWindows_, &QCheckBox::toggled, plot_, &IonMobilityPlotWidget::setShowDiaWindows);
     connect(linkMz_, &QCheckBox::toggled, this, [this](bool linked)
     {
       if (!linked) return;
@@ -658,6 +661,14 @@ namespace OpenMSViewer
     experiment_ = std::move(experiment);
     frames_ = frames;
     plot_->setData(experiment_, frames_);
+    // The DIA-window overlay is inert without reconstructed diaPASEF windows (e.g.
+    // DDA-PASEF), so disable the control and explain why rather than leaving it a
+    // live but no-op toggle.
+    const bool hasDiaWindows = plot_->hasDiaWindows();
+    diaWindows_->setEnabled(hasDiaWindows);
+    diaWindows_->setToolTip(hasDiaWindows
+      ? tr("Overlay the diaPASEF isolation window groups (m/z × ion mobility)")
+      : tr("No diaPASEF isolation windows in this data"));
     const QSignalBlocker blocker(frameSelector_);
     frameSelector_->clear();
     for (const auto& frame : frames_)
@@ -687,12 +698,14 @@ namespace OpenMSViewer
     {
       return frame.spectrumIndex == spectrumIndex;
     });
-    const int position = found == frames_.end() ? -1
-      : static_cast<int>(std::distance(frames_.begin(), found));
+    // A non-IM spectrum has no frame here; keep the current frame and its zoom
+    // displayed rather than blanking the panel to the placeholder.
+    if (found == frames_.end()) return;
+    const int position = static_cast<int>(std::distance(frames_.begin(), found));
     const QSignalBlocker blocker(frameSelector_);
     frameSelector_->setCurrentIndex(position);
     selectPosition(position, false);
-    if (position >= 0 && linkMz_->isChecked() && spectrumMzRange_)
+    if (linkMz_->isChecked() && spectrumMzRange_)
       plot_->setMzRange(spectrumMzRange_->first, spectrumMzRange_->second, false);
   }
 

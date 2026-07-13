@@ -36,7 +36,7 @@ if(NOT TARGET OpenMS)
   find_package(OpenMS 3.6...<3.7 CONFIG REQUIRED)
 endif()
 # Qt is needed in both modes; find_package is idempotent if the parent already ran it.
-find_package(Qt6 6.4 REQUIRED COMPONENTS Concurrent Gui Widgets)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Concurrent Gui Widgets Svg)
 
 add_library(openms_viewer_core STATIC
   src/export/MzMLExporter.cpp
@@ -146,6 +146,7 @@ target_link_libraries(openms_viewer_ui
     openms_viewer_core
     Qt6::Concurrent
     Qt6::Widgets
+    Qt6::Svg
 )
 
 add_executable(openms-viewer src/main.cpp)
@@ -233,6 +234,7 @@ if(OPENMS_VIEWER_BUILD_TESTS)
     tests/SpectrumInteractionTest.cpp
     tests/LogWidgetTest.cpp
     tests/UxWorkflowTest.cpp
+    tests/FeatureVisualizationTest.cpp
   )
   target_link_libraries(openms_viewer_tests
     PRIVATE
@@ -240,6 +242,10 @@ if(OPENMS_VIEWER_BUILD_TESTS)
       openms_viewer_ui
       Qt6::Test
   )
+  # Real sample data (BSA tryptic digest: raw run + 256 features + 48 IDs) vendored
+  # under tests/data, for tests that exercise file loading and feature visualization.
+  target_compile_definitions(openms_viewer_tests
+    PRIVATE "OPENMS_VIEWER_TEST_DATA_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/data\"")
   add_test(NAME openms_viewer_tests COMMAND openms_viewer_tests)
   set_tests_properties(openms_viewer_tests PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"

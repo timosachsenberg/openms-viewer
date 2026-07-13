@@ -9,6 +9,7 @@
 #include <QImage>
 #include <QFileInfo>
 #include <QPainter>
+#include <QFile>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QWidget>
@@ -90,6 +91,16 @@ private slots:
     const QImage image(path);
     QVERIFY(!image.isNull());
     QCOMPARE(image.size(), QSize(320, 180));
+
+    // SVG (vector) export: writes a well-formed, non-empty <svg> document.
+    const QString svgPath = directory.filePath(QStringLiteral("plot.svg"));
+    QCOMPARE(OpenMSViewer::PlotExporter::writeSvg(widget, svgPath), QString());
+    QFile svgFile(svgPath);
+    QVERIFY(svgFile.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray svg = svgFile.readAll();
+    QVERIFY(svg.size() > 0);
+    QVERIFY(svg.contains("<svg"));
+    QVERIFY(svg.contains("</svg>"));
 
     const auto experiment = OpenMSViewer::TestData::experiment();
     std::vector<OpenMSViewer::SpectrumRecord> spectra;

@@ -313,6 +313,9 @@ namespace OpenMSViewer
   void TicWidget::wheelEvent(QWheelEvent* event)
   {
     if (points_.empty() || !plotRect().contains(event->position().toPoint())) return;
+    // A horizontal trackpad scroll delivers no vertical delta; ignore it rather
+    // than treating the zero as a zoom-out.
+    if (event->angleDelta().y() == 0) return;
     const double fullMin = points_.front().rt;
     const double fullMax = std::max(fullMin + 1.0, points_.back().rt);
     const double currentMin = hasPeakMapRange_ ? peakMapRange_.rtMin : fullMin;

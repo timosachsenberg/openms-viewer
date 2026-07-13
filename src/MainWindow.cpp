@@ -453,10 +453,10 @@ namespace OpenMSViewer
     if (settings.contains(QStringLiteral("main/geometry")))
       restoreGeometry(settings.value(QStringLiteral("main/geometry")).toByteArray());
     const bool hasSavedState = settings.contains(QStringLiteral("main/state"));
-    if (hasSavedState)
-      restoreState(settings.value(QStringLiteral("main/state")).toByteArray());
-    else
-      arrangeDocksDefault();  // fresh launch: tables full-width in the bottom, not the side
+    if (!hasSavedState
+        || !restoreState(settings.value(QStringLiteral("main/state")).toByteArray()))
+      arrangeDocksDefault();  // fresh launch or corrupt/incompatible saved layout:
+                              // tables full-width in the bottom, not the side
     // A floating panel becomes a separate top-level window that, on some
     // platforms (notably WSLg/Wayland), never receives mouse input — leaving it
     // impossible to move, dock, or close. Never start in that state: re-dock any
@@ -700,10 +700,6 @@ namespace OpenMSViewer
     saveConsensusAction_->setEnabled(false);
     connect(saveConsensusAction_, &QAction::triggered, this, &MainWindow::saveConsensus);
 
-    auto* quitAction = new QAction(tr("Quit"), this);
-    quitAction->setShortcut(QKeySequence::Quit);
-    connect(quitAction, &QAction::triggered, this, &QWidget::close);
-
     zoomBackAction_ = new QAction(style()->standardIcon(QStyle::SP_ArrowBack), tr("Previous view"), this);
     zoomBackAction_->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Left));
     zoomBackAction_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
@@ -779,7 +775,9 @@ namespace OpenMSViewer
     connect(rtInMinutesAction_, &QAction::toggled, ionMobility_, &IonMobilityPanelWidget::setRtInMinutes);
     connect(rtInMinutesAction_, &QAction::toggled, osw_, &OswPanel::setRtInMinutes);
     connect(rtInMinutesAction_, &QAction::toggled, metadata_, &MetadataBrowserWidget::setRtInMinutes);
-    connect(rtInMinutesAction_, &QAction::toggled, surface3D_, &PeakSurface3DWidget::setRtInMinutes);
+    // surface3D_ is created lazily (show3DSurface), so it cannot be wired here —
+    // connecting a null receiver silently drops the connection. It is connected
+    // and seeded with the current unit when it is constructed instead.
     // Refresh MainWindow's own cached RT readouts (status bar / context labels).
     connect(rtInMinutesAction_, &QAction::toggled, this, [this]
     {
@@ -938,6 +936,9 @@ namespace OpenMSViewer
     spectrumPreviousAction_->setShortcut(QKeySequence(Qt::Key_PageUp));
     spectrumNextAction_->setShortcut(QKeySequence(Qt::Key_PageDown));
     spectrumLastAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_End));
+    // PageUp/PageDown/Ctrl+Home/Ctrl+End navigate spectra window-wide (default
+    // WindowShortcut context) by design: table selection drives spectrum
+    // selection, so these keys page through spectra even when a table has focus.
     connect(spectrumFirstAction_, &QAction::triggered, this,
             [this] { selectEdgeSpectrum(false, navigationMsLevel()); });
     connect(spectrumPreviousAction_, &QAction::triggered, this,
@@ -954,7 +955,6 @@ namespace OpenMSViewer
       isFullScreen() ? showNormal() : showFullScreen();
     });
 
-    addAction(quitAction);
     addAction(fullscreenAction);
   }
 
@@ -974,7 +974,7 @@ namespace OpenMSViewer
     fileMenu->addSeparator();
     auto* exportMenu = fileMenu->addMenu(tr("Export"));
     exportMenu->addAction(exportMzMLAction_);
-    auto* plotMenu = exportMenu->addMenu(tr("Plot as PNG"));
+    auto* plotMenu = exportMenu->addMenu(tr("Plot as image (PNG/SVG)"));
     plotMenu->addAction(tr("Peak map…"), this,
                         [this] { savePlot(peakMap_, QStringLiteral("peak_map.png")); });
     plotMenu->addAction(tr("Spectrum…"), this,
@@ -1045,6 +1045,8 @@ namespace OpenMSViewer
     viewMenu->addAction(ionMobilityDock_->toggleViewAction());
     viewMenu->addAction(faimsDock_->toggleViewAction());
     viewMenu->addAction(imagingDock_->toggleViewAction());
+    viewMenu->addAction(oswDock_->toggleViewAction());
+    viewMenu->addAction(consensusDock_->toggleViewAction());
     viewMenu->addAction(metadataDock_->toggleViewAction());
     viewMenu->addAction(logDock_->toggleViewAction());
 
@@ -1118,6 +1120,8 @@ namespace OpenMSViewer
             peakMap_, &PeakMapWidget::setColorMap);
     connect(colorMap, qOverload<int>(&QComboBox::currentIndexChanged),
             ionMobility_, &IonMobilityPanelWidget::setColorMap);
+    connect(colorMap, qOverload<int>(&QComboBox::currentIndexChanged),
+            faims_, &FaimsPanelWidget::setColorMap);
 
     auto* scale = new QComboBox(peakMapControlBar_);
     scale->setObjectName(QStringLiteral("peakMapIntensityScale"));
@@ -1353,7 +1357,7 @@ namespace OpenMSViewer
           menu.addAction(tr("Reset view"), this, reset);
           menu.addSeparator();
         }
-        menu.addAction(tr("Export plot as PNG…"), this,
+        menu.addAction(tr("Export plot as image…"), this,
                        [this, widget, defaultName] { savePlot(widget, defaultName); });
         menu.exec(widget->mapToGlobal(point));
       });
@@ -1624,6 +1628,10 @@ namespace OpenMSViewer
       auto* layout = new QVBoxLayout(surface3DDialog_);
       layout->setContentsMargins(0, 0, 0, 0);
       surface3D_ = new PeakSurface3DWidget(surface3DDialog_);
+      // Wire the "RT in minutes" toggle now that the widget exists, and seed it
+      // with the current unit so the first view already matches the rest of the app.
+      connect(rtInMinutesAction_, &QAction::toggled, surface3D_, &PeakSurface3DWidget::setRtInMinutes);
+      surface3D_->setRtInMinutes(rtInMinutes());
       layout->addWidget(surface3D_);
     }
     surface3D_->setView(experiment, view, peakMap_->colorMap());
@@ -1800,6 +1808,12 @@ namespace OpenMSViewer
   void MainWindow::updateRunContext()
   {
     reloadAction_->setEnabled(!lastPrimaryPath_.isEmpty() && QFileInfo::exists(lastPrimaryPath_));
+    // A bare feature/id overlay (no raw run) is still closable: keep "Close data"
+    // reachable whenever anything is loaded, since it is the only UI that clears an
+    // overlay-only session.
+    closeDataAction_->setEnabled(imagingStore_ || !document_.isEmpty()
+      || document_.hasFeatures() || document_.hasIdentifications()
+      || hasConsensusData_ || hasOswData_);
     // Results views (consensus / OSW) can be loaded alongside — or instead of — a raw
     // run, so they are tagged everywhere rather than only on the raw-run branch.
     QStringList results;
@@ -1818,11 +1832,19 @@ namespace OpenMSViewer
     }
     if (document_.isEmpty())
     {
-      // Results-only session (no raw run): surface the results instead of "No data".
-      if (!results.isEmpty())
+      // Overlay/results-only session (no raw run): surface whatever is loaded —
+      // features, identifications, consensus, or OSW — instead of "No data".
+      QStringList overlaysOnly;
+      if (document_.hasFeatures()) overlaysOnly << tr("Features");
+      if (document_.hasIdentifications()) overlaysOnly << tr("IDs");
+      overlaysOnly += results;
+      if (!overlaysOnly.isEmpty())
       {
-        const QString source = hasConsensusData_ ? consensusSourcePath_ : oswSourcePath_;
-        runContext_->setText(tr("%1%2").arg(QFileInfo(source).fileName(), resultsTag));
+        const QString source = document_.hasFeatures() ? document_.featuresPath()
+          : document_.hasIdentifications() ? document_.identificationsPath()
+          : hasConsensusData_ ? consensusSourcePath_ : oswSourcePath_;
+        runContext_->setText(tr("%1 · %2").arg(QFileInfo(source).fileName(),
+                                               overlaysOnly.join(QStringLiteral(" + "))));
         runContext_->setToolTip(source);
       }
       else
@@ -1938,9 +1960,10 @@ namespace OpenMSViewer
     const bool available = count > 0;
     for (QAction* action : {spectrumFirstAction_, spectrumPreviousAction_, spectrumNextAction_,
                             spectrumLastAction_, annotateSpectrumAction_, mirrorSpectrumAction_,
-                            showUnmatchedIonsAction_, measureSpectrumAction_, showMzLabelsAction_,
-                            showSpectrumGridAction_,
-                            resetSpectrumViewAction_, clearSpectrumMeasurementsAction_})
+                            showUnmatchedIonsAction_, measureSpectrumAction_, labelSpectrumAction_,
+                            showMzLabelsAction_, showSpectrumGridAction_,
+                            resetSpectrumViewAction_, clearSpectrumMeasurementsAction_,
+                            clearSpectrumLabelsAction_})
       if (action) action->setEnabled(available);
     if (spectrumLevel_) spectrumLevel_->setEnabled(available && !imagingStore_);
     if (spectrumSearch_) spectrumSearch_->setEnabled(available && !imagingStore_);
@@ -2747,7 +2770,7 @@ namespace OpenMSViewer
         && static_cast<std::size_t>(selection_.faimsChannel()) < document_.faimsChannels().size())
       activeCv = document_.faimsChannels()[static_cast<std::size_t>(selection_.faimsChannel())].compensationVoltage;
     MzMLExportDialog dialog(document_.bounds(), peakMap_->viewRange(), levels,
-                            document_.spectra(), activeCv, this);
+                            document_.spectra(), activeCv, this, rtInMinutes());
     if (dialog.exec() != QDialog::Accepted) return;
 
     const QFileInfo source(document_.sourcePath());
@@ -2862,13 +2885,28 @@ namespace OpenMSViewer
     const QString directory = document_.sourcePath().isEmpty()
       ? QString() : QFileInfo(document_.sourcePath()).absolutePath();
     const QString suggested = directory.isEmpty() ? defaultName : QDir(directory).filePath(defaultName);
-    const QString path = QFileDialog::getSaveFileName(
-      this, tr("Export plot as PNG"), suggested, tr("PNG image (*.png);;All files (*)"));
+    QString selectedFilter;
+    QString path = QFileDialog::getSaveFileName(
+      this, tr("Export plot"), suggested,
+      tr("PNG image (*.png);;SVG vector image (*.svg);;All files (*)"), &selectedFilter);
     if (path.isEmpty()) return;
-    const QString error = PlotExporter::writePng(*widget, path);
+
+    // Choose the writer by the file's extension; if the user typed none, follow the
+    // filter they picked and append the matching suffix. SVG keeps axes, sticks and
+    // labels scalable (vector); PNG is a pixel snapshot.
+    QString suffix = QFileInfo(path).suffix().toLower();
+    if (suffix.isEmpty())
+    {
+      const bool wantSvg = selectedFilter.contains(QStringLiteral("svg"), Qt::CaseInsensitive);
+      suffix = wantSvg ? QStringLiteral("svg") : QStringLiteral("png");
+      path += QLatin1Char('.') + suffix;
+    }
+    const bool svg = suffix == QStringLiteral("svg");
+    const QString error = svg ? PlotExporter::writeSvg(*widget, path)
+                              : PlotExporter::writePng(*widget, path);
     if (!error.isEmpty())
     {
-      showOperationError(tr("Could not export plot"), tr("The PNG plot could not be written."), error);
+      showOperationError(tr("Could not export plot"), tr("The plot could not be written."), error);
       return;
     }
     statusBar()->showMessage(tr("Saved plot to %1").arg(QFileInfo(path).fileName()), 5000);

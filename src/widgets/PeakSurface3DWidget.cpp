@@ -129,12 +129,18 @@ namespace OpenMSViewer
   {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.fillRect(rect(), palette().window());
-    const QColor floor = QColor::fromRgb(PeakMapRasterizer::color(0.0, colorMap_));
+    // Fixed dark viewport (theme-independent): a 3-D intensity surface reads best
+    // with the peaks glowing against a dark backdrop, like the 2-D peak map.
+    QLinearGradient backdrop(0, 0, 0, height());
+    backdrop.setColorAt(0.0, QColor(36, 38, 48));
+    backdrop.setColorAt(1.0, QColor(15, 16, 23));
+    painter.fillRect(rect(), backdrop);
+    const QColor titleColor(222, 224, 232);
+    const QColor hintColor(150, 152, 166);
 
     if (!experiment_ || !viewFitsForSurface(range_))
     {
-      painter.setPen(palette().color(QPalette::PlaceholderText));
+      painter.setPen(hintColor);
       painter.drawText(rect(), Qt::AlignCenter,
         tr("Zoom the peak map in (RT ≤ %1 s, m/z ≤ %2) to view the 3-D surface")
           .arg(kMaxRtSpan, 0, 'f', 0).arg(kMaxMzSpan, 0, 'f', 0));
@@ -142,9 +148,8 @@ namespace OpenMSViewer
     }
     if (grid_.rows < 2 || grid_.cols < 2 || grid_.maximum <= 0.0F)
     {
-      painter.fillRect(rect(), floor);
-      painter.setPen(palette().color(QPalette::PlaceholderText));
-      painter.drawText(rect(), watcher_.isRunning() ? Qt::AlignCenter : Qt::AlignCenter,
+      painter.setPen(hintColor);
+      painter.drawText(rect(), Qt::AlignCenter,
                        watcher_.isRunning() ? tr("Building surface…") : tr("No signal in this region"));
       return;
     }
@@ -154,19 +159,20 @@ namespace OpenMSViewer
     const double maximum = grid_.maximum;
     const double sinYaw = std::sin(yaw_), cosYaw = std::cos(yaw_);
     const double sinPitch = std::sin(pitch_), cosPitch = std::cos(pitch_);
-    const double scale = std::min(width(), height()) * 0.62 * zoom_;
-    const double centerX = width() * 0.5;
-    const double centerY = height() * 0.54;
     const std::array<double, 3> light{-0.4, -0.5, 0.75};   // toward upper-left-front
 
-    // Project every vertex once; quads reference four of them.
-    std::vector<QPointF> screen(static_cast<std::size_t>(rows) * cols);
-    std::vector<double> heightAt(static_cast<std::size_t>(rows) * cols);
     const auto normAt = [&](int r, int c)
     {
       const double value = grid_.values[static_cast<std::size_t>(r) * cols + c];
       return std::isfinite(value) ? std::clamp(value / maximum, 0.0, 1.0) : 0.0;
     };
+
+    // Pass 1 — project every vertex at unit scale to find the surface's TRUE screen
+    // bounds (over the real heights, not an idealized corner box). This lets the fit
+    // below fill the widget tightly, with no dead headroom above the tallest peak.
+    std::vector<QPointF> unit(static_cast<std::size_t>(rows) * cols);   // (rx, py) at scale 1
+    std::vector<double> heightAt(static_cast<std::size_t>(rows) * cols);
+    double minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
     for (int r = 0; r < rows; ++r)
       for (int c = 0; c < cols; ++c)
       {
@@ -176,10 +182,27 @@ namespace OpenMSViewer
         heightAt[static_cast<std::size_t>(r) * cols + c] = h;
         const double rx = x * cosYaw - y * sinYaw;
         const double ry = x * sinYaw + y * cosYaw;
-        const double sx = centerX + rx * scale;
-        const double sy = centerY + (ry * sinPitch - h * cosPitch) * scale;
-        screen[static_cast<std::size_t>(r) * cols + c] = QPointF(sx, sy);
+        const double py = ry * sinPitch - h * cosPitch;
+        unit[static_cast<std::size_t>(r) * cols + c] = QPointF(rx, py);
+        minX = std::min(minX, rx); maxX = std::max(maxX, rx);
+        minY = std::min(minY, py); maxY = std::max(maxY, py);
       }
+
+    // Fit those bounds into the widget (reserving a top strip for the title), so the
+    // surface fills the space at any rotation/zoom instead of sitting tiny in a wide
+    // window. Uniform scale on both axes keeps the geometry undistorted.
+    const double marginX = 24.0, marginTop = 34.0, marginBottom = 22.0;
+    const double availW = std::max(1.0, width() - 2.0 * marginX);
+    const double availH = std::max(1.0, height() - marginTop - marginBottom);
+    const double spanX = std::max(1e-6, maxX - minX), spanY = std::max(1e-6, maxY - minY);
+    const double scale = std::min(availW / spanX, availH / spanY) * zoom_;
+    const double centerX = width() * 0.5 - 0.5 * (minX + maxX) * scale;
+    const double centerY = (marginTop + availH * 0.5) - 0.5 * (minY + maxY) * scale;
+
+    // Pass 2 — scale + centre the projected vertices; quads reference four of them.
+    std::vector<QPointF> screen(static_cast<std::size_t>(rows) * cols);
+    for (std::size_t i = 0; i < screen.size(); ++i)
+      screen[i] = QPointF(centerX + unit[i].x() * scale, centerY + unit[i].y() * scale);
 
     // Build quads with a depth key and painter's-algorithm order (far first).
     struct Quad { std::array<int, 4> v; double depth; QRgb color; };
@@ -225,18 +248,34 @@ namespace OpenMSViewer
     std::sort(quads.begin(), quads.end(),
               [](const Quad& a, const Quad& b) { return a.depth > b.depth; });   // far -> near
 
-    const QColor edge(0, 0, 0, 40);
     for (const Quad& quad : quads)
     {
       QPolygonF poly;
       for (const int index : quad.v) poly << screen[static_cast<std::size_t>(index)];
-      painter.setPen(QPen(edge, 0.4));
-      painter.setBrush(QColor::fromRgb(quad.color));
+      const QColor fill = QColor::fromRgb(quad.color);
+      // Stroke each quad in its own fill colour: closes the anti-aliased seams
+      // between adjacent quads so the surface reads as one smooth sheet, not a mesh.
+      painter.setPen(QPen(fill, 0.6));
+      painter.setBrush(fill);
       painter.drawPolygon(poly);
     }
 
+    // Faint footprint outline to anchor the surface's base in space.
+    const auto basePoint = [&](double x, double y)
+    {
+      const double rx = x * cosYaw - y * sinYaw;
+      const double ry = x * sinYaw + y * cosYaw;
+      return QPointF(centerX + rx * scale, centerY + ry * sinPitch * scale);
+    };
+    QPolygonF footprint;
+    footprint << basePoint(-0.5, -0.5) << basePoint(0.5, -0.5)
+              << basePoint(0.5, 0.5) << basePoint(-0.5, 0.5);
+    painter.setPen(QPen(QColor(255, 255, 255, 30), 1.0));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawPolygon(footprint);
+
     // Title + orientation hint.
-    painter.setPen(palette().color(QPalette::Text));
+    painter.setPen(titleColor);
     painter.drawText(QRect(8, 6, width() - 16, 18), Qt::AlignLeft | Qt::AlignVCenter,
       tr("3-D surface · RT %1–%2 %3 · m/z %4–%5")
         .arg(RtUnit::format(range_.rtMin, rtInMinutes_, 1), RtUnit::format(range_.rtMax, rtInMinutes_, 1),

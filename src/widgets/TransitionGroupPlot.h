@@ -3,8 +3,10 @@
 #include "model/ChromatogramSource.h"
 #include "model/OswStore.h"
 
+#include <QPoint>
 #include <QWidget>
 
+#include <optional>
 #include <vector>
 
 namespace OpenMSViewer
@@ -31,6 +33,8 @@ namespace OpenMSViewer
 
   protected:
     void paintEvent(QPaintEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void leaveEvent(QEvent* event) override;
 
   private:
     [[nodiscard]] QRectF plotRect() const;
@@ -48,6 +52,10 @@ namespace OpenMSViewer
     std::vector<OswPeakGroup> peakGroups_;
     int selectedPeakGroup_{-1};
     double libraryRt_{0.0};
+    // True once a precursor's transitions have been handed in via setData(), so an
+    // empty plot can distinguish "no precursor selected" from "fetch returned no data".
+    bool dataRequested_{false};
+    std::optional<QPoint> hoverPos_;  // last cursor position, for the RT/intensity chip
     bool showAll_{false};
     bool smooth_{false};
     bool rtInMinutes_{false};

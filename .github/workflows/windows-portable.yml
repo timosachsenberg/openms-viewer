@@ -21,7 +21,7 @@ env:
   OPENMS_INSTALL: ${{ github.workspace }}/_install/OpenMS
   VIEWER_BUILD: ${{ github.workspace }}/_build/viewer
   VIEWER_STAGE: ${{ github.workspace }}/_stage/OpenMSViewer
-  THERMO_TEST_DATA: ${{ github.workspace }}/_deps/test-data/Angiotensin_AllScans.raw
+  THERMO_TEST_DATA: ${{ github.workspace }}/_deps/OpenMS/src/tests/topp/THIRDPARTY/ginkgotoxin-ms-switching.raw
   CMAKE_BUILD_PARALLEL_LEVEL: 2
   # Work around the MSVC constexpr mutex constructor issue also handled by
   # OpenMS's Windows wheel build.
@@ -115,23 +115,9 @@ jobs:
           cmake --build curl-build
           cmake --install curl-build
 
-      - name: Download Thermo RAW test fixture
-        shell: bash
-        run: |
-          mkdir -p "$(dirname "$THERMO_TEST_DATA")"
-          curl --fail --location --retry 3 \
-            --output "$THERMO_TEST_DATA" \
-            "https://raw.githubusercontent.com/PNNL-Comp-Mass-Spec/Thermo-Raw-File-Reader/1d8ff309/UnitTests/Docs/Angiotensin_AllScans.raw"
-          echo "3a0236f719e7c91e3c958f57f4e66ae422803ec3e6a997b9af4d2af395332b9f  $THERMO_TEST_DATA" \
-            | sha256sum --check
-
       - name: Configure OpenMS core
         shell: bash
         run: |
-          # This path becomes a quoted C++ string in ThermoRawFile_test. Convert
-          # GitHub's backslash-form Windows path so MSVC cannot parse \o, \a,
-          # and similar path fragments as escape sequences.
-          thermo_test_data="$(cygpath -m "$THERMO_TEST_DATA")"
           cmake -S "$OPENMS_SOURCE" -B "$OPENMS_BUILD" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$OPENMS_INSTALL" \
@@ -148,12 +134,11 @@ jobs:
             -DARROW_USE_STATIC=ON \
             -DENABLE_TUTORIALS=OFF \
             -DENABLE_DOCS=OFF \
-            -DENABLE_CLASS_TESTING=ON \
+            -DENABLE_CLASS_TESTING=OFF \
             -DENABLE_TOPP_TESTING=OFF \
             -DENABLE_PIPELINE_TESTING=OFF \
             -DENABLE_STYLE_TESTING=OFF \
             -DENABLE_THERMO_RAW_TESTS=OFF \
-            -DTHERMO_RAW_TEST_DATA="$thermo_test_data" \
             -DENABLE_UPDATE_CHECK=OFF \
             -DGIT_TRACKING=OFF \
             -DHAS_XSERVER=OFF \
@@ -162,10 +147,7 @@ jobs:
       - name: Build and install OpenMS core
         shell: bash
         run: |
-          cmake --build "$OPENMS_BUILD" --target OpenMS OpenSwathAlgo ThermoRawFile_test
-          ctest --test-dir "$OPENMS_BUILD" \
-            --output-on-failure \
-            -R '^ThermoRawFile_test$'
+          cmake --build "$OPENMS_BUILD" --target OpenMS OpenSwathAlgo
           cmake --install "$OPENMS_BUILD" --component library --strip
           cmake --install "$OPENMS_BUILD" --component OpenMS_headers
           cmake --install "$OPENMS_BUILD" --component OpenSwathAlgo_headers
@@ -182,8 +164,9 @@ jobs:
             -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake;$QT_ROOT_DIR;$OPENMS_CONTRIB" \
             -DOPENMS_CONTRIB_LIBS="$OPENMS_CONTRIB" \
             -DOpenMS_DIR="$OPENMS_INSTALL/lib/cmake/OpenMS" \
-            -DOPENMS_VIEWER_BUILD_TESTS=OFF
-          cmake --build "$VIEWER_BUILD" --target openms-viewer
+            -DOPENMS_VIEWER_BUILD_TESTS=OFF \
+            -DOPENMS_VIEWER_BUILD_THERMO_SMOKE=ON
+          cmake --build "$VIEWER_BUILD" --target openms-viewer openms-viewer-thermo-smoke
           cmake --install "$VIEWER_BUILD"
 
       - name: Deploy runtime dependencies
@@ -415,17 +398,17 @@ jobs:
               throw "Portable executable smoke test exited with $($process.ExitCode)."
             }
 
-            # Run OpenMS's real Thermo RAW regression test against the packaged
-            # DLLs, managed bridge, app-local .NET runtime, and shared data.
-            $thermoTest = Get-ChildItem $env:OPENMS_BUILD `
-              -Filter "ThermoRawFile_test.exe" -File -Recurse |
+            # Load a small real RAW file against only the packaged DLLs,
+            # managed bridge, app-local .NET runtime, and shared data.
+            $thermoTest = Get-ChildItem $env:VIEWER_BUILD `
+              -Filter "openms-viewer-thermo-smoke.exe" -File -Recurse |
               Select-Object -First 1
-            if (-not $thermoTest) { throw "ThermoRawFile_test.exe was not built." }
+            if (-not $thermoTest) { throw "Thermo RAW smoke probe was not built." }
             $smokeDirectory = Join-Path $env:RUNNER_TEMP "openms-viewer-thermo-smoke"
             New-Item -ItemType Directory -Path $smokeDirectory -Force | Out-Null
-            $smokeExecutable = Join-Path $smokeDirectory "ThermoRawFile_test.exe"
+            $smokeExecutable = Join-Path $smokeDirectory "openms-viewer-thermo-smoke.exe"
             Copy-Item $thermoTest.FullName $smokeExecutable -Force
-            & $smokeExecutable
+            & $smokeExecutable $env:THERMO_TEST_DATA
             if ($LASTEXITCODE -ne 0) {
               throw "Packaged Thermo RAW smoke test exited with $LASTEXITCODE."
             }

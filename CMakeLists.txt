@@ -163,6 +163,16 @@ set_target_properties(openms-viewer PROPERTIES
   MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
 )
 
+# Optional integration probe for portable packages. It deliberately links only
+# OpenMS and is not installed, so CI can copy the executable into an isolated
+# directory and prove that the staged native/.NET Thermo stack loads real data.
+option(OPENMS_VIEWER_BUILD_THERMO_SMOKE
+       "Build the Thermo RAW portable-package smoke probe" OFF)
+if(OPENMS_VIEWER_BUILD_THERMO_SMOKE)
+  add_executable(openms-viewer-thermo-smoke tools/ThermoRawSmoke.cpp)
+  target_link_libraries(openms-viewer-thermo-smoke PRIVATE OpenMS)
+endif()
+
 # Developer tool: regenerates docs/screenshots/ from cached archive.openms.de
 # datasets + fixtures (see tools/screenshots/). Standalone dev builds only; not
 # part of the embedded OpenMS release. Run offscreen from the repo root.

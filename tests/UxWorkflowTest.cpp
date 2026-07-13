@@ -169,13 +169,15 @@ private slots:
     auto* peakMapScroll = window.findChild<QScrollArea*>(QStringLiteral("peakMapScrollArea"));
     QVERIFY(peakMapPanel != nullptr);
     QVERIFY(peakMapScroll != nullptr);
-    QVERIFY(!peakMapScroll->widgetResizable());
+    QVERIFY(peakMapScroll->widgetResizable());
     QCOMPARE(peakMapScroll->widget(), peakMap);
     QCOMPARE(peakMap->parentWidget(), peakMapScroll->viewport());
     window.loadFile(path);
     QTRY_VERIFY_WITH_TIMEOUT(peakMap->hasExperiment(), 5000);
-    QTRY_COMPARE_WITH_TIMEOUT(peakMap->rasterImage().size(), QSize(768, 384), 3000);
-    QCOMPARE(peakMap->size(), QSize(858, 456));
+    QTRY_COMPARE_WITH_TIMEOUT(peakMap->rasterImage().size(),
+                              QSize(peakMap->width() - 90, peakMap->height() - 72), 3000);
+    QVERIFY(peakMap->rasterImage().width() <= 768);
+    QVERIFY(peakMap->rasterImage().height() <= 384);
     QCOMPARE(stack->currentWidget(), peakMapPanel);
     QCOMPARE(scan->maximum(), 3);
     QCOMPARE(scan->text(), QStringLiteral("Scan 1"));

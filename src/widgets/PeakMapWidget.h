@@ -145,8 +145,9 @@ namespace OpenMSViewer
     void recenterFromMinimap(const QPointF& position);
     [[nodiscard]] QPointF dataAt(const QPointF& position) const;
     [[nodiscard]] QPointF pixelFor(double rt, double mz) const;
-    [[nodiscard]] QSize fixedRenderSize() const;
-    void updateFixedCanvasSize();
+    [[nodiscard]] QSize maximumRasterSize() const;
+    [[nodiscard]] QSize boundedRenderSize() const;
+    void updateCanvasSizeLimits();
     void scheduleRender();
     void startRender();
     void startMinimapRender();

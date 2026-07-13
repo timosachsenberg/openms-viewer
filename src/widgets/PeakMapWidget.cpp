@@ -45,7 +45,7 @@ namespace OpenMSViewer
     setAccessibleDescription(
       tr("Interactive peak map. Use the mouse wheel to zoom, drag in the selected mode, "
          "Home to reset, and Alt+Left to return to the previous view."));
-    updateFixedCanvasSize();
+    updateCanvasSizeLimits();
     renderTimer_.setSingleShot(true);
     renderTimer_.setInterval(45);
     connect(&renderTimer_, &QTimer::timeout, this, &PeakMapWidget::startRender);
@@ -330,7 +330,7 @@ namespace OpenMSViewer
     const int bounded = std::clamp(width, MinimumRasterWidth, MaximumRasterWidth);
     if (rasterWidth_ == bounded) return;
     rasterWidth_ = bounded;
-    updateFixedCanvasSize();
+    updateCanvasSizeLimits();
     raster_ = {};
     scheduleRender();
   }
@@ -502,18 +502,26 @@ namespace OpenMSViewer
     return {area.left() + rtFraction * area.width(), area.bottom() - mzFraction * area.height()};
   }
 
-  QSize PeakMapWidget::fixedRenderSize() const
+  QSize PeakMapWidget::maximumRasterSize() const
   {
     return QSize(rasterWidth_, std::max(1, rasterWidth_ / 2));
   }
 
-  void PeakMapWidget::updateFixedCanvasSize()
+  QSize PeakMapWidget::boundedRenderSize() const
+  {
+    return plotRect().size().boundedTo(maximumRasterSize());
+  }
+
+  void PeakMapWidget::updateCanvasSizeLimits()
   {
     // plotRect() removes 68+22 horizontal and 20+52 vertical pixels for axes.
-    // Keep that plot rectangle exactly equal to the raster dimensions so every
-    // raster pixel is painted into one logical display pixel without resampling.
-    const QSize rasterSize = fixedRenderSize();
-    setFixedSize(rasterSize.width() + 90, rasterSize.height() + 72);
+    // The configured raster is a maximum, not a forced size. A smaller viewport
+    // gets a smaller widget and raster, still at a literal 1:1 pixel mapping.
+    const QSize maximum = maximumRasterSize() + QSize(90, 72);
+    setMinimumSize(std::min(480, maximum.width()), std::min(300, maximum.height()));
+    setMaximumSize(maximum);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    updateGeometry();
   }
 
   void PeakMapWidget::scheduleRender()
@@ -535,7 +543,7 @@ namespace OpenMSViewer
   void PeakMapWidget::startRender()
   {
     if (!experiment_ || renderWatcher_.isRunning()) return;
-    const QSize renderSize = fixedRenderSize();
+    const QSize renderSize = boundedRenderSize();
     if (renderSize.width() <= 0 || renderSize.height() <= 0) return;
 
     activeGeneration_ = desiredGeneration_;
@@ -1396,7 +1404,8 @@ namespace OpenMSViewer
   void PeakMapWidget::resizeEvent(QResizeEvent* event)
   {
     QWidget::resizeEvent(event);
-    update();
+    if (experiment_ && raster_.size() != boundedRenderSize()) scheduleRender();
+    else update();
   }
 
   void PeakMapWidget::wheelEvent(QWheelEvent* event)

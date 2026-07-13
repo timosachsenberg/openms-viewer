@@ -189,12 +189,12 @@ private slots:
     QCOMPARE(OpenMSViewer::RasterShading::dynspreadRadius(adjacent, side, side), 0);
   }
 
-  void rendersPeakMapAtConfiguredFixedResolution()
+  void capsPeakMapAtConfiguredResolutionWithoutUpscaling()
   {
     const auto source = OpenMSViewer::TestData::experiment();
     const OpenMSViewer::PlotRange range{9.0, 21.0, 390.0, 610.0};
     OpenMSViewer::PeakMapWidget widget;
-    widget.resize(900, 600);
+    widget.resize(1114, 584);
     widget.show();
     widget.setExperiment(std::make_shared<OpenMS::MSExperiment>(source), range);
 
@@ -220,8 +220,16 @@ private slots:
     widget.setRasterWidth(640);
     QTRY_COMPARE_WITH_TIMEOUT(widget.rasterImage().size(), QSize(640, 320), 3000);
     QCOMPARE(widget.size(), QSize(730, 392));
+
+    // Both dimensions may shrink below the configured 640x320 maximum.
+    widget.resize(600, 350);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.rasterImage().size(), QSize(510, 278), 3000);
+    QCOMPARE(widget.size(), QSize(600, 350));
+
+    // Neither dimension may grow beyond that maximum.
     widget.resize(1200, 800);
-    QCOMPARE(widget.size(), QSize(730, 392)); // layouts cannot rescale the canvas
+    QTRY_COMPARE_WITH_TIMEOUT(widget.rasterImage().size(), QSize(640, 320), 3000);
+    QCOMPARE(widget.size(), QSize(730, 392));
 
     widget.setAxesSwapped(false);
     QTRY_COMPARE_WITH_TIMEOUT(widget.rasterImage().size(), QSize(640, 320), 3000);

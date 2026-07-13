@@ -658,7 +658,7 @@ namespace OpenMSViewer
     peakMapControlBar_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     peakMapScroll_ = new QScrollArea(peakMapPanel_);
     peakMapScroll_->setObjectName(QStringLiteral("peakMapScrollArea"));
-    peakMapScroll_->setWidgetResizable(false);
+    peakMapScroll_->setWidgetResizable(true);
     peakMapScroll_->setAlignment(Qt::AlignCenter);
     peakMapScroll_->setFrameShape(QFrame::NoFrame);
     peakMapScroll_->setSizeAdjustPolicy(QAbstractScrollArea::AdjustIgnored);
@@ -1311,7 +1311,7 @@ namespace OpenMSViewer
     connect(scale, qOverload<int>(&QComboBox::currentIndexChanged),
             peakMap_, &PeakMapWidget::setIntensityScale);
 
-    auto* rasterLabel = new QLabel(tr("Raster width"), peakMapControlBar_);
+    auto* rasterLabel = new QLabel(tr("Raster max width"), peakMapControlBar_);
     rasterLabel->setObjectName(QStringLiteral("peakMapRasterLabel"));
     peakMapControlBar_->addWidget(rasterLabel);
     peakMapRasterWidth_ = new QSpinBox(peakMapControlBar_);
@@ -1324,8 +1324,8 @@ namespace OpenMSViewer
     peakMapRasterWidth_->setKeyboardTracking(false);
     peakMapRasterWidth_->setMaximumWidth(105);
     peakMapRasterWidth_->setToolTip(
-      tr("Fixed 2:1 peak-map canvas rendered at 1:1 pixels; scroll when it is larger than the viewport"));
-    peakMapRasterWidth_->setAccessibleName(tr("Peak-map raster width"));
+      tr("Maximum peak-map raster size; smaller viewports render a smaller 1:1 raster"));
+    peakMapRasterWidth_->setAccessibleName(tr("Peak-map maximum raster width"));
     peakMapControlBar_->addWidget(peakMapRasterWidth_);
     connect(peakMapRasterWidth_, qOverload<int>(&QSpinBox::valueChanged),
             peakMap_, &PeakMapWidget::setRasterWidth);

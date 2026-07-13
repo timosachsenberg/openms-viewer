@@ -1,8 +1,15 @@
 #include "MainWindow.h"
 
+#include <OpenMS/SYSTEM/BuildInfo.h>
+
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QDebug>
 #include <QFileInfo>
+#include <QThread>
+#include <QThreadPool>
+
+#include <algorithm>
 
 namespace
 {
@@ -22,6 +29,28 @@ namespace
     if (qEnvironmentVariableIsEmpty("XCURSOR_SIZE"))
       qputenv("XCURSOR_SIZE", "24");
   }
+
+  void configureWorkerThreads()
+  {
+    // QtConcurrent drives file loading and background rendering. OpenMS's mzML
+    // handler then uses OpenMP inside that worker to decode spectrum binary-data
+    // batches in parallel. Match both pools to the CPUs available to this process.
+    const int cpuThreads = std::max(1, QThread::idealThreadCount());
+    QThreadPool::globalInstance()->setMaxThreadCount(cpuThreads);
+
+    // Preserve an explicit administrator/user cap, otherwise make the OpenMS
+    // decoder's maximum match Qt and the process CPU affinity.
+    if (!qEnvironmentVariableIsSet("OMP_NUM_THREADS"))
+      OpenMS::Internal::OpenMSBuildInfo::setOpenMPNumThreads(cpuThreads);
+
+    qInfo().noquote()
+      << QStringLiteral("Worker threads: %1 CPUs · Qt %2 · OpenMS/OpenMP %3%4")
+           .arg(cpuThreads)
+           .arg(QThreadPool::globalInstance()->maxThreadCount())
+           .arg(OpenMS::Internal::OpenMSBuildInfo::getOpenMPMaxNumThreads())
+           .arg(qEnvironmentVariableIsSet("OMP_NUM_THREADS")
+                  ? QStringLiteral(" (OMP_NUM_THREADS override)") : QString());
+  }
 }
 
 int main(int argc, char* argv[])
@@ -33,6 +62,7 @@ int main(int argc, char* argv[])
   QApplication::setApplicationVersion(QStringLiteral("0.1.0"));
   QApplication::setOrganizationName(QStringLiteral("OpenMS"));
   QApplication::setStyle(QStringLiteral("Fusion"));
+  configureWorkerThreads();
 
   QCommandLineParser parser;
   parser.setApplicationDescription(

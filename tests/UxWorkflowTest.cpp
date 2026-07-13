@@ -27,6 +27,7 @@
 #include <QDockWidget>
 #include <QLabel>
 #include <QListWidget>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QSettings>
 #include <QSignalSpy>
@@ -161,7 +162,10 @@ private slots:
     auto* zoomMode = window.findChild<QToolButton*>(QStringLiteral("peakMapZoomMode"));
     auto* panMode = window.findChild<QToolButton*>(QStringLiteral("peakMapPanMode"));
     auto* measureMode = window.findChild<QToolButton*>(QStringLiteral("peakMapMeasureMode"));
+    auto* resetView = window.findChild<QToolButton*>(QStringLiteral("peakMapResetView"));
+    auto* displayOptions = window.findChild<QToolButton*>(QStringLiteral("peakMapDisplayOptions"));
     auto* editMode = window.findChild<QAction*>(QStringLiteral("peakMapEditMode"));
+    auto* colorMap = window.findChild<QComboBox*>(QStringLiteral("peakMapColorMap"));
     auto* intensityScale = window.findChild<QComboBox*>(QStringLiteral("peakMapIntensityScale"));
     auto* level = window.findChild<QComboBox*>(QStringLiteral("spectrumLevelFilter"));
     auto* scan = window.findChild<QSpinBox*>(QStringLiteral("spectrumIndex"));
@@ -170,8 +174,16 @@ private slots:
     auto* loading = window.findChild<OpenMSViewer::LoadingOverlayWidget*>();
     auto* ticDock = window.findChild<QDockWidget*>(QStringLiteral("ticDock"));
     QVERIFY(stack && welcome && peakMap && interactionModes && zoomMode && panMode
-            && measureMode && editMode && intensityScale && level && scan && rasterWidth
-            && runContext && loading && ticDock);
+            && measureMode && resetView && displayOptions && editMode && colorMap
+            && intensityScale && level && scan && rasterWidth && runContext && loading
+            && ticDock);
+    QCOMPARE(resetView->toolButtonStyle(), Qt::ToolButtonIconOnly);
+    QVERIFY(!resetView->icon().isNull());
+    QVERIFY(!resetView->toolTip().isEmpty());
+    QVERIFY(displayOptions->menu() != nullptr);
+    QVERIFY(displayOptions->menu()->isAncestorOf(colorMap));
+    QVERIFY(displayOptions->menu()->isAncestorOf(intensityScale));
+    QVERIFY(displayOptions->menu()->isAncestorOf(rasterWidth));
     QCOMPARE(rasterWidth->value(), OpenMSViewer::PeakMapWidget::DefaultRasterWidth);
     rasterWidth->setValue(768);
     QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(welcome));
@@ -201,6 +213,13 @@ private slots:
     QCOMPARE(peakMap->parentWidget(), peakMapScroll->viewport());
     window.loadFile(path);
     QTRY_VERIFY_WITH_TIMEOUT(peakMap->hasExperiment(), 5000);
+    displayOptions->menu()->popup(
+      displayOptions->mapToGlobal(QPoint(0, displayOptions->height())));
+    QTRY_VERIFY(displayOptions->menu()->isVisible());
+    QVERIFY(colorMap->isVisible());
+    QVERIFY(intensityScale->isVisible());
+    QVERIFY(rasterWidth->isVisible());
+    displayOptions->menu()->hide();
     QTRY_COMPARE_WITH_TIMEOUT(peakMap->rasterImage().size(),
                               QSize(peakMap->width() - 90, peakMap->height() - 72), 3000);
     QVERIFY(peakMap->rasterImage().width() <= 768);

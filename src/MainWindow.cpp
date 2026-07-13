@@ -1290,6 +1290,14 @@ namespace OpenMSViewer
     // ---- Peak-map options live in the peak-map panel's control bar ----
     peakMapControlBar_->addAction(zoomBackAction_);
     peakMapControlBar_->addAction(resetViewAction_);
+    if (auto* resetButton = qobject_cast<QToolButton*>(
+          peakMapControlBar_->widgetForAction(resetViewAction_)))
+    {
+      resetButton->setObjectName(QStringLiteral("peakMapResetView"));
+      resetButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+      resetButton->setAccessibleName(tr("Reset peak-map view"));
+      resetButton->setToolTip(tr("Reset peak-map view (Home)"));
+    }
 
     auto* interactionModes = new QWidget(peakMapControlBar_);
     interactionModes->setObjectName(QStringLiteral("peakMapInteractionModes"));
@@ -1338,16 +1346,36 @@ namespace OpenMSViewer
                 if (action->data().toInt() == modeIndex) { action->setChecked(true); break; }
             });
 
-    auto* colorLabel = new QLabel(tr("Color"), peakMapControlBar_);
-    colorLabel->setObjectName(QStringLiteral("peakMapColorLabel"));
-    peakMapControlBar_->addWidget(colorLabel);
-    auto* colorMap = new QComboBox(peakMapControlBar_);
+    auto* display = new QToolButton(peakMapControlBar_);
+    display->setObjectName(QStringLiteral("peakMapDisplayOptions"));
+    display->setText(tr("Display"));
+    display->setPopupMode(QToolButton::InstantPopup);
+    display->setAccessibleName(tr("Peak-map display options"));
+    auto* displayMenu = new QMenu(display);
+    displayMenu->setObjectName(QStringLiteral("peakMapDisplayMenu"));
+    const auto addDisplayControl = [displayMenu](const QString& labelText, QWidget* control)
+    {
+      auto* row = new QWidget(displayMenu);
+      auto* layout = new QHBoxLayout(row);
+      layout->setContentsMargins(10, 4, 10, 4);
+      layout->setSpacing(12);
+      auto* label = new QLabel(labelText, row);
+      label->setMinimumWidth(118);
+      control->setParent(row);
+      control->setMinimumWidth(130);
+      layout->addWidget(label);
+      layout->addWidget(control, 1);
+      auto* action = new QWidgetAction(displayMenu);
+      action->setDefaultWidget(row);
+      displayMenu->addAction(action);
+    };
+
+    auto* colorMap = new QComboBox(displayMenu);
     colorMap->setObjectName(QStringLiteral("peakMapColorMap"));
     colorMap->addItems({tr("Viridis"), tr("Plasma"), tr("Inferno"), tr("Magma"),
                         tr("Jet"), tr("Hot"), tr("Grayscale")});
-    colorMap->setMaximumWidth(110);
     colorMap->setAccessibleName(tr("Peak-map color map"));
-    peakMapControlBar_->addWidget(colorMap);
+    addDisplayControl(tr("Color map"), colorMap);
     connect(colorMap, qOverload<int>(&QComboBox::currentIndexChanged),
             peakMap_, &PeakMapWidget::setColorMap);
     connect(colorMap, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -1355,19 +1383,16 @@ namespace OpenMSViewer
     connect(colorMap, qOverload<int>(&QComboBox::currentIndexChanged),
             faims_, &FaimsPanelWidget::setColorMap);
 
-    auto* scale = new QComboBox(peakMapControlBar_);
+    auto* scale = new QComboBox(displayMenu);
     scale->setObjectName(QStringLiteral("peakMapIntensityScale"));
     scale->addItems({tr("Equalize"), tr("Log"), tr("Square root")});
     scale->setToolTip(tr("Peak-map intensity normalization"));
     scale->setAccessibleName(tr("Peak-map intensity scale"));
-    peakMapControlBar_->addWidget(scale);
+    addDisplayControl(tr("Intensity scale"), scale);
     connect(scale, qOverload<int>(&QComboBox::currentIndexChanged),
             peakMap_, &PeakMapWidget::setIntensityScale);
 
-    auto* rasterLabel = new QLabel(tr("Raster max width"), peakMapControlBar_);
-    rasterLabel->setObjectName(QStringLiteral("peakMapRasterLabel"));
-    peakMapControlBar_->addWidget(rasterLabel);
-    peakMapRasterWidth_ = new QSpinBox(peakMapControlBar_);
+    peakMapRasterWidth_ = new QSpinBox(displayMenu);
     peakMapRasterWidth_->setObjectName(QStringLiteral("peakMapRasterWidth"));
     peakMapRasterWidth_->setRange(PeakMapWidget::MinimumRasterWidth,
                                   PeakMapWidget::MaximumRasterWidth);
@@ -1375,20 +1400,14 @@ namespace OpenMSViewer
     peakMapRasterWidth_->setValue(PeakMapWidget::DefaultRasterWidth);
     peakMapRasterWidth_->setSuffix(tr(" px"));
     peakMapRasterWidth_->setKeyboardTracking(false);
-    peakMapRasterWidth_->setMaximumWidth(105);
     peakMapRasterWidth_->setToolTip(
       tr("Maximum peak-map raster size; smaller viewports render a smaller 1:1 raster"));
     peakMapRasterWidth_->setAccessibleName(tr("Peak-map maximum raster width"));
-    peakMapControlBar_->addWidget(peakMapRasterWidth_);
+    addDisplayControl(tr("Raster max width"), peakMapRasterWidth_);
     connect(peakMapRasterWidth_, qOverload<int>(&QSpinBox::valueChanged),
             peakMap_, &PeakMapWidget::setRasterWidth);
 
-    auto* display = new QToolButton(peakMapControlBar_);
-    display->setObjectName(QStringLiteral("peakMapDisplayOptions"));
-    display->setText(tr("Display"));
-    display->setPopupMode(QToolButton::InstantPopup);
-    display->setAccessibleName(tr("Peak-map display options"));
-    auto* displayMenu = new QMenu(display);
+    displayMenu->addSeparator();
     displayMenu->addAction(swapAxesAction_);
     displayMenu->addAction(showMinimapAction_);
     displayMenu->addSeparator();

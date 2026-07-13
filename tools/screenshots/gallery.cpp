@@ -41,6 +41,8 @@
 #include <QDir>
 #include <QDockWidget>
 #include <QElapsedTimer>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QThread>
@@ -483,6 +485,15 @@ int main(int argc, char** argv)
 {
   qputenv("QT_QPA_PLATFORM", qgetenv("QT_QPA_PLATFORM").isEmpty() ? QByteArray("offscreen") : qgetenv("QT_QPA_PLATFORM"));
   QApplication app(argc, argv);
+
+  // Isolate from the user's real settings and drive the theme MainWindow restores
+  // at construction. SCREENSHOT_THEME=light renders the whole gallery in light mode.
+  QApplication::setOrganizationName(QStringLiteral("OpenMSViewerGallery"));
+  QApplication::setApplicationName(QStringLiteral("OpenMSViewerGallery"));
+  QStandardPaths::setTestModeEnabled(true);
+  const bool lightTheme =
+    qEnvironmentVariable("SCREENSHOT_THEME").compare(QStringLiteral("light"), Qt::CaseInsensitive) == 0;
+  { QSettings settings; settings.setValue(QStringLiteral("appearance/dark"), !lightTheme); }
 
   // A failed load pops a modal error dialog whose exec() would block forever under
   // the offscreen platform. Auto-dismiss any modal so the load resolves to [skip].

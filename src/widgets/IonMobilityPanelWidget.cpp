@@ -2,6 +2,7 @@
 
 #include "model/TraceSmoothing.h"
 #include "plot/PlotAxis.h"
+#include "plot/PlotTheme.h"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -417,12 +418,15 @@ namespace OpenMSViewer
 
   void IonMobilityPlotWidget::drawMobilogram(QPainter& painter, const QRect& area)
   {
-    painter.fillRect(area, QColor(9, 8, 18));
+    painter.fillRect(area, palette().color(QPalette::Base));
     painter.setPen(palette().color(QPalette::Mid));
     painter.drawRect(area);
     if (raster_.mobilogram.empty()) return;
     const float maximum = *std::max_element(raster_.mobilogram.begin(), raster_.mobilogram.end());
     if (maximum <= 0.0F) return;
+
+    const QColor trace = PlotTheme::primaryTrace(palette());
+    const auto withAlpha = [](QColor colour, int alpha) { colour.setAlpha(alpha); return colour; };
 
     // Intensity values to draw as the profile: raw, or a Savitzky-Golay smoothing.
     // Both are scaled by the RAW maximum so the smoothed profile stays comparable.
@@ -454,12 +458,12 @@ namespace OpenMSViewer
     // When smoothing, draw the raw profile faintly underneath the smoothed one.
     if (haveSmoothed)
     {
-      painter.setPen(QPen(QColor(0, 205, 245, 70), 1.0));
+      painter.setPen(QPen(withAlpha(trace, 70), 1.0));
       painter.drawPath(buildPath(raw, false));
     }
     const std::vector<double>& profile = haveSmoothed ? smoothed : raw;
-    painter.fillPath(buildPath(profile, true), QColor(0, 195, 235, 55));
-    painter.setPen(QPen(QColor(0, 205, 245), 1.7));
+    painter.fillPath(buildPath(profile, true), withAlpha(trace, 55));
+    painter.setPen(QPen(trace, 1.7));
     painter.drawPath(buildPath(profile, false));
     painter.restore();
     painter.setPen(palette().color(QPalette::Text));

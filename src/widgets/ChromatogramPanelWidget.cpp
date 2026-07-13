@@ -2,6 +2,7 @@
 
 #include "model/TraceSmoothing.h"
 #include "plot/PlotAxis.h"
+#include "plot/PlotTheme.h"
 
 #include <QAbstractTableModel>
 #include <QCheckBox>
@@ -273,7 +274,7 @@ namespace OpenMSViewer
       if (rightRt >= leftRt)
       {
         painter.fillRect(QRectF(QPointF(mapX(leftRt), area.top()),
-                                QPointF(mapX(rightRt), area.bottom())), QColor(255, 210, 40, 52));
+                                QPointF(mapX(rightRt), area.bottom())), PlotTheme::rangeHighlight(palette()));
       }
     }
 
@@ -293,7 +294,7 @@ namespace OpenMSViewer
 
     static constexpr std::array<QColor, 8> colors{
       QColor(52, 152, 219), QColor(231, 76, 60), QColor(46, 204, 113), QColor(155, 89, 182),
-      QColor(241, 196, 15), QColor(26, 188, 156), QColor(230, 126, 34), QColor(236, 240, 241)};
+      QColor(241, 196, 15), QColor(26, 188, 156), QColor(230, 126, 34), QColor(120, 144, 156)};
     // Polyline over the record's points; `values` supplies the intensity (raw, or
     // the cached Savitzky-Golay smoothing).
     const auto buildPath = [&](const ChromatogramRecord& record, const std::vector<double>* values)

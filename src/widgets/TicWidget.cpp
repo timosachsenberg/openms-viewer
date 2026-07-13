@@ -1,6 +1,7 @@
 #include "widgets/TicWidget.h"
 
 #include "plot/PlotAxis.h"
+#include "plot/PlotTheme.h"
 
 #include <QMouseEvent>
 #include <QKeyEvent>
@@ -161,7 +162,7 @@ namespace OpenMSViewer
       const double left = std::clamp(xForRt(peakMapRange_.rtMin), static_cast<double>(area.left()), static_cast<double>(area.right()));
       const double right = std::clamp(xForRt(peakMapRange_.rtMax), static_cast<double>(area.left()), static_cast<double>(area.right()));
       painter.fillRect(QRectF(QPointF(left, area.top()), QPointF(right, area.bottom())),
-                       QColor(255, 210, 40, 30));
+                       PlotTheme::rangeHighlight(palette()));
     }
 
     QPainterPath line;

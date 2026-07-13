@@ -174,7 +174,7 @@ namespace OpenMSViewer
     }
     image_ = QImage(static_cast<int>(summary_.width), static_cast<int>(summary_.height),
                     QImage::Format_RGB32);
-    image_.fill(QColor(20, 20, 24));
+    image_.fill(viridis(0.0));  // colormap floor, so masked pixels match the data in both themes
     // Robust 99th-percentile scale (not the raw max) so one hot pixel doesn't dim
     // the whole image; values above it clamp to the top of the colormap. displayMax_
     // is the honest label (0 when there is no positive signal).
@@ -857,7 +857,7 @@ namespace OpenMSViewer
     std::vector<double> composite(ticImage_.size(), 0.0);
     QImage colorImage(static_cast<int>(summary_.width), static_cast<int>(summary_.height),
                       QImage::Format_RGB32);
-    colorImage.fill(QColor(20, 20, 24));
+    colorImage.fill(viridis(0.0));  // colormap floor for masked/empty pixels
     std::vector<double> maxima(overlays_.size(), 1.0);
     std::vector<std::pair<QColor, QString>> legend;
     for (std::size_t channel = 0; channel < overlays_.size(); ++channel)

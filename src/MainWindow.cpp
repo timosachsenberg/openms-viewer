@@ -3104,6 +3104,9 @@ namespace OpenMSViewer
     if (!dark)
     {
       qApp->setPalette(style()->standardPalette());
+      // Custom plot canvases sample palette() at paint time; force a repaint so a
+      // live toggle re-themes them immediately.
+      for (QWidget* widget : findChildren<QWidget*>()) widget->update();
       return;
     }
     QPalette palette;
@@ -3122,6 +3125,7 @@ namespace OpenMSViewer
     palette.setColor(QPalette::PlaceholderText, QColor(145, 148, 158));
     palette.setColor(QPalette::Mid, QColor(105, 108, 118));
     qApp->setPalette(palette);
+    for (QWidget* widget : findChildren<QWidget*>()) widget->update();
   }
 
   void MainWindow::closeEvent(QCloseEvent* event)

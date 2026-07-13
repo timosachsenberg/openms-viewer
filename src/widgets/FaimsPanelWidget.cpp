@@ -1,6 +1,7 @@
 #include "widgets/FaimsPanelWidget.h"
 
 #include "plot/PeakMapRasterizer.h"
+#include "plot/PlotTheme.h"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -28,7 +29,7 @@ namespace OpenMSViewer
   {
     constexpr std::array<QColor, 8> channelColors{
       QColor(142, 68, 173), QColor(52, 152, 219), QColor(46, 204, 113), QColor(241, 196, 15),
-      QColor(231, 76, 60), QColor(26, 188, 156), QColor(230, 126, 34), QColor(236, 240, 241)};
+      QColor(231, 76, 60), QColor(26, 188, 156), QColor(230, 126, 34), QColor(120, 144, 156)};
   }
 
   FaimsPeakMapsWidget::FaimsPeakMapsWidget(QWidget* parent) : QWidget(parent)
@@ -155,7 +156,7 @@ namespace OpenMSViewer
                        Qt::AlignLeft | Qt::AlignVCenter,
                        tr("CV %1 V · %2 scans").arg(channels_[index].compensationVoltage, 0, 'f', 1)
                                                  .arg(channels_[index].tic.size()));
-      painter.fillRect(imageArea, QColor(10, 10, 16));
+      painter.fillRect(imageArea, QColor::fromRgb(PeakMapRasterizer::color(0.0, PeakMapColorMap::Viridis)));
       if (index < images_.size() && !images_[index].isNull())
         painter.drawImage(imageArea, images_[index]);
     }
@@ -261,7 +262,7 @@ namespace OpenMSViewer
       const double rightRt = std::min(rtMax, peakMapRange_.rtMax);
       if (rightRt >= leftRt)
         painter.fillRect(QRectF(QPointF(xForRt(leftRt), area.top()),
-                                QPointF(xForRt(rightRt), area.bottom())), QColor(255, 210, 40, 42));
+                                QPointF(xForRt(rightRt), area.bottom())), PlotTheme::rangeHighlight(palette()));
     }
     int legendX = area.left();
     for (std::size_t channel = 0; channel < channels_.size(); ++channel)

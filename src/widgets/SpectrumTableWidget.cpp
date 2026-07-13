@@ -4,6 +4,7 @@
 #include "model/RtUnit.h"
 
 #include <QAbstractTableModel>
+#include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleValidator>
@@ -425,10 +426,10 @@ namespace OpenMSViewer
     allHits_->setObjectName(QStringLiteral("spectrumAllHits"));
     CompactControls::addMenuControl(filterMenu, allHits_);
     filterMenu->addSeparator();
-    auto* reset = CompactControls::makeIconButton(
-      filterMenu, QIcon(QStringLiteral(":/icons/material-clear-all.svg")),
-      tr("Reset spectrum filters"), QStringLiteral("spectrumResetFilters"));
-    CompactControls::addMenuControl(filterMenu, reset);
+    auto* reset = filterMenu->addAction(
+      QIcon(QStringLiteral(":/icons/material-clear-all.svg")), tr("Reset filters"));
+    reset->setObjectName(QStringLiteral("spectrumResetFilters"));
+    reset->setToolTip(tr("Reset all spectrum table filters"));
     filters->setMenu(filterMenu);
     first->addWidget(filters);
 
@@ -489,7 +490,7 @@ namespace OpenMSViewer
       updateColumns();
       updateCountLabel();
     });
-    connect(reset, &QToolButton::clicked, this, &SpectrumTableWidget::resetFilters);
+    connect(reset, &QAction::triggered, this, &SpectrumTableWidget::resetFilters);
     connect(exportButton, &QToolButton::clicked, this, &SpectrumTableWidget::exportTsv);
     connect(table_->selectionModel(), &QItemSelectionModel::currentRowChanged,
             this, [this](const QModelIndex& index)

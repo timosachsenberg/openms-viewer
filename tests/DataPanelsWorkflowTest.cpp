@@ -63,6 +63,7 @@ private slots:
     auto* score = spectra.findChild<QLineEdit*>(QStringLiteral("spectrumMinimumScore"));
     auto* scoreLabel = spectra.findChild<QLabel*>(QStringLiteral("spectrumScoreThresholdLabel"));
     auto* filters = spectra.findChild<QToolButton*>(QStringLiteral("spectrumFilterOptions"));
+    auto* resetFilters = spectra.findChild<QAction*>(QStringLiteral("spectrumResetFilters"));
     auto* columns = spectra.findChild<QToolButton*>(QStringLiteral("spectrumColumnOptions"));
     auto* advanced = spectra.findChild<QCheckBox*>(QStringLiteral("spectrumAdvancedColumns"));
     QVERIFY(spectraTable != nullptr);
@@ -73,6 +74,9 @@ private slots:
     QVERIFY(score != nullptr);
     QVERIFY(scoreLabel != nullptr);
     QVERIFY(filters != nullptr && filters->menu() != nullptr);
+    QVERIFY(resetFilters != nullptr);
+    QCOMPARE(resetFilters->text(), QStringLiteral("Reset filters"));
+    QVERIFY(!resetFilters->icon().isNull());
     QVERIFY(columns != nullptr && columns->menu() != nullptr);
     QVERIFY(filters->menu()->isAncestorOf(minimumRt));
     QVERIFY(filters->menu()->isAncestorOf(score));

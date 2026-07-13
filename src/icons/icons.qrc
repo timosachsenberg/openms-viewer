@@ -1,0 +1,8 @@
+<RCC>
+  <qresource prefix="/icons">
+    <file alias="interaction-zoom.svg">interaction-zoom.svg</file>
+    <file alias="interaction-pan.svg">interaction-pan.svg</file>
+    <file alias="interaction-measure.svg">interaction-measure.svg</file>
+    <file alias="interaction-edit.svg">interaction-edit.svg</file>
+  </qresource>
+</RCC>

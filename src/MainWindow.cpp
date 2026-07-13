@@ -53,6 +53,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QKeySequence>
 #include <QLabel>
 #include <QListWidget>
@@ -65,6 +66,7 @@
 #include <QPalette>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QResource>
 #include <QScreen>
 #include <QScrollArea>
 #include <QSignalBlocker>
@@ -84,6 +86,16 @@
 
 #include <algorithm>
 #include <utility>
+
+static void initializeViewerResources()
+{
+  static const bool initialized = []
+  {
+    Q_INIT_RESOURCE(icons);
+    return true;
+  }();
+  Q_UNUSED(initialized);
+}
 
 namespace OpenMSViewer
 {
@@ -375,6 +387,7 @@ namespace OpenMSViewer
 
   MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
   {
+    initializeViewerResources();
     ApplicationLog::install();
     setWindowTitle(tr("OpenMS Viewer"));
     resize(1420, 920);
@@ -1274,7 +1287,11 @@ namespace OpenMSViewer
     peakMapControlBar_->addWidget(modeLabel);
     auto* interactionMode = new QComboBox(peakMapControlBar_);
     interactionMode->setObjectName(QStringLiteral("peakMapInteractionMode"));
-    interactionMode->addItems({tr("Zoom (Z)"), tr("Pan (P)"), tr("Measure (M)"), tr("Edit features (E)")});
+    interactionMode->setIconSize(QSize(20, 20));
+    interactionMode->addItem(QIcon(QStringLiteral(":/icons/interaction-zoom.svg")), tr("Zoom (Z)"));
+    interactionMode->addItem(QIcon(QStringLiteral(":/icons/interaction-pan.svg")), tr("Pan (P)"));
+    interactionMode->addItem(QIcon(QStringLiteral(":/icons/interaction-measure.svg")), tr("Measure (M)"));
+    interactionMode->addItem(QIcon(QStringLiteral(":/icons/interaction-edit.svg")), tr("Edit features (E)"));
     interactionMode->setToolTip(tr("Choose what dragging in the peak map does"));
     interactionMode->setAccessibleName(tr("Peak-map interaction mode"));
     peakMapControlBar_->addWidget(interactionMode);
@@ -1306,7 +1323,7 @@ namespace OpenMSViewer
 
     auto* scale = new QComboBox(peakMapControlBar_);
     scale->setObjectName(QStringLiteral("peakMapIntensityScale"));
-    scale->addItems({tr("Equalize"), tr("Log"), tr("Square root"), tr("Linear")});
+    scale->addItems({tr("Equalize"), tr("Log"), tr("Square root")});
     scale->setToolTip(tr("Peak-map intensity normalization"));
     scale->setAccessibleName(tr("Peak-map intensity scale"));
     peakMapControlBar_->addWidget(scale);

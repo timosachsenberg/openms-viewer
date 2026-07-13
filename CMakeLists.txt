@@ -91,6 +91,7 @@ target_link_libraries(openms_viewer_core
 target_compile_features(openms_viewer_core PUBLIC cxx_std_23)
 
 add_library(openms_viewer_ui STATIC
+  src/icons/icons.qrc
   src/export/PlotExporter.cpp
   src/export/PlotExporter.h
   src/export/MzMLExportDialog.cpp

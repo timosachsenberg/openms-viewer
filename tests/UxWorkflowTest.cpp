@@ -158,19 +158,24 @@ private slots:
     auto* welcome = window.findChild<OpenMSViewer::WelcomeWidget*>();
     auto* peakMap = window.findChild<OpenMSViewer::PeakMapWidget*>();
     auto* interaction = window.findChild<QComboBox*>(QStringLiteral("peakMapInteractionMode"));
+    auto* intensityScale = window.findChild<QComboBox*>(QStringLiteral("peakMapIntensityScale"));
     auto* level = window.findChild<QComboBox*>(QStringLiteral("spectrumLevelFilter"));
     auto* scan = window.findChild<QSpinBox*>(QStringLiteral("spectrumIndex"));
     auto* rasterWidth = window.findChild<QSpinBox*>(QStringLiteral("peakMapRasterWidth"));
     auto* runContext = window.findChild<QLabel*>(QStringLiteral("runContext"));
     auto* loading = window.findChild<OpenMSViewer::LoadingOverlayWidget*>();
     auto* ticDock = window.findChild<QDockWidget*>(QStringLiteral("ticDock"));
-    QVERIFY(stack && welcome && peakMap && interaction && level && scan && rasterWidth
+    QVERIFY(stack && welcome && peakMap && interaction && intensityScale && level && scan && rasterWidth
             && runContext && loading && ticDock);
     QCOMPARE(rasterWidth->value(), OpenMSViewer::PeakMapWidget::DefaultRasterWidth);
     rasterWidth->setValue(768);
     QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(welcome));
     QVERIFY(!ticDock->toggleViewAction()->isEnabled());
     QCOMPARE(interaction->count(), 4);  // Zoom / Pan / Measure / Edit
+    for (int index = 0; index < interaction->count(); ++index)
+      QVERIFY(!interaction->itemIcon(index).isNull());
+    QCOMPARE(intensityScale->count(), 3);
+    QCOMPARE(intensityScale->findText(QStringLiteral("Linear")), -1);
     QCOMPARE(level->count(), 3);
     QVERIFY(!interaction->isVisible());
     QVERIFY(!peakMap->accessibleName().isEmpty());

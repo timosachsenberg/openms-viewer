@@ -1,6 +1,7 @@
 #include "widgets/SpectrumWidget.h"
 
 #include "model/RtUnit.h"
+#include "plot/PlotAxis.h"
 
 #include <QPainter>
 #include <QFontMetrics>
@@ -19,6 +20,18 @@ namespace OpenMSViewer
 {
   namespace
   {
+    // The 1D spectrum canvas always renders on white — the classic TOPPView look —
+    // independent of the application light/dark theme, so peaks, annotations and
+    // exported/printed spectra read identically everywhere. These fixed colours
+    // replace the theme palette throughout paintEvent.
+    const QColor kCanvasBg(255, 255, 255);
+    const QColor kAxisLine(90, 90, 95);      // frame + baseline + tick marks
+    const QColor kGridLine(205, 205, 212);   // faint interior gridlines
+    const QColor kAxisText(35, 35, 40);      // labels, ticks, title
+    const QColor kMutedText(130, 130, 140);  // placeholders, secondary notes
+    const QColor kChipBg(255, 255, 255);     // translucent backing for on-canvas keys
+    const QColor kStick(15, 110, 150);       // unannotated peak sticks
+
     QColor ionColor(IonType type)
     {
       switch (type)
@@ -90,8 +103,14 @@ namespace OpenMSViewer
     if (mzView_)
     {
       const auto full = fullMzRange();
-      applyMzView(std::max(mzView_->first, full.first),
-                  std::min(mzView_->second, full.second));
+      // If the retained zoom no longer overlaps the new spectrum's m/z range, fall
+      // back to the full view rather than clamping to an empty intersection — that
+      // would leave a stale out-of-range window painting an empty plot.
+      if (mzView_->first >= full.second || mzView_->second <= full.first)
+        mzView_.reset();
+      else
+        applyMzView(std::max(mzView_->first, full.first),
+                    std::min(mzView_->second, full.second));
     }
     update();
   }
@@ -366,7 +385,7 @@ namespace OpenMSViewer
     }
     if (baseMax <= 0.0) baseMax = 1.0;
     if (viewMax <= 0.0) viewMax = baseMax;
-    const double intensityMax = (mirror || autoYScale_) ? viewMax : baseMax;
+    const double intensityMax = autoYScale_ ? viewMax : baseMax;
     const auto xForMz = [&](double mz)
     {
       return area.left() + (mz - mzMin) / (mzMax - mzMin) * area.width();
@@ -444,13 +463,13 @@ namespace OpenMSViewer
   {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, false);
-    painter.fillRect(rect(), palette().window());
+    painter.fillRect(rect(), kCanvasBg);
     const QRect area = plotRect();
 
     const OpenMS::MSSpectrum* selectedSpectrum = currentSpectrum();
     if (!selectedSpectrum)
     {
-      painter.setPen(palette().color(QPalette::PlaceholderText));
+      painter.setPen(kMutedText);
       painter.drawText(area, Qt::AlignCenter, tr("No spectrum selected"));
       return;
     }
@@ -458,7 +477,7 @@ namespace OpenMSViewer
     const auto& spectrum = *selectedSpectrum;
     if (spectrum.empty())
     {
-      painter.setPen(palette().color(QPalette::PlaceholderText));
+      painter.setPen(kMutedText);
       painter.drawText(area, Qt::AlignCenter, tr("Selected spectrum has no peaks"));
       return;
     }
@@ -468,21 +487,34 @@ namespace OpenMSViewer
     const int baseline = mirror ? area.center().y() : area.bottom();
     const double positiveHeight = mirror ? area.height() * 0.45 : area.height() * 0.95;
 
-    painter.setPen(palette().color(QPalette::Mid));
+    // Resolve the visible m/z range up front: the gridlines and the m/z axis both
+    // place ticks on "nice" round numbers (1/2/5·10ⁿ, like the TIC/peak-map and
+    // TOPPView) instead of on evenly spaced pixels, so labels land on clean values.
+    const auto fullRange = fullMzRange();
+    const double mzMin = mzView_ ? mzView_->first : fullRange.first;
+    const double mzMax = mzView_ ? mzView_->second : fullRange.second;
+    const auto xForMz = [&](double mz)
+    {
+      return area.left() + static_cast<int>((mz - mzMin) / (mzMax - mzMin) * area.width());
+    };
+    const auto mzTicks = PlotAxis::niceTicks(mzMin, mzMax, 8);
+
+    painter.setPen(kAxisLine);
     painter.drawLine(area.left(), baseline, area.right(), baseline);
     painter.drawLine(area.left(), area.top(), area.left(), area.bottom());
 
-    // Faint dotted gridlines at the axis ticks — the same grid the TIC/chromatogram
-    // plots use and the classic TOPPView spectrum look — drawn behind the peaks so
-    // the sticks stay crisp on top. Interior lines only; the frame edges and the
-    // baseline are already the solid axis lines above.
+    // Faint dotted gridlines at the nice-number m/z ticks — the classic TOPPView
+    // spectrum look — drawn behind the peaks so the sticks stay crisp on top.
+    // Interior lines only; the frame edges and the baseline are the solid axis
+    // lines already drawn above.
     if (showGrid_)
     {
-      painter.setPen(QPen(palette().color(QPalette::Mid), 1, Qt::DotLine));
-      for (int tick = 1; tick < 5; ++tick)
+      painter.setPen(QPen(kGridLine, 1, Qt::DotLine));
+      for (const double tick : mzTicks)
       {
-        const int x = area.left() + tick * area.width() / 5;
-        painter.drawLine(x, area.top(), x, area.bottom());
+        const int x = xForMz(tick);
+        if (x > area.left() + 1 && x < area.right() - 1)
+          painter.drawLine(x, area.top(), x, area.bottom());
       }
       if (!mirror)
         for (int tick = 1; tick <= 4; ++tick)
@@ -492,9 +524,6 @@ namespace OpenMSViewer
         }
     }
 
-    const auto fullRange = fullMzRange();
-    const double mzMin = mzView_ ? mzView_->first : fullRange.first;
-    const double mzMax = mzView_ ? mzView_->second : fullRange.second;
     double viewIntensityMax = 0.0;
     double baseIntensityMax = 0.0;
     for (const auto& peak : spectrum)
@@ -507,20 +536,16 @@ namespace OpenMSViewer
     if (baseIntensityMax <= 0.0) baseIntensityMax = 1.0;
     if (viewIntensityMax <= 0.0) viewIntensityMax = baseIntensityMax;
     // Intensity mapped to the top of the plot: the visible-range maximum when
-    // auto-scaling (default) or in a butterfly view, otherwise the whole-spectrum
-    // base peak so absolute heights stay comparable when zoomed or across spectra.
-    const double intensityMax = (mirror || autoYScale_) ? viewIntensityMax : baseIntensityMax;
+    // auto-scaling (default), otherwise the whole-spectrum base peak so absolute
+    // heights stay comparable when zoomed or across spectra — honoured in the
+    // butterfly view too so the toggle is never inert.
+    const double intensityMax = autoYScale_ ? viewIntensityMax : baseIntensityMax;
     plotBaseline_ = baseline;
     plotPositiveHeight_ = positiveHeight;
     plotIntensityMax_ = intensityMax;
 
-    const bool darkTheme = palette().color(QPalette::Window).lightnessF() < 0.5;
-    const QColor stickColor = darkTheme ? QColor(35, 190, 225) : QColor(15, 110, 150);
+    const QColor stickColor = kStick;
 
-    const auto xForMz = [&](double mz)
-    {
-      return area.left() + static_cast<int>((mz - mzMin) / (mzMax - mzMin) * area.width());
-    };
     const auto yForIntensity = [&](double intensity)
     {
       return baseline - static_cast<int>(intensity / intensityMax * positiveHeight);
@@ -654,7 +679,7 @@ namespace OpenMSViewer
         }
         drawStickLabels(std::move(bottomLabels), false);
 
-        painter.setPen(palette().color(QPalette::PlaceholderText));
+        painter.setPen(kMutedText);
         painter.drawText(QRect(area.left() + 4, area.bottom() - 18, area.width() - 8, 16),
                          Qt::AlignRight | Qt::AlignBottom, tr("Theoretical spectrum"));
       }
@@ -678,7 +703,7 @@ namespace OpenMSViewer
         int x = std::max(area.left() + 2, area.right() - total);
         const int y = area.top() + 3;
         // Translucent backing keeps the key legible over tall right-side peaks.
-        const QColor base = palette().color(QPalette::Base);
+        const QColor base = kChipBg;
         painter.setPen(Qt::NoPen);
         painter.setBrush(QColor(base.red(), base.green(), base.blue(), 205));
         painter.drawRoundedRect(QRect(x - 4, y - 2, area.right() - x + 4, 15), 3, 3);
@@ -686,7 +711,7 @@ namespace OpenMSViewer
         {
           painter.fillRect(QRect(x, y + 1, 9, 9), ionColor(type));
           x += 11 + 3;
-          painter.setPen(palette().color(QPalette::Text));
+          painter.setPen(kAxisText);
           const int textWidth = metrics.horizontalAdvance(ionTypeName(type));
           painter.drawText(QRect(x, y - 2, textWidth + 2, 15), Qt::AlignLeft | Qt::AlignVCenter,
                            ionTypeName(type));
@@ -764,7 +789,7 @@ namespace OpenMSViewer
     // User-authored peak labels: an arrowed leader to the peak tip plus a text
     // chip, stacked upward to avoid overlapping one another.
     {
-      const QColor labelColor = darkTheme ? QColor(120, 220, 140) : QColor(28, 130, 60);
+      const QColor labelColor(28, 130, 60);  // fixed dark green — reads on the white canvas
       painter.setFont(QFont(painter.font().family(), std::max(7, font().pointSize() - 1)));
       std::vector<QRect> usedRects;
       for (const PeakLabel& label : labels())
@@ -788,7 +813,7 @@ namespace OpenMSViewer
         painter.setBrush(labelColor);
         const QPointF arrow[3] = {QPointF(x, yTip), QPointF(x - 3, yTip - 6.0), QPointF(x + 3, yTip - 6.0)};
         painter.drawPolygon(arrow, 3);
-        const QColor chip = palette().color(QPalette::Base);
+        const QColor chip = kChipBg;
         painter.setBrush(QColor(chip.red(), chip.green(), chip.blue(), 225));
         painter.drawRoundedRect(box, 3, 3);
         painter.setPen(labelColor);
@@ -805,10 +830,8 @@ namespace OpenMSViewer
       painter.setPen(QPen(measurementMode_ ? QColor(255, 136, 0) : QColor(40, 170, 255), 2.0));
       painter.setBrush(Qt::NoBrush);
       painter.drawEllipse(QPointF(x, y), 4.5, 4.5);
-      painter.setPen(palette().color(QPalette::Text));
-      painter.setBrush(QColor(palette().color(QPalette::Base).red(),
-                              palette().color(QPalette::Base).green(),
-                              palette().color(QPalette::Base).blue(), 220));
+      painter.setPen(kAxisText);
+      painter.setBrush(QColor(kChipBg.red(), kChipBg.green(), kChipBg.blue(), 220));
       const QString label = tr("m/z %1 · I %2")
         .arg(hoveredPeak_->first, 0, 'f', 5).arg(hoveredPeak_->second, 0, 'g', 5);
       const QRect labelRect(x + 7, std::max(area.top() + 2, y - 25),
@@ -817,19 +840,30 @@ namespace OpenMSViewer
       painter.drawText(labelRect.adjusted(5, 0, -5, 0), Qt::AlignVCenter, label);
     }
 
-    if (showMzLabels_ && !annotated)
+    if (showMzLabels_)
     {
       std::vector<const OpenMS::Peak1D*> peaks;
       for (const auto& peak : spectrum)
-        if (peak.getMZ() >= mzMin && peak.getMZ() <= mzMax
-            && peak.getIntensity() >= intensityMax * 0.05) peaks.push_back(&peak);
+      {
+        if (peak.getMZ() < mzMin || peak.getMZ() > mzMax
+            || peak.getIntensity() < intensityMax * 0.05) continue;
+        // When annotated, matched fragments already carry ion-name labels; skip them
+        // so the numeric readout only adds the unmatched peaks and never overprints
+        // an ion label. This keeps the toggle useful in the common annotated-MS2 case.
+        if (annotated && annotation_
+            && std::any_of(annotation_->matched.cbegin(), annotation_->matched.cend(),
+                 [&](const MatchedIon& ion)
+                 { return std::abs(ion.experimentalMz - peak.getMZ()) <= 1e-3; }))
+          continue;
+        peaks.push_back(&peak);
+      }
       std::sort(peaks.begin(), peaks.end(), [](const auto* left, const auto* right)
       {
         return left->getIntensity() > right->getIntensity();
       });
       if (peaks.size() > 15) peaks.resize(15);
       std::vector<int> usedX;
-      painter.setPen(darkTheme ? QColor(115, 195, 235) : QColor(30, 120, 160));
+      painter.setPen(QColor(30, 120, 160));  // fixed dark teal for the white canvas
       painter.setFont(QFont(painter.font().family(), std::max(7, painter.font().pointSize() - 2)));
       for (const auto* peak : peaks)
       {
@@ -852,7 +886,7 @@ namespace OpenMSViewer
     painter.setRenderHint(QPainter::Antialiasing, false);
 
     painter.setFont(font());
-    painter.setPen(palette().color(QPalette::Text));
+    painter.setPen(kAxisText);
     QString title = standaloneSpectrum_
       ? tr("#%1/%2   MS%3   pixel spectrum   %4 peaks")
           .arg(spectrumIndex_ + 1).arg(totalSpectra_).arg(spectrum.getMSLevel()).arg(spectrum.size())
@@ -895,24 +929,41 @@ namespace OpenMSViewer
     }
     else
     {
-      painter.drawText(QRect(1, area.top() - 2, area.left() - 9, 18), Qt::AlignRight, QStringLiteral("100"));
-      painter.drawText(QRect(1, baseline - 9, area.left() - 9, 18), Qt::AlignRight, QStringLiteral("0"));
-      painter.drawText(QRect(1, area.bottom() - 16, area.left() - 9, 18), Qt::AlignRight, QStringLiteral("100"));
+      // Register the "100" labels at the actual peak-tip heights — the experimental
+      // trace fills 0.45h up and the theoretical 0.42h down, not the full plot edges —
+      // so heights read correctly off the axis.
+      const int topTip = baseline - static_cast<int>(positiveHeight);
+      const int bottomTip = baseline + static_cast<int>(area.height() * 0.42);
+      painter.drawText(QRect(1, topTip - 9, area.left() - 9, 18), Qt::AlignRight | Qt::AlignVCenter, QStringLiteral("100"));
+      painter.drawText(QRect(1, baseline - 9, area.left() - 9, 18), Qt::AlignRight | Qt::AlignVCenter, QStringLiteral("0"));
+      painter.drawText(QRect(1, bottomTip - 9, area.left() - 9, 18), Qt::AlignRight | Qt::AlignVCenter, QStringLiteral("100"));
     }
 
-    for (int tick = 0; tick <= 5; ++tick)
+    // m/z axis ticks + labels on the same nice-number values as the gridlines, so
+    // labels sit under their gridline on clean round m/z (like TOPPView). Label
+    // precision follows the tick step so a zoomed-in view keeps distinct labels.
+    int mzDecimals = 1;
+    if (mzTicks.size() >= 2)
     {
-      const double fraction = tick / 5.0;
-      const int x = area.left() + static_cast<int>(fraction * area.width());
+      const double step = mzTicks[1] - mzTicks[0];
+      mzDecimals = step >= 1.0 ? 0 : step >= 0.1 ? 1 : step >= 0.01 ? 2 : 3;
+    }
+    for (const double tick : mzTicks)
+    {
+      const int x = xForMz(tick);
+      if (x < area.left() || x > area.right()) continue;
       painter.drawLine(x, area.bottom(), x, area.bottom() + 4);
       painter.drawText(QRect(x - 40, area.bottom() + 5, 80, 18), Qt::AlignHCenter,
-                       QString::number(mzMin + fraction * (mzMax - mzMin), 'f', 1));
+                       QString::number(tick, 'f', mzDecimals));
     }
   }
 
   void SpectrumWidget::wheelEvent(QWheelEvent* event)
   {
-    if (!currentSpectrum() || !plotRect().contains(event->position().toPoint())) return;
+    // Zoom on the wheel anywhere over the widget, not just inside plotRect(): the
+    // cursor fraction is clamped to the plot below, so scrolling over the axis
+    // margins (including the bottom m/z tick strip) still zooms instead of dead-zoning.
+    if (!currentSpectrum()) return;
     const auto full = fullMzRange();
     const double minimum = mzView_ ? mzView_->first : full.first;
     const double maximum = mzView_ ? mzView_->second : full.second;
@@ -961,7 +1012,8 @@ namespace OpenMSViewer
   {
     if (draggingZoom_) dragCurrent_ = event->pos();
     const auto peak = peakAt(event->position());
-    if (peak != hoveredPeak_)
+    const bool hoverChanged = peak != hoveredPeak_;
+    if (hoverChanged)
     {
       hoveredPeak_ = peak;
       if (peak)
@@ -998,7 +1050,10 @@ namespace OpenMSViewer
       }
       else setToolTip({});
     }
-    update();
+    // Only repaint when something the canvas actually draws changed: the hovered-peak
+    // highlight (which also drives the live measurement delta line) or an active drag
+    // rectangle. An idle move over empty space is a no-op.
+    if (hoverChanged || draggingZoom_) update();
   }
 
   void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)

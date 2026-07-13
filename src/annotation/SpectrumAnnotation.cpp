@@ -46,7 +46,7 @@ namespace OpenMSViewer
 
       OpenMS::MSSpectrum spectrum;
       const OpenMS::AASequence sequence = OpenMS::AASequence::fromString(hit.sequence.toStdString());
-      const int maximumCharge = std::clamp(std::abs(hit.charge), 1, 2);
+      const int maximumCharge = std::max(1, std::abs(hit.charge));
       generator.getSpectrum(spectrum, sequence, 1, maximumCharge);
 
       const OpenMS::DataArrays::StringDataArray* names = nullptr;

@@ -85,6 +85,15 @@ namespace OpenMSViewer
     update();
   }
 
+  void FaimsPeakMapsWidget::setColorMap(PeakMapColorMap colorMap)
+  {
+    if (colorMap_ == colorMap) return;
+    colorMap_ = colorMap;
+    images_.clear();   // don't show the old-colormap small multiples while re-rendering
+    scheduleRender();
+    update();          // repaint the floor background immediately, even before the re-render lands
+  }
+
   const std::vector<QImage>& FaimsPeakMapsWidget::images() const noexcept { return images_; }
 
   QRect FaimsPeakMapsWidget::cellRect(std::size_t index) const
@@ -116,18 +125,19 @@ namespace OpenMSViewer
     activeGeneration_ = desiredGeneration_;
     const auto experiments = experiments_;
     const PlotRange range = view_;
+    const PeakMapColorMap colorMap = colorMap_;
     std::vector<QSize> sizes;
     sizes.reserve(experiments.size());
     for (std::size_t index = 0; index < experiments.size(); ++index)
       sizes.push_back(cellRect(index).adjusted(8, 27, -8, -8).size());
-    renderWatcher_.setFuture(QtConcurrent::run([experiments, range, sizes]
+    renderWatcher_.setFuture(QtConcurrent::run([experiments, range, sizes, colorMap]
     {
       std::vector<QImage> images;
       images.reserve(experiments.size());
       for (std::size_t index = 0; index < experiments.size(); ++index)
       {
         images.push_back(experiments[index]
-          ? PeakMapRasterizer::render(*experiments[index], range, sizes[index], true, 1)
+          ? PeakMapRasterizer::render(*experiments[index], range, sizes[index], true, 1, colorMap)
           : QImage{});
       }
       return images;
@@ -157,7 +167,7 @@ namespace OpenMSViewer
                        Qt::AlignLeft | Qt::AlignVCenter,
                        tr("CV %1 V · %2 scans").arg(channels_[index].compensationVoltage, 0, 'f', 1)
                                                  .arg(channels_[index].tic.size()));
-      painter.fillRect(imageArea, QColor::fromRgb(PeakMapRasterizer::color(0.0, PeakMapColorMap::Viridis)));
+      painter.fillRect(imageArea, QColor::fromRgb(PeakMapRasterizer::color(0.0, colorMap_)));
       if (index < images_.size() && !images_[index].isNull())
         painter.drawImage(imageArea, images_[index]);
     }
@@ -458,6 +468,12 @@ namespace OpenMSViewer
     const QSignalBlocker blocker(selector_);
     selector_->setCurrentIndex(selectorIndex);
     applySelection(selectorIndex, false);
+  }
+
+  void FaimsPanelWidget::setColorMap(int colorMapIndex)
+  {
+    // Follows the main peak map's colormap selector (same PeakMapColorMap order).
+    peakMaps_->setColorMap(static_cast<PeakMapColorMap>(std::clamp(colorMapIndex, 0, 6)));
   }
 
   std::size_t FaimsPanelWidget::channelCount() const noexcept { return channels_.size(); }

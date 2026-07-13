@@ -132,6 +132,11 @@ namespace OpenMSViewer
     enum class DragMode { None, Zoom, Pan, Measure, Edit };
 
     [[nodiscard]] QRect plotRect() const;
+    // The overview minimap only earns its screen space (and the data it covers)
+    // when the view is a strict subset of the full data bounds; when fully zoomed
+    // out it is redundant, so it is hidden and non-interactive.
+    [[nodiscard]] bool isZoomedIn() const;
+    void recenterFromMinimap(const QPointF& position);
     [[nodiscard]] QPointF dataAt(const QPointF& position) const;
     [[nodiscard]] QPointF pixelFor(double rt, double mz) const;
     [[nodiscard]] QSize densityAwareRenderSize() const;
@@ -193,6 +198,7 @@ namespace OpenMSViewer
     std::uint64_t activeMinimapGeneration_{0};
 
     DragMode dragMode_{DragMode::None};
+    bool draggingMinimap_{false};  // left button held down inside the minimap -> live pan
     std::optional<std::size_t> editFeatureIndex_;  // feature grabbed in Edit mode (else create)
     // Empty-space feature creation is deferred by the double-click interval so a
     // double-click (which Qt delivers as press+release+dblclick+release) opens the

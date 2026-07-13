@@ -188,6 +188,29 @@ namespace OpenMSViewer
     return QRect(area.right() - width - 10, area.bottom() - height - 10, width, height);
   }
 
+  bool PeakMapWidget::isZoomedIn() const
+  {
+    if (!experiment_ || dataBounds_.rtSpan() <= 0.0 || dataBounds_.mzSpan() <= 0.0) return false;
+    const double rtEps = dataBounds_.rtSpan() * 1e-6;
+    const double mzEps = dataBounds_.mzSpan() * 1e-6;
+    return view_.rtMin > dataBounds_.rtMin + rtEps || view_.rtMax < dataBounds_.rtMax - rtEps
+        || view_.mzMin > dataBounds_.mzMin + mzEps || view_.mzMax < dataBounds_.mzMax - mzEps;
+  }
+
+  void PeakMapWidget::recenterFromMinimap(const QPointF& position)
+  {
+    const QRect mini = minimapRect();
+    if (mini.width() <= 0 || mini.height() <= 0) return;
+    const double x = std::clamp((position.x() - mini.left()) / mini.width(), 0.0, 1.0);
+    const double y = std::clamp((mini.bottom() - position.y()) / mini.height(), 0.0, 1.0);
+    const double centerRt = axesSwapped_ ? dataBounds_.rtMin + y * dataBounds_.rtSpan()
+                                          : dataBounds_.rtMin + x * dataBounds_.rtSpan();
+    const double centerMz = axesSwapped_ ? dataBounds_.mzMin + x * dataBounds_.mzSpan()
+                                          : dataBounds_.mzMin + y * dataBounds_.mzSpan();
+    applyRange({centerRt - view_.rtSpan() / 2.0, centerRt + view_.rtSpan() / 2.0,
+                centerMz - view_.mzSpan() / 2.0, centerMz + view_.mzSpan() / 2.0}, false);
+  }
+
   void PeakMapWidget::resetView()
   {
     if (!experiment_) return;
@@ -457,7 +480,14 @@ namespace OpenMSViewer
     // Render at full canvas resolution. The rasterizer grows sparse points into
     // small blobs (adaptive spread), so deep zooms show crisp peaks instead of a
     // low-resolution grid stretched to fill the view.
-    return plotRect().size();
+    //
+    // Scale by the device pixel ratio so the raster is generated at PHYSICAL
+    // resolution; drawing the higher-res image into the logical plot rect keeps
+    // the flagship 2D view sharp on HiDPI/Retina displays instead of upscaling a
+    // 1x image. On a 1x display dpr == 1.0, so this is a no-op.
+    const QSize logical = plotRect().size();
+    const double dpr = devicePixelRatioF();
+    return QSize(std::lround(logical.width() * dpr), std::lround(logical.height() * dpr));
   }
 
   void PeakMapWidget::scheduleRender()
@@ -689,7 +719,7 @@ namespace OpenMSViewer
     drawIdentifications(painter);
     drawLegend(painter, area);
 
-    if (showMinimap_ && !minimap_.isNull())
+    if (showMinimap_ && isZoomedIn() && !minimap_.isNull())
     {
       const QRect mini = minimapRect();
       painter.setOpacity(0.94);
@@ -1070,25 +1100,46 @@ namespace OpenMSViewer
     const bool anyFeatureOverlay = showFeatureCentroids_ || showFeatureBounds_ || showFeatureHulls_;
     if (!anyFeatureOverlay || features_.empty() || !plotRect().contains(position.toPoint()))
       return std::nullopt;
+    const QPointF data = dataAt(position);
     double bestSquaredDistance = 15.0 * 15.0;
-    std::optional<std::size_t> best;
+    std::optional<std::size_t> best;                          // nearest centroid within 15 px
+    double bestEnclosingArea = std::numeric_limits<double>::max();
+    std::optional<std::size_t> enclosing;                     // tightest bounds under the cursor
     const std::size_t limit = std::min<std::size_t>(features_.size(), 10000);
     for (std::size_t index = 0; index < limit; ++index)
     {
       const FeatureRecord& feature = features_[index];
-      if (feature.rt < view_.rtMin || feature.rt > view_.rtMax
-          || feature.mz < view_.mzMin || feature.mz > view_.mzMax) continue;
-      const QPointF pixel = pixelFor(feature.rt, feature.mz);
-      const double dx = position.x() - pixel.x();
-      const double dy = position.y() - pixel.y();
-      const double squaredDistance = dx * dx + dy * dy;
-      if (squaredDistance < bestSquaredDistance)
+      // Cull by bounding-box overlap so the clickable set matches the DRAWN set
+      // (drawFeatures() culls the same way). A feature whose centroid is scrolled
+      // off-screen but whose box/hull still covers the view stays hittable.
+      if (feature.bounds.rtMax < view_.rtMin || feature.bounds.rtMin > view_.rtMax
+          || feature.bounds.mzMax < view_.mzMin || feature.bounds.mzMin > view_.mzMax) continue;
+      // Precise: distance to the centroid marker when it is itself on-screen.
+      if (feature.rt >= view_.rtMin && feature.rt <= view_.rtMax
+          && feature.mz >= view_.mzMin && feature.mz <= view_.mzMax)
       {
-        bestSquaredDistance = squaredDistance;
-        best = feature.index;
+        const QPointF pixel = pixelFor(feature.rt, feature.mz);
+        const double dx = position.x() - pixel.x();
+        const double dy = position.y() - pixel.y();
+        const double squaredDistance = dx * dx + dy * dy;
+        if (squaredDistance < bestSquaredDistance)
+        {
+          bestSquaredDistance = squaredDistance;
+          best = feature.index;
+        }
+      }
+      // Fallback: cursor inside the feature's data-space bounds (matches the drawn
+      // box/hull). Prefer the tightest enclosing feature when several nest.
+      if (feature.bounds.rtMax > feature.bounds.rtMin && feature.bounds.mzMax > feature.bounds.mzMin
+          && data.x() >= feature.bounds.rtMin && data.x() <= feature.bounds.rtMax
+          && data.y() >= feature.bounds.mzMin && data.y() <= feature.bounds.mzMax)
+      {
+        const double area = feature.bounds.rtSpan() * feature.bounds.mzSpan();
+        if (area < bestEnclosingArea) { bestEnclosingArea = area; enclosing = feature.index; }
       }
     }
-    return best;
+    // A close centroid wins (precise); otherwise fall back to the enclosing box/hull.
+    return best ? best : enclosing;
   }
 
   void PeakMapWidget::drawIdentifications(QPainter& painter) const
@@ -1300,20 +1351,14 @@ namespace OpenMSViewer
 
   void PeakMapWidget::mousePressEvent(QMouseEvent* event)
   {
-    if (experiment_ && event->button() == Qt::LeftButton && showMinimap_
+    if (experiment_ && event->button() == Qt::LeftButton && showMinimap_ && isZoomedIn()
         && !minimap_.isNull() && minimapRect().contains(event->position().toPoint()))
     {
-      const QRect mini = minimapRect();
-      const double x = std::clamp((event->position().x() - mini.left())
-        / mini.width(), 0.0, 1.0);
-      const double y = std::clamp((mini.bottom() - event->position().y())
-        / mini.height(), 0.0, 1.0);
-      const double centerRt = axesSwapped_ ? dataBounds_.rtMin + y * dataBounds_.rtSpan()
-                                            : dataBounds_.rtMin + x * dataBounds_.rtSpan();
-      const double centerMz = axesSwapped_ ? dataBounds_.mzMin + x * dataBounds_.mzSpan()
-                                            : dataBounds_.mzMin + y * dataBounds_.mzSpan();
-      applyRange({centerRt - view_.rtSpan() / 2.0, centerRt + view_.rtSpan() / 2.0,
-                  centerMz - view_.mzSpan() / 2.0, centerMz + view_.mzSpan() / 2.0}, true);
+      // Click (and hold-drag) inside the minimap recenters the view. Push one
+      // history entry at drag start so a single Zoom-back undoes the whole gesture.
+      draggingMinimap_ = true;
+      rememberCurrentRange();
+      recenterFromMinimap(event->position());
       event->accept();
       return;
     }
@@ -1353,6 +1398,12 @@ namespace OpenMSViewer
 
   void PeakMapWidget::mouseMoveEvent(QMouseEvent* event)
   {
+    if (draggingMinimap_)
+    {
+      recenterFromMinimap(event->position());  // live pan while the button is held
+      event->accept();
+      return;
+    }
     if (experiment_ && plotRect().contains(event->position().toPoint()))
     {
       const QPointF position = dataAt(event->position());
@@ -1418,6 +1469,15 @@ namespace OpenMSViewer
         }
         update();
       }
+      // leaveEvent unset the cursor; when the pointer re-enters over empty plot
+      // area the hover state is unchanged (nothing under it), so the block above
+      // is skipped and the crosshair/open-hand cursor is never reapplied. Restore
+      // it here. Runs once: updateInteractionCursor() sets a non-arrow shape.
+      else if (!hoveredFeature_ && !hoveredIdentification_ && !hoveredPrecursor_
+               && cursor().shape() == Qt::ArrowCursor)
+      {
+        updateInteractionCursor();
+      }
       QWidget::mouseMoveEvent(event);
       return;
     }
@@ -1448,6 +1508,12 @@ namespace OpenMSViewer
 
   void PeakMapWidget::mouseReleaseEvent(QMouseEvent* event)
   {
+    if (draggingMinimap_ && event->button() == Qt::LeftButton)
+    {
+      draggingMinimap_ = false;
+      event->accept();
+      return;
+    }
     if (event->button() != Qt::LeftButton || dragMode_ == DragMode::None)
     {
       QWidget::mouseReleaseEvent(event);
@@ -1458,10 +1524,23 @@ namespace OpenMSViewer
     dragMode_ = DragMode::None;
     updateInteractionCursor();
 
-    if (completedMode == DragMode::Zoom)
+    if (completedMode == DragMode::Pan)
+    {
+      // A plain click (no real drag) in Pan mode changed nothing, but the press
+      // already pushed a history entry — drop it so the first Zoom-back is not a
+      // visible no-op.
+      if ((dragCurrent_ - dragStart_).manhattanLength() < 6 && !history_.empty())
+      {
+        history_.pop_back();
+        emit zoomHistoryChanged(!history_.empty());
+      }
+    }
+    else if (completedMode == DragMode::Zoom)
     {
       const QRect selection = QRect(dragStart_, dragCurrent_).normalized().intersected(plotRect());
-      if (selection.width() >= 8 && selection.height() >= 8)
+      // Accept a thin band (narrow-but-tall or wide-but-short) as an axis-band zoom:
+      // a long drag in one axis is a deliberate "zoom this RT/m-z range" gesture.
+      if (selection.width() >= 8 || selection.height() >= 8)
       {
         const QPointF first = dataAt(selection.topLeft());
         const QPointF second = dataAt(selection.bottomRight());

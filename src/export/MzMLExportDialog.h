@@ -25,7 +25,8 @@ namespace OpenMSViewer
                      const std::set<unsigned int>& msLevels,
                      const std::vector<SpectrumRecord>& spectra,
                      std::optional<double> activeFaimsCv,
-                     QWidget* parent = nullptr);
+                     QWidget* parent = nullptr,
+                     bool rtInMinutes = false);
 
     [[nodiscard]] MzMLExportFilter filter() const;
 
@@ -40,6 +41,7 @@ namespace OpenMSViewer
     PlotRange currentRange_;
     std::vector<SpectrumRecord> spectra_;
     std::optional<double> activeFaimsCv_;
+    bool rtInMinutes_{false};
     QDoubleSpinBox* rtMinimum_{nullptr};
     QDoubleSpinBox* rtMaximum_{nullptr};
     QDoubleSpinBox* mzMinimum_{nullptr};

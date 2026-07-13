@@ -248,14 +248,18 @@ namespace OpenMSViewer
             this, &FeatureTableWidget::updateFilters);
     connect(reset, &QPushButton::clicked, this, &FeatureTableWidget::resetFilters);
     connect(exportButton, &QPushButton::clicked, this, &FeatureTableWidget::exportTsv);
-    connect(table_->selectionModel(), &QItemSelectionModel::currentRowChanged,
-            this, [this](const QModelIndex& proxyIndex)
+    const auto activateRow = [this](const QModelIndex& proxyIndex)
     {
       if (!proxyIndex.isValid() || synchronizingSelection_) return;
       const QModelIndex sourceIndex = proxy_->mapToSource(proxyIndex);
       if (const FeatureRecord* feature = model_->featureForRow(sourceIndex.row()))
         emit featureActivated(feature->index);
-    });
+    };
+    connect(table_->selectionModel(), &QItemSelectionModel::currentRowChanged,
+            this, activateRow);
+    // Clicking the already-current row does not change the current index, so
+    // re-emit activation on click to re-zoom to the same feature.
+    connect(table_, &QTableView::clicked, this, activateRow);
     connect(proxy_, &QAbstractItemModel::rowsInserted, this, &FeatureTableWidget::updateCountLabel);
     connect(proxy_, &QAbstractItemModel::rowsRemoved, this, &FeatureTableWidget::updateCountLabel);
     connect(proxy_, &QAbstractItemModel::modelReset, this, &FeatureTableWidget::updateCountLabel);

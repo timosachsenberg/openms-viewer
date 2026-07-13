@@ -78,6 +78,7 @@ namespace OpenMSViewer
     OswPrecursorFilterProxy* precursorProxy_{nullptr};
     QTableView* peakGroupView_{nullptr};
     OswPeakGroupModel* peakGroupModel_{nullptr};
+    QSortFilterProxyModel* peakGroupProxy_{nullptr};
     QCheckBox* showAllTransitions_{nullptr};
     QCheckBox* smoothTraces_{nullptr};
     TransitionGroupPlot* plot_{nullptr};

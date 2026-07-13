@@ -103,6 +103,8 @@ namespace OpenMSViewer
   {
     if (!parentWidget()) return;
     adjustSize();
-    move(std::max(12, (parentWidget()->width() - width()) / 2), 18);
+    // Sit clear of the peak-map control bar so the overlay does not cover or
+    // swallow clicks on the Color/Scale/Display/Overlays controls during a load.
+    move(std::max(12, (parentWidget()->width() - width()) / 2), 44);
   }
 }

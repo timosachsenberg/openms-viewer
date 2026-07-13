@@ -59,6 +59,9 @@ namespace OpenMSViewer
 
   signals:
     void pixelActivated(std::size_t spectrumIndex, std::uint32_t x, std::uint32_t y);
+    // A click landed on an in-bounds grid cell that has no acquired spectrum, so the
+    // panel can acknowledge it instead of the click appearing to do nothing.
+    void pixelEmpty(std::uint32_t x, std::uint32_t y);
 
   protected:
     void paintEvent(QPaintEvent* event) override;
@@ -119,6 +122,7 @@ namespace OpenMSViewer
     std::optional<std::pair<double, double>> view_;   // zoomed m/z range
     std::optional<double> markerMz_;                  // the currently-imaged m/z
     std::optional<QPoint> hoverPos_;
+    bool computed_{false};   // a scan has returned, so an empty mz_ means "no signal", not "still computing"
   };
 
   class ImagingPanelWidget final : public QWidget

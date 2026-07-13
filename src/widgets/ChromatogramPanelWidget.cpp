@@ -253,9 +253,13 @@ namespace OpenMSViewer
     const auto rtBounds = selectedRtBounds();
     if (!rtBounds || selectedIndices_.empty())
     {
+      // A non-empty selection with no bounds means every selected record is an
+      // empty/failed trace; say so rather than pretending nothing is selected.
       painter.setPen(palette().color(QPalette::Text));
       painter.drawText(area, Qt::AlignCenter,
-                       tr("Select one or more chromatograms in the table"));
+                       selectedIndices_.empty()
+                         ? tr("Select one or more chromatograms in the table")
+                         : tr("Selected chromatogram(s) have no data points"));
       return;
     }
     const auto [rtMinimum, rtMaximum] = *rtBounds;
@@ -389,12 +393,15 @@ namespace OpenMSViewer
       const auto& record = chromatograms_[index];
       QString label = record.nativeId.isEmpty() ? tr("Chromatogram %1").arg(index) : record.nativeId;
       label = painter.fontMetrics().elidedText(label, Qt::ElideMiddle, 150);
+      // Measure before drawing so the final entry never spills past the plot edge;
+      // stop early rather than clip a half-drawn label.
+      const double entryWidth = 23.0 + painter.fontMetrics().horizontalAdvance(label);
+      if (legendX + entryWidth > area.right()) break;
       painter.setPen(QPen(colors[static_cast<std::size_t>(colorIndex) % colors.size()], 3.0));
       painter.drawLine(QPointF(legendX, 18.0), QPointF(legendX + 18.0, 18.0));
       painter.setPen(palette().color(QPalette::Text));
       painter.drawText(QPointF(legendX + 23.0, 23.0), label);
-      legendX += 31.0 + painter.fontMetrics().horizontalAdvance(label);
-      if (legendX > area.right() - 100.0) break;
+      legendX += 8.0 + entryWidth;
       ++colorIndex;
     }
 

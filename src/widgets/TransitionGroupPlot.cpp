@@ -4,6 +4,8 @@
 #include "model/TraceSmoothing.h"
 #include "plot/PlotAxis.h"
 
+#include <QEvent>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 
@@ -36,6 +38,7 @@ namespace OpenMSViewer
     setMinimumHeight(240);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAccessibleName(tr("Transition group chromatogram"));
+    setMouseTracking(true);  // hover readout without a pressed button, as the TIC/chromatogram
   }
 
   void TransitionGroupPlot::setData(std::vector<TransitionChromatogram> transitions,
@@ -46,6 +49,7 @@ namespace OpenMSViewer
     peakGroups_ = std::move(peakGroups);
     selectedPeakGroup_ = selectedPeakGroup;
     libraryRt_ = libraryRt;
+    dataRequested_ = true;  // a precursor was selected, even if its traces are empty
     rebuildSmoothing();
     update();
   }
@@ -100,6 +104,7 @@ namespace OpenMSViewer
     peakGroups_.clear();
     selectedPeakGroup_ = -1;
     libraryRt_ = 0.0;
+    dataRequested_ = false;
     update();
   }
 
@@ -142,7 +147,11 @@ namespace OpenMSViewer
     if (visible.empty())
     {
       painter.setPen(palette().color(QPalette::Text));
-      painter.drawText(area, Qt::AlignCenter, tr("Select a precursor to view its transitions"));
+      // Distinguish idle from a precursor whose fetch returned no usable traces
+      // (empty result, or all traces decoded to empty rt/intensity arrays).
+      painter.drawText(area, Qt::AlignCenter,
+                       dataRequested_ ? tr("No chromatogram data for this precursor")
+                                      : tr("Select a precursor to view its transitions"));
       return;
     }
 
@@ -239,8 +248,10 @@ namespace OpenMSViewer
       }
     }
 
-    // Library RT marker.
-    if (libraryRt_ > 0.0 && std::isfinite(libraryRt_))
+    // Library RT marker. 0.0 stays the "no value" sentinel (a NULL PRECURSOR.LIBRARY_RT
+    // decodes to 0.0 upstream), but negative iRT-normalized library RTs are legitimate
+    // and must still anchor the expected-RT reference line.
+    if (libraryRt_ != 0.0 && std::isfinite(libraryRt_))
     {
       const double x = mapX(libraryRt_);
       if (x >= area.left() && x <= area.right())
@@ -312,6 +323,7 @@ namespace OpenMSViewer
     {
       const double y = mapY(tick);
       if (y < area.top() - 0.5 || y > area.bottom() + 0.5) continue;
+      painter.drawLine(QPointF(area.left() - 4.0, y), QPointF(area.left(), y));
       painter.drawText(QRectF(0.0, y - 8.0, area.left() - 6.0, 16.0),
                        Qt::AlignRight | Qt::AlignVCenter, QString::number(tick, 'g', 3));
     }
@@ -357,5 +369,87 @@ namespace OpenMSViewer
       legendX += entryWidth;
       ++shown;
     }
+
+    // Hover readout: mirror the TIC/chromatogram — snap to the sample under the
+    // cursor on the vertically nearest trace and show a colour-matched RT/intensity
+    // chip. Colours are advanced exactly as the draw loop so the chip matches its trace.
+    if (hoverPos_ && area.contains(QPointF(*hoverPos_)))
+    {
+      const double hoverY = hoverPos_->y();
+      QPointF bestPos;
+      QColor bestColor;
+      double bestRt = 0.0;
+      double bestIntensity = 0.0;
+      QString bestLabel;
+      bool haveBest = false;
+      double bestVertical = std::numeric_limits<double>::max();
+      int traceColor = 0;
+      for (const TransitionChromatogram* transition : visible)
+      {
+        const QColor color = transition->isMs1() ? palette().color(QPalette::Text)
+          : kTraceColors[static_cast<std::size_t>(traceColor++) % kTraceColors.size()];
+        const std::vector<double>& values = displayIntensity(transition);
+        const std::size_t count = std::min(transition->rt.size(), values.size());
+        for (std::size_t point = 0; point < count; ++point)
+        {
+          const double rt = transition->rt[point];
+          const double intensity = values[point];
+          if (!std::isfinite(rt) || !std::isfinite(intensity)) continue;
+          const QPointF position(mapX(rt), mapY(intensity));
+          if (std::abs(position.x() - hoverPos_->x()) > 6.0) continue;  // only near the cursor x
+          const double vertical = std::abs(position.y() - hoverY);
+          if (vertical < bestVertical)
+          {
+            bestVertical = vertical;
+            bestPos = position;
+            bestColor = color;
+            bestRt = rt;
+            bestIntensity = intensity;
+            bestLabel = transition->annotation;
+            if (bestLabel.isEmpty() && !transition->ionType.isEmpty())
+              bestLabel = QStringLiteral("%1%2").arg(transition->ionType).arg(transition->ordinal);
+            haveBest = true;
+          }
+        }
+      }
+      if (haveBest)
+      {
+        painter.setPen(QPen(bestColor, 1.6));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawEllipse(bestPos, 3.5, 3.5);
+        QString text = tr("RT %1 %2 · I %3")
+          .arg(bestRt / rtFactor, 0, 'f', rtInMinutes_ ? 3 : 2)
+          .arg(rtInMinutes_ ? tr("min") : tr("s"))
+          .arg(bestIntensity, 0, 'g', 4);
+        if (!bestLabel.isEmpty())
+          text = painter.fontMetrics().elidedText(bestLabel, Qt::ElideMiddle, 120)
+                 + QStringLiteral(" · ") + text;
+        const double textWidth = std::min<double>(
+          painter.fontMetrics().horizontalAdvance(text) + 12.0, area.width());
+        const QRectF box(std::clamp<double>(bestPos.x() + 8.0, area.left(),
+                                            std::max<double>(area.left(), area.right() - textWidth)),
+                         area.top() + 2.0, textWidth, 18.0);
+        const QColor baseColor = palette().color(QPalette::Base);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(baseColor.red(), baseColor.green(), baseColor.blue(), 220));
+        painter.drawRoundedRect(box, 3, 3);
+        painter.setPen(palette().color(QPalette::Text));
+        painter.drawText(box.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft, text);
+      }
+    }
+  }
+
+  void TransitionGroupPlot::mouseMoveEvent(QMouseEvent* event)
+  {
+    hoverPos_ = event->pos();
+    update();
+    QWidget::mouseMoveEvent(event);
+  }
+
+  void TransitionGroupPlot::leaveEvent(QEvent* event)
+  {
+    hoverPos_.reset();
+    update();
+    QWidget::leaveEvent(event);
   }
 }

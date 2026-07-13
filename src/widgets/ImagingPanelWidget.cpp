@@ -138,7 +138,9 @@ namespace OpenMSViewer
 
   QRect ImagingImageWidget::imageRect() const
   {
-    const QRect available = rect().adjusted(54, 36, -24, -45);
+    // Reserve a right-hand gutter for the intensity colorbar / channel legend so the
+    // scale sits beside the image instead of occluding spatial sample pixels.
+    const QRect available = rect().adjusted(54, 36, -88, -45);
     if (summary_.width == 0 || summary_.height == 0) return available;
     const double scale = std::min(available.width() / static_cast<double>(summary_.width),
                                   available.height() / static_cast<double>(summary_.height));
@@ -235,9 +237,9 @@ namespace OpenMSViewer
                      tr("Pixel y (0–%1)").arg(summary_.height - 1));
     painter.restore();
 
-    // Scale drawn as an overlay inside the top-right of the image (like the peak
-    // map colorbar) so the image stays centred: a per-channel colour+m/z legend
-    // for a multi-ion overlay, or a viridis intensity colorbar otherwise.
+    // Scale drawn in the reserved gutter to the right of the image (not over it) so
+    // spatial sample pixels stay visible: a per-channel colour+m/z legend for a
+    // multi-ion overlay, or a viridis intensity colorbar otherwise.
     const QColor backing(0, 0, 0, 150);
     const bool roomForScale = area.width() >= 90 && area.height() >= 80;
     if (roomForScale && composite_ && !legend_.empty())
@@ -247,9 +249,9 @@ namespace OpenMSViewer
         textWidth = std::max(textWidth, painter.fontMetrics().horizontalAdvance(label));
       const int rows = std::min(static_cast<int>(legend_.size()),
                                 std::max(1, (area.height() - 12) / 18));   // cap to what fits
-      const int boxWidth = std::clamp(29 + textWidth, 40, area.width() - 12);
+      const int boxWidth = std::clamp(29 + textWidth, 40, width() - area.right() - 14);
       const int boxHeight = rows * 18 + 6;
-      const QRect box(area.right() - boxWidth - 6, area.top() + 6, boxWidth, boxHeight);
+      const QRect box(area.right() + 8, area.top() + 6, boxWidth, boxHeight);
       painter.setPen(Qt::NoPen);
       painter.setBrush(backing);
       painter.drawRoundedRect(box, 4, 4);
@@ -269,9 +271,11 @@ namespace OpenMSViewer
     else if (roomForScale && !composite_ && !image_.isNull() && displayMax_ > 0.0)
     {
       const int barHeight = std::min(150, std::max(60, area.height() / 3));
-      const QRect bar(area.right() - 18, area.top() + 22, 11, barHeight);
       const QString maxLabel = QString::number(displayMax_, 'g', 3);
       const int labelWidth = painter.fontMetrics().horizontalAdvance(maxLabel);
+      // Anchor the bar in the gutter, to the right of the image, with room for the
+      // max label on its left.
+      const QRect bar(area.right() + std::max(18, labelWidth) + 12, area.top() + 22, 11, barHeight);
       painter.setPen(Qt::NoPen);
       painter.setBrush(backing);
       painter.drawRoundedRect(QRect(bar.left() - std::max(18, labelWidth) - 6, bar.top() - 18,
@@ -302,6 +306,8 @@ namespace OpenMSViewer
     const std::size_t offset = static_cast<std::size_t>(pixel->second) * summary_.width + pixel->first;
     if (offset < spectrumByPixel_.size() && spectrumByPixel_[offset])
       emit pixelActivated(*spectrumByPixel_[offset], pixel->first, pixel->second);
+    else
+      emit pixelEmpty(pixel->first, pixel->second);   // acknowledge a click on a masked cell
   }
 
   void ImagingImageWidget::mouseMoveEvent(QMouseEvent* event)
@@ -339,6 +345,7 @@ namespace OpenMSViewer
     intensity_ = std::move(intensity);
     if (intensity_.size() != mz_.size()) intensity_.resize(mz_.size(), 0.0);   // keep paired
     title_ = std::move(title);
+    computed_ = true;   // a scan has returned; an empty result is now "no signal", not "computing"
     intensityMax_ = 0.0;
     for (const double value : intensity_) intensityMax_ = std::max(intensityMax_, value);
     if (!keepView) view_.reset();   // keepView lets a Mean/Max swap stay at the same zoom
@@ -353,6 +360,7 @@ namespace OpenMSViewer
     mz_.clear();
     intensity_.clear();
     title_.clear();
+    computed_ = false;   // back to the "computing" placeholder until the next scan returns
     intensityMax_ = 0.0;
     view_.reset();
     markerMz_.reset();
@@ -406,7 +414,8 @@ namespace OpenMSViewer
     if (mz_.empty())
     {
       painter.setPen(palette().color(QPalette::PlaceholderText));
-      painter.drawText(area, Qt::AlignCenter, tr("Computing aggregate spectrum…"));
+      painter.drawText(area, Qt::AlignCenter, computed_ ? tr("No aggregate signal")
+                                                        : tr("Computing aggregate spectrum…"));
       return;
     }
 
@@ -602,11 +611,30 @@ namespace OpenMSViewer
     connect(displayMode_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int mode)
     {
       if (mode == 0) showTicImage();
-      else if (mode == 1 && currentIonImage_)
+      else if (mode == 1)
+      {
+        // Don't let the combo read "Ion image" while the TIC is still on screen: fall
+        // back to a mode that has data to display so the label never lies.
+        if (!currentIonImage_)
+        {
+          info_->setText(tr("Extract an ion image first"));
+          displayMode_->setCurrentIndex(overlays_.empty() ? 0 : 2);
+          return;
+        }
         image_->setImage(currentIonImage_->intensities, currentIonImage_->mask,
           tr("Ion image · m/z %1 ± %2 ppm").arg(currentIonImage_->mz, 0, 'f', 5)
                                                 .arg(currentIonImage_->tolerancePpm, 0, 'f', 1));
-      else if (mode == 2) showOverlay();
+      }
+      else if (mode == 2)
+      {
+        if (overlays_.empty())
+        {
+          info_->setText(tr("Add an ion image to the overlay first"));
+          displayMode_->setCurrentIndex(currentIonImage_ ? 1 : 0);
+          return;
+        }
+        showOverlay();
+      }
     });
     connect(extract_, &QPushButton::clicked, this, &ImagingPanelWidget::extractIonImage);
     connect(addOverlay_, &QPushButton::clicked, this, &ImagingPanelWidget::addOverlay);
@@ -617,6 +645,10 @@ namespace OpenMSViewer
       image_->setSelectedSpectrum(spectrum);
       info_->setText(tr("Pixel (%1, %2) · spectrum #%3").arg(x).arg(y).arg(spectrum));
       emit spectrumActivated(spectrum);
+    });
+    connect(image_, &ImagingImageWidget::pixelEmpty, this, [this](std::uint32_t x, std::uint32_t y)
+    {
+      info_->setText(tr("Pixel (%1, %2) has no acquired spectrum").arg(x).arg(y));
     });
     connect(&extractionWatcher_, &QFutureWatcher<ImagingImageResult>::finished,
             this, &ImagingPanelWidget::finishExtraction);

@@ -139,6 +139,7 @@ namespace OpenMSViewer
     QLabel* info_{nullptr};
     QLabel* range_{nullptr};
     QCheckBox* mobilogram_{nullptr};
+    QCheckBox* diaWindows_{nullptr};
     QCheckBox* linkMz_{nullptr};
     QPushButton* previous_{nullptr};
     QPushButton* next_{nullptr};

@@ -52,6 +52,7 @@ namespace OpenMSViewer
     QSortFilterProxyModel* proxy_{nullptr};
     QTableView* table_{nullptr};
     QComboBox* mode_{nullptr};
+    QLabel* rtFilterLabel_{nullptr};
     QLineEdit* minimumRt_{nullptr};
     QLineEdit* maximumRt_{nullptr};
     QLineEdit* sequence_{nullptr};
@@ -61,5 +62,6 @@ namespace OpenMSViewer
     QCheckBox* allHits_{nullptr};
     QLabel* countLabel_{nullptr};
     bool synchronizingSelection_{false};
+    bool rtInMinutes_{false};
   };
 }

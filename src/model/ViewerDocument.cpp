@@ -726,6 +726,14 @@ namespace OpenMSViewer
   bool ViewerDocument::adopt(LoadResult result)
   {
     if (!result.succeeded()) return false;
+    // Swapping in a *different* primary file replaces the whole dataset. Any
+    // identification/feature overlays belong to the previous run; carrying them
+    // over would let relinkIdentifications() silently attach one run's IDs to an
+    // unrelated run's spectra by RT/m-z coincidence. The order-independent relink
+    // invariant is for co-loading a single dataset (first load: sourcePath_ empty)
+    // or reloading the same file, not for opening an unrelated experiment.
+    const bool replacingDifferentFile =
+      !sourcePath_.isEmpty() && sourcePath_ != result.sourcePath;
     experiment_ = std::move(result.experiment);
     sourcePath_ = std::move(result.sourcePath);
     bounds_ = result.bounds;
@@ -737,6 +745,11 @@ namespace OpenMSViewer
     ionMobilityFrames_ = std::move(result.ionMobilityFrames);
     faimsChannels_ = std::move(result.faimsChannels);
     faimsExperiments_ = std::move(result.faimsExperiments);
+    if (replacingDifferentFile)
+    {
+      clearFeatures();
+      clearIdentifications();
+    }
     relinkIdentifications();
     emit dataChanged();
     if (identificationStore_) emit identificationsChanged();
@@ -1179,31 +1192,52 @@ namespace OpenMSViewer
       //    The binary-search bounds are a conservative superset (widened by a slack
       //    that dwarfs any FP rounding); the authoritative filter is the exact
       //    |dRt| <= tol / |dMz| <= tol test below, bit-identical to the old scan.
-      if (!target && std::isfinite(identification.rt) && std::isfinite(identification.mz))
+      if (!target && std::isfinite(identification.rt))
       {
         constexpr double kRtSlack = 1e-6;  // seconds; only widens the search range
         const double lo = identification.rt - kRtTolerance - kRtSlack;
         const double hi = identification.rt + kRtTolerance + kRtSlack;
         const auto begin = std::lower_bound(candidates.begin(), candidates.end(), lo,
           [](const Candidate& candidate, double value) { return candidate.rt < value; });
-        double bestRt = std::numeric_limits<double>::infinity();
-        double bestMz = std::numeric_limits<double>::infinity();
-        for (auto it = begin; it != candidates.end() && it->rt <= hi; ++it)
+        if (std::isfinite(identification.mz))
         {
-          const double dRt = std::abs(it->rt - identification.rt);
-          if (dRt > kRtTolerance) continue;
-          const double dMz = std::abs(it->precursorMz - identification.mz);
-          if (dMz > kMzTolerance) continue;
-          if (!target || dRt < bestRt
-              || (dRt == bestRt && (dMz < bestMz
-                  || (dMz == bestMz && it->index < *target))))
+          double bestRt = std::numeric_limits<double>::infinity();
+          double bestMz = std::numeric_limits<double>::infinity();
+          for (auto it = begin; it != candidates.end() && it->rt <= hi; ++it)
           {
-            target = it->index;
-            bestRt = dRt;
-            bestMz = dMz;
+            const double dRt = std::abs(it->rt - identification.rt);
+            if (dRt > kRtTolerance) continue;
+            const double dMz = std::abs(it->precursorMz - identification.mz);
+            if (dMz > kMzTolerance) continue;
+            if (!target || dRt < bestRt
+                || (dRt == bestRt && (dMz < bestMz
+                    || (dMz == bestMz && it->index < *target))))
+            {
+              target = it->index;
+              bestRt = dRt;
+              bestMz = dMz;
+            }
           }
+          if (target) { mode = LinkMode::RtMz; contestRt = rtError = bestRt; contestMz = mzError = bestMz; }
         }
-        if (target) { mode = LinkMode::RtMz; contestRt = rtError = bestRt; contestMz = mzError = bestMz; }
+        else
+        {
+          // RT-only fallback for IDs that carry RT but no precursor m-z (a
+          // PeptideIdentification defaults m-z to NaN). Without an m-z to
+          // discriminate, link only when exactly one MS2 sits inside the RT
+          // window; an ambiguous window is left unlinked rather than guessed.
+          std::optional<std::size_t> unique;
+          double uniqueRt = std::numeric_limits<double>::infinity();
+          for (auto it = begin; it != candidates.end() && it->rt <= hi; ++it)
+          {
+            const double dRt = std::abs(it->rt - identification.rt);
+            if (dRt > kRtTolerance) continue;
+            if (unique) { unique.reset(); break; }  // second candidate: ambiguous
+            unique = it->index;
+            uniqueRt = dRt;
+          }
+          if (unique) { target = unique; mode = LinkMode::RtMz; contestRt = rtError = uniqueRt; }
+        }
       }
 
       if (!target) continue;

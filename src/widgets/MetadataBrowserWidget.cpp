@@ -155,7 +155,10 @@ namespace OpenMSViewer
       addText(sampleItem, tr("Comment"), sample.getComment());
     }
 
-    addMetaValues(new QTreeWidgetItem(tree_, {tr("Experiment user params")}), *experiment_);
+    std::vector<std::string> experimentKeys;
+    experiment_->getKeys(experimentKeys);
+    if (!experimentKeys.empty())
+      addMetaValues(new QTreeWidgetItem(tree_, {tr("Experiment user params")}), *experiment_);
 
     // ---- Selected-scan metadata ----
     if (spectrumIndex_ && *spectrumIndex_ < experiment_->size())
@@ -209,6 +212,9 @@ namespace OpenMSViewer
       addMetaValues(scanItem, spectrum);
     }
 
-    tree_->expandItem(tree_->topLevelItem(0));
+    // Expand the top-level metadata sections so Instrument/Sample details are
+    // visible without a manual click; deeper nesting stays collapsed.
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i)
+      tree_->expandItem(tree_->topLevelItem(i));
   }
 }

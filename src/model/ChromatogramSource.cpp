@@ -7,6 +7,7 @@
 #include <OpenMS/FORMAT/HANDLERS/MzMLSqliteHandler.h>
 #include <OpenMS/KERNEL/MSChromatogram.h>
 
+#include <QDebug>
 #include <QFileInfo>
 
 #include <mutex>
@@ -101,9 +102,20 @@ namespace OpenMSViewer
         result.push_back(std::move(transition));
       }
     }
-    catch (...)
+    catch (const std::exception& exception)
     {
       // A read failure yields an empty result; the caller renders "no data".
+      // Surface it in the diagnostics log so an empty plot is distinguishable
+      // from a genuinely empty transition group.
+      qWarning().noquote()
+        << QStringLiteral("Failed to read .xic chromatograms (precursor %1): %2")
+             .arg(precursorId).arg(QString::fromLocal8Bit(exception.what()));
+    }
+    catch (...)
+    {
+      qWarning().noquote()
+        << QStringLiteral("Failed to read .xic chromatograms (precursor %1): unknown error.")
+             .arg(precursorId);
     }
     return result;
   }
@@ -267,8 +279,15 @@ namespace OpenMSViewer
       OpenMS::Internal::MzMLSqliteHandler handler(path_, /*run_id (ignored on read)*/ 0);
       handler.readChromatograms(decoded, ids, /*meta_only*/ false);
     }
-    catch (...)
+    catch (const std::exception& exception)
     {
+      // The batch decode failed; note it (a fully unreadable/locked file leaves
+      // every trace empty, which the plot cannot otherwise distinguish from "no
+      // data") before retrying each id in isolation.
+      qWarning().noquote()
+        << QStringLiteral("Batch sqMass chromatogram read failed (precursor %1): %2 — "
+                          "retrying per-transition.")
+             .arg(precursorId).arg(QString::fromLocal8Bit(exception.what()));
       decoded.clear();
       for (const int id : ids)
       {
@@ -279,9 +298,12 @@ namespace OpenMSViewer
           handler.readChromatograms(one, {id}, /*meta_only*/ false);
           for (OpenMS::MSChromatogram& chromatogram : one) decoded.push_back(std::move(chromatogram));
         }
-        catch (...)
+        catch (const std::exception& perIdException)
         {
           // Skip just this chromatogram; the others still render.
+          qWarning().noquote()
+            << QStringLiteral("Skipped unreadable sqMass chromatogram id %1: %2")
+                 .arg(id).arg(QString::fromLocal8Bit(perIdException.what()));
         }
       }
     }

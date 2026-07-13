@@ -2,11 +2,14 @@
 
 #include "logging/ApplicationLog.h"
 
+#include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
 #include <QFileDialog>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSaveFile>
@@ -68,8 +71,7 @@ namespace OpenMSViewer
       entries_.clear();
       output_->clear();
     });
-    connect(copy, &QPushButton::clicked, output_, &QPlainTextEdit::selectAll);
-    connect(copy, &QPushButton::clicked, output_, &QPlainTextEdit::copy);
+    connect(copy, &QPushButton::clicked, this, &LogWidget::copyAll);
     connect(save, &QPushButton::clicked, this, &LogWidget::saveLog);
   }
 
@@ -80,27 +82,66 @@ namespace OpenMSViewer
   {
     entries_.push_back({severity, QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss.zzz")),
                         message});
-    updateFilter();
+    // Bound the backing store to match the visible block cap so a long, heavy
+    // logging session does not accumulate unbounded memory.
+    constexpr std::size_t maxEntries = 20000;
+    while (entries_.size() > maxEntries) entries_.pop_front();
+
+    // Append only the new line rather than rebuilding the whole view, and keep
+    // the user's scroll position unless they were already at the bottom, so a
+    // streaming load does not yank them away from a line they scrolled up to read.
+    const Entry& entry = entries_.back();
+    if (!accepted(entry)) return;
+    QScrollBar* bar = output_->verticalScrollBar();
+    const bool atBottom = bar->value() >= bar->maximum();
+    output_->appendPlainText(formatEntry(entry));
+    if (atBottom) bar->setValue(bar->maximum());
   }
 
   void LogWidget::updateFilter()
   {
     output_->clear();
-    const QString needle = search_->text().trimmed();
     for (const Entry& entry : entries_)
     {
-      const QtMsgType type = static_cast<QtMsgType>(entry.severity);
-      const bool warningOrWorse = type == QtWarningMsg || type == QtCriticalMsg || type == QtFatalMsg;
-      const bool errorOrWorse = type == QtCriticalMsg || type == QtFatalMsg;
-      const bool accepted = severity_->currentIndex() == 0
-        || (severity_->currentIndex() == 1 && type != QtDebugMsg)
-        || (severity_->currentIndex() == 2 && warningOrWorse)
-        || (severity_->currentIndex() == 3 && errorOrWorse);
-      if (!accepted || (!needle.isEmpty() && !entry.message.contains(needle, Qt::CaseInsensitive))) continue;
-      output_->appendPlainText(QStringLiteral("[%1] %2 %3")
-        .arg(entry.timestamp, severityName(entry.severity).leftJustified(5), entry.message));
+      if (accepted(entry)) output_->appendPlainText(formatEntry(entry));
     }
     output_->verticalScrollBar()->setValue(output_->verticalScrollBar()->maximum());
+  }
+
+  bool LogWidget::accepted(const Entry& entry) const
+  {
+    const QtMsgType type = static_cast<QtMsgType>(entry.severity);
+    const bool warningOrWorse = type == QtWarningMsg || type == QtCriticalMsg || type == QtFatalMsg;
+    const bool errorOrWorse = type == QtCriticalMsg || type == QtFatalMsg;
+    const bool passesSeverity = severity_->currentIndex() == 0
+      || (severity_->currentIndex() == 1 && type != QtDebugMsg)
+      || (severity_->currentIndex() == 2 && warningOrWorse)
+      || (severity_->currentIndex() == 3 && errorOrWorse);
+    if (!passesSeverity) return false;
+    const QString needle = search_->text().trimmed();
+    return needle.isEmpty() || entry.message.contains(needle, Qt::CaseInsensitive);
+  }
+
+  QString LogWidget::formatEntry(const Entry& entry)
+  {
+    return QStringLiteral("[%1] %2 %3")
+      .arg(entry.timestamp, severityName(entry.severity).leftJustified(5), entry.message);
+  }
+
+  QString LogWidget::allText() const
+  {
+    QString text;
+    for (const Entry& entry : entries_)
+    {
+      text += formatEntry(entry);
+      text += QLatin1Char('\n');
+    }
+    return text;
+  }
+
+  void LogWidget::copyAll()
+  {
+    QGuiApplication::clipboard()->setText(allText());
   }
 
   void LogWidget::saveLog()
@@ -110,9 +151,19 @@ namespace OpenMSViewer
       tr("Log files (*.log *.txt);;All files (*)"));
     if (path.isEmpty()) return;
     QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+      QMessageBox::warning(this, tr("Save application log"),
+        tr("Could not open %1 for writing:\n%2").arg(path, file.errorString()));
+      return;
+    }
     QTextStream stream(&file);
-    stream << output_->toPlainText();
-    file.commit();
+    stream << allText();
+    stream.flush();
+    if (!file.commit())
+    {
+      QMessageBox::warning(this, tr("Save application log"),
+        tr("Could not write %1:\n%2").arg(path, file.errorString()));
+    }
   }
 }

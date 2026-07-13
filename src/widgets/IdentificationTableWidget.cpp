@@ -212,7 +212,15 @@ namespace OpenMSViewer
       if (!identification) return false;
       if (linkedOnly_ && !identification->spectrumIndex) return false;
       if (!sequence_.isEmpty() && (!hit || !hit->sequence.contains(sequence_, Qt::CaseInsensitive))) return false;
-      if (minimumScore_ && (!hit || hit->score < *minimumScore_)) return false;
+      if (minimumScore_)
+      {
+        if (!hit) return false;
+        // The box keeps confident hits: a floor for higher-is-better score types,
+        // but a ceiling for lower-is-better ones (q-value, E-value, PEP, FDR).
+        const bool keep = identification->higherScoreBetter ? hit->score >= *minimumScore_
+                                                            : hit->score <= *minimumScore_;
+        if (!keep) return false;
+      }
       return true;
     }
 
@@ -270,7 +278,8 @@ namespace OpenMSViewer
     details_ = new QPlainTextEdit(this);
     details_->setReadOnly(true);
     details_->setPlaceholderText(tr("Identification and hit metadata"));
-    details_->setMaximumBlockCount(500);
+    // No block cap: this pane is replaced in full per selection, not streamed —
+    // a cap would trim the header off the top for hits with rich metadata.
     layout->addWidget(details_, 1);
 
     connect(viewMode_, qOverload<int>(&QComboBox::currentIndexChanged), this, &IdentificationTableWidget::updateFilters);

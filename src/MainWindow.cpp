@@ -867,7 +867,7 @@ namespace OpenMSViewer
     undoFeatureAction_->setShortcut(QKeySequence::Undo);
     redoFeatureAction_->setShortcut(QKeySequence::Redo);
     editFeaturesModeAction_ = new QAction(
-      QIcon(QStringLiteral(":/icons/interaction-edit.svg")), tr("Edit features mode (E)"), this);
+      QIcon(QStringLiteral(":/icons/material-edit.svg")), tr("Edit features mode (E)"), this);
     editFeaturesModeAction_->setObjectName(QStringLiteral("peakMapEditMode"));
     editFeaturesModeAction_->setCheckable(true);
     editFeaturesModeAction_->setData(3);
@@ -1318,13 +1318,13 @@ namespace OpenMSViewer
       return action;
     };
     auto* zoomMode = addInteractionButton(
-      0, QStringLiteral("peakMapZoomMode"), QStringLiteral(":/icons/interaction-zoom.svg"),
+      0, QStringLiteral("peakMapZoomMode"), QStringLiteral(":/icons/material-zoom-in.svg"),
       tr("Zoom — drag a rectangle (Z)"));
     addInteractionButton(
-      1, QStringLiteral("peakMapPanMode"), QStringLiteral(":/icons/interaction-pan.svg"),
+      1, QStringLiteral("peakMapPanMode"), QStringLiteral(":/icons/material-pan-tool.svg"),
       tr("Pan — drag to move the view (P)"));
     addInteractionButton(
-      2, QStringLiteral("peakMapMeasureMode"), QStringLiteral(":/icons/interaction-measure.svg"),
+      2, QStringLiteral("peakMapMeasureMode"), QStringLiteral(":/icons/material-straighten.svg"),
       tr("Measure — drag between peaks (M)"));
     interactionGroup->addAction(editFeaturesModeAction_);
     zoomMode->setChecked(true);

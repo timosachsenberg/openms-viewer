@@ -4,5 +4,9 @@
     <file alias="interaction-pan.svg">interaction-pan.svg</file>
     <file alias="interaction-measure.svg">interaction-measure.svg</file>
     <file alias="interaction-edit.svg">interaction-edit.svg</file>
+    <file alias="material-zoom-in.svg">material-zoom-in.svg</file>
+    <file alias="material-pan-tool.svg">material-pan-tool.svg</file>
+    <file alias="material-straighten.svg">material-straighten.svg</file>
+    <file alias="material-edit.svg">material-edit.svg</file>
   </qresource>
 </RCC>

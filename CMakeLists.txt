@@ -226,6 +226,7 @@ if(OPENMS_VIEWER_BUILD_TESTS)
     tests/MobilityFaimsWorkflowTest.cpp
     tests/ExportWorkflowTest.cpp
     tests/ImagingWorkflowTest.cpp
+    tests/ImagingMaldiTest.cpp
     tests/SpectrumInteractionTest.cpp
     tests/LogWidgetTest.cpp
     tests/UxWorkflowTest.cpp

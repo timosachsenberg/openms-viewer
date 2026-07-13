@@ -1,9 +1,13 @@
 #include "model/ImagingDocument.h"
 
+#include <OpenMS/FORMAT/BrukerTimsImagingFile.h>
+#include <OpenMS/FORMAT/ImzMLFile.h>
+#include <OpenMS/IMAGING/MSImagingExperiment.h>
 #include <OpenMS/IMAGING/MSImagingGeometry.h>
 
-#include <QFileInfo>
 #include <QDir>
+#include <QFileInfo>
+#include <QTemporaryDir>
 
 #include <algorithm>
 #include <cmath>
@@ -84,6 +88,8 @@ namespace OpenMSViewer
   OpenMS::OnDiscImzMLExperiment& ImagingStore::experiment() noexcept { return experiment_; }
   const OpenMS::OnDiscImzMLExperiment& ImagingStore::experiment() const noexcept { return experiment_; }
 
+  void ImagingStore::retainTempDir(std::shared_ptr<QTemporaryDir> dir) { tempDir_ = std::move(dir); }
+
   ImagingLoadResult ImagingDocument::readImzML(const QString& path)
   {
     ImagingLoadResult result;
@@ -159,5 +165,70 @@ namespace OpenMSViewer
       result.error = QStringLiteral("OpenMS could not read the imzML dataset (unknown error).");
     }
     return result;
+  }
+
+  ImagingLoadResult ImagingDocument::readBrukerMaldi(const QString& path)
+  {
+    ImagingLoadResult result;
+    const QString absPath = QFileInfo(path).absoluteFilePath();
+    result.summary.sourcePath = absPath;
+#ifndef WITH_OPENTIMS
+    result.error = QStringLiteral(
+      "This build lacks Bruker timsTOF (opentims) support, so MALDI .d imaging cannot be read.");
+    return result;
+#else
+    const QFileInfo info(absPath);
+    if (!info.exists() || !info.isDir())
+    {
+      result.error = QStringLiteral("Not a directory: %1").arg(absPath);
+      return result;
+    }
+    try
+    {
+      // Single-quad .tsf MALDI has no analysis.tdf, and non-imaging .d datasets
+      // report a different MaldiApplicationType — reject both with a clear message
+      // rather than delegating to a load that would throw deep inside OpenMS.
+      if (!OpenMS::BrukerTimsImagingFile::isImagingDataset(absPath.toStdString()))
+      {
+        result.error = QStringLiteral(
+          "Not a Bruker MALDI imaging .d dataset (needs analysis.tdf with "
+          "MaldiApplicationType = 'Imaging'). Single-quad .tsf MALDI is not supported.");
+        return result;
+      }
+
+      OpenMS::MSImagingExperiment imaging;
+      OpenMS::BrukerTimsImagingFile().load(absPath.toStdString(), imaging);
+
+      // Convert to a session-lifetime temporary imzML and reuse the imzML pipeline
+      // (lazy on-disc reads, ion images, aggregate spectrum). The temp dir is bound
+      // to the returned store so it survives for the whole imaging session.
+      auto tempDir = std::make_shared<QTemporaryDir>();
+      if (!tempDir->isValid())
+      {
+        result.error = QStringLiteral("Could not create a temporary directory for the converted image.");
+        return result;
+      }
+      const QString imzml = tempDir->filePath(info.completeBaseName() + QStringLiteral(".imzML"));
+      OpenMS::ImzMLFile().store(imzml.toStdString(), imaging);
+
+      result = readImzML(imzml);
+      if (result.succeeded())
+      {
+        result.store->retainTempDir(tempDir);
+        result.summary.sourcePath = absPath;  // show the .d, not the temp imzML
+      }
+      return result;
+    }
+    catch (const std::exception& error)
+    {
+      result.error = QStringLiteral("OpenMS could not read the MALDI .d dataset: %1")
+        .arg(QString::fromLocal8Bit(error.what()));
+    }
+    catch (...)
+    {
+      result.error = QStringLiteral("OpenMS could not read the MALDI .d dataset (unknown error).");
+    }
+    return result;
+#endif
   }
 }

@@ -12,6 +12,8 @@
 #include <mutex>
 #include <vector>
 
+class QTemporaryDir;
+
 namespace OpenMSViewer
 {
   struct ImagingPixelRecord
@@ -61,8 +63,17 @@ namespace OpenMSViewer
     OpenMS::OnDiscImzMLExperiment& experiment() noexcept;
     const OpenMS::OnDiscImzMLExperiment& experiment() const noexcept;
 
+    // Bind the lifetime of a temporary directory (holding a converted imzML/ibd)
+    // to this store, so a Bruker-MALDI-sourced image keeps its backing file for
+    // as long as the store is alive.
+    void retainTempDir(std::shared_ptr<QTemporaryDir> dir);
+
   private:
     mutable std::mutex mutex_;
+    // Declared before experiment_ so it is destroyed *after* it: experiment_ closes
+    // its imzML/ibd file handles first, then the temp dir removes those files (which
+    // matters on platforms that refuse to delete an open file).
+    std::shared_ptr<QTemporaryDir> tempDir_;
     OpenMS::OnDiscImzMLExperiment experiment_;
   };
 
@@ -82,5 +93,10 @@ namespace OpenMSViewer
   {
   public:
     [[nodiscard]] static ImagingLoadResult readImzML(const QString& path);
+    // Loads a Bruker timsTOF MALDI imaging .d directory (.tdf) by delegating to
+    // OpenMS BrukerTimsImagingFile, converting the result to a temporary imzML,
+    // and reusing the imzML pipeline. Returns a clear error for non-imaging .d,
+    // single-quad .tsf datasets, or builds without opentims support.
+    [[nodiscard]] static ImagingLoadResult readBrukerMaldi(const QString& path);
   };
 }

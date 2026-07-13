@@ -2,6 +2,7 @@
 
 #include "model/FormatRegistry.h"
 
+#include <OpenMS/FORMAT/BrukerTimsImagingFile.h>
 #include <OpenMS/FORMAT/FileTypes.h>
 #include <OpenMS/KERNEL/ConsensusMap.h>
 
@@ -1970,6 +1971,21 @@ namespace OpenMSViewer
         statusBar()->showMessage(tr("A primary data file is already loading"), 3000);
         return;
       }
+#ifdef WITH_OPENTIMS
+      // A Bruker MALDI imaging .d (analysis.tdf, MaldiApplicationType == 'Imaging')
+      // routes to the imaging pipeline; every other .d loads as a normal run.
+      if (OpenMS::BrukerTimsImagingFile::isImagingDataset(path.toStdString()))
+      {
+        statusBar()->showMessage(tr("Opening MALDI imaging .d %1…").arg(QFileInfo(path).fileName()));
+        imagingCancelled_ = false;
+        beginOperation(ImagingOperation, tr("Loading MALDI imaging"),
+                       tr("Opening %1").arg(QFileInfo(path).fileName()), false);
+        imagingLoadWatcher_.setFuture(QtConcurrent::run(
+          [path] { return ImagingDocument::readBrukerMaldi(path); }));
+        updateLoadingUi();
+        return;
+      }
+#endif
       statusBar()->showMessage(tr("Loading Bruker .d %1…").arg(QFileInfo(path).fileName()));
       mzMLLoadTimer_.start();
       mzMLCancellation_ = std::make_shared<std::atomic_bool>(false);

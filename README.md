@@ -182,6 +182,12 @@ experiment is never held in memory. The panel shows TIC and ppm-window ion image
 a whole-image aggregate spectrum (click a peak to image it), pixel-to-spectrum
 navigation, and additive multi-ion RGB overlays.
 
+Bruker **timsTOF MALDI `.d`** imaging directories (`.tdf` with a `MaldiFrameInfo`
+table) are also read — via OpenMS `BrukerTimsImagingFile`, feeding the same imaging
+pipeline. (Single-quad `.tsf` MALDI has no OpenMS reader and is rejected with a
+clear message. The screenshot above is a synthetic image pending a real `.tdf`
+MALDI dataset.)
+
 ## Vendor raw data
 
 Thermo `.raw` (needs a .NET runtime for the bridge) and Bruker timsTOF `.d`/TDF
@@ -216,7 +222,7 @@ searchable, saveable **diagnostics log**.
 | Identifications | `idXML`, `mzIdentML` (`.mzid`), `idparquet` | ID table + annotation |
 | Consensus maps | `consensusXML`, `consensusparquet` | Consensus table + per-map chart |
 | OpenSWATH results | `.osw` (+ `.xic` / `.sqMass` chromatograms) | Peak-group browser |
-| Imaging | `imzML` / `IBD` | Ion-image viewer |
+| Imaging | `imzML` / `IBD`, Bruker MALDI `.d` (`.tdf`) | Ion-image viewer |
 | Vendor raw | Thermo `.raw`, Bruker timsTOF `.d` | Peak map (+ IM for `.d`) |
 
 Routing is by semantic *category* via an audited `FileHandler::getType` registry —

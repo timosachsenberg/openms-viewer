@@ -41,10 +41,12 @@ the embedded OpenMS release build.
 
 ## Notes
 
-- **MALDI imaging.** The archive's MALDI dataset is Bruker `.tsf`; the viewer's
-  imaging path is imzML-only, so it loads as a plain run, not a spatial image.
-  Until a `.tsf`→imzML step exists, `imaging.png` uses a synthetic continuous-mode
-  image. The MALDI entry stays in the manifest (`xlarge`) for when that lands.
+- **MALDI imaging.** The viewer reads Bruker **`.tdf`** MALDI imaging `.d`
+  directories (via OpenMS `BrukerTimsImagingFile`, converted to a temporary imzML).
+  The archive's MALDI dataset, however, is single-quad **`.tsf`**, which OpenMS has
+  no reader for — so `imaging.png` stays a synthetic continuous-mode image until a
+  real `.tdf` MALDI dataset is available. The MALDI entry stays in the manifest
+  (`xlarge`).
 - **Comparison.** [comparison-pyopenms-viewer.md](comparison-pyopenms-viewer.md)
   renders the same real dataset in both this viewer and `pyopenms-viewer` and
   judges where each looks better.

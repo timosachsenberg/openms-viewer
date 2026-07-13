@@ -45,6 +45,7 @@ namespace OpenMSViewer
     setAccessibleDescription(
       tr("Interactive peak map. Use the mouse wheel to zoom, drag in the selected mode, "
          "Home to reset, and Alt+Left to return to the previous view."));
+    updateFixedCanvasSize();
     renderTimer_.setSingleShot(true);
     renderTimer_.setInterval(45);
     connect(&renderTimer_, &QTimer::timeout, this, &PeakMapWidget::startRender);
@@ -329,6 +330,7 @@ namespace OpenMSViewer
     const int bounded = std::clamp(width, MinimumRasterWidth, MaximumRasterWidth);
     if (rasterWidth_ == bounded) return;
     rasterWidth_ = bounded;
+    updateFixedCanvasSize();
     raster_ = {};
     scheduleRender();
   }
@@ -500,19 +502,18 @@ namespace OpenMSViewer
     return {area.left() + rtFraction * area.width(), area.bottom() - mzFraction * area.height()};
   }
 
-  QSize PeakMapWidget::boundedRenderSize() const
+  QSize PeakMapWidget::fixedRenderSize() const
   {
-    // Like a Datashader canvas, the user-selected width is the fixed extraction
-    // bound. Derive only the height from the plot aspect ratio so QPainter uses
-    // the same horizontal and vertical pixel scale; circular spread kernels then
-    // stay circular instead of becoming ellipses in a wide or narrow window.
-    const QSize plotSize = plotRect().size();
-    if (plotSize.width() <= 0 || plotSize.height() <= 0) return {};
-    const int height = std::clamp(
-      static_cast<int>(std::lround(rasterWidth_ * plotSize.height()
-                                   / static_cast<double>(plotSize.width()))),
-      1, MaximumRasterWidth);
-    return QSize(rasterWidth_, height);
+    return QSize(rasterWidth_, std::max(1, rasterWidth_ / 2));
+  }
+
+  void PeakMapWidget::updateFixedCanvasSize()
+  {
+    // plotRect() removes 68+22 horizontal and 20+52 vertical pixels for axes.
+    // Keep that plot rectangle exactly equal to the raster dimensions so every
+    // raster pixel is painted into one logical display pixel without resampling.
+    const QSize rasterSize = fixedRenderSize();
+    setFixedSize(rasterSize.width() + 90, rasterSize.height() + 72);
   }
 
   void PeakMapWidget::scheduleRender()
@@ -534,7 +535,7 @@ namespace OpenMSViewer
   void PeakMapWidget::startRender()
   {
     if (!experiment_ || renderWatcher_.isRunning()) return;
-    const QSize renderSize = boundedRenderSize();
+    const QSize renderSize = fixedRenderSize();
     if (renderSize.width() <= 0 || renderSize.height() <= 0) return;
 
     activeGeneration_ = desiredGeneration_;
@@ -635,7 +636,9 @@ namespace OpenMSViewer
   {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    // The plot canvas and raster are deliberately the same size. Nearest pixel
+    // painting avoids the blur and sampling seams caused by resizing a raster.
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
     painter.fillRect(rect(), palette().window());
     const QRect area = plotRect();
     // Colormap floor so the plot ground matches the raster's "no data" colour and
@@ -647,55 +650,67 @@ namespace OpenMSViewer
     // paint an image whose axes disagree with the view.
     if (!raster_.isNull() && rasterAxesSwapped_ == axesSwapped_)
     {
-      // Reproject the last raster into the CURRENT view so a pan/zoom shows a
-      // tracking preview (shifted/scaled) until the throttled re-render lands.
-      // Fractions map against the plot rect's continuous edges, so at rest
-      // (rasterRange_==view_) the target is exactly `area`.
-      QRectF target(area);
-      QRectF source(raster_.rect());
-      bool hasVisibleRaster = true;
-      if (rasterRange_.isValid() && view_.rtSpan() > 0.0 && view_.mzSpan() > 0.0)
+      const bool exactRasterView = raster_.size() == area.size()
+        && rasterRange_.rtMin == view_.rtMin && rasterRange_.rtMax == view_.rtMax
+        && rasterRange_.mzMin == view_.mzMin && rasterRange_.mzMax == view_.mzMax;
+      if (exactRasterView)
       {
-        // Crop in data coordinates before projecting. During rapid zoom the old
-        // raster may cover millions of current view widths; drawing that whole
-        // image into an enormous QRectF can overflow a paint backend. Both the
-        // source and destination rectangles below are always image/plot bounded.
-        const PlotRange overlap{
-          std::max(rasterRange_.rtMin, view_.rtMin),
-          std::min(rasterRange_.rtMax, view_.rtMax),
-          std::max(rasterRange_.mzMin, view_.mzMin),
-          std::min(rasterRange_.mzMax, view_.mzMax)};
-        hasVisibleRaster = overlap.isValid();
+        // QPoint overload is a literal 1:1 copy: no source transform, filtering,
+        // or fractional rectangle can introduce softened or skipped rows.
+        painter.drawImage(area.topLeft(), raster_);
+      }
+      else
+      {
+        // Reproject the last raster into the CURRENT view so a pan/zoom shows a
+        // tracking preview (shifted/scaled) until the throttled re-render lands.
+        // Fractions map against the plot rect's continuous edges, so at rest
+        // (rasterRange_==view_) the target is exactly `area`.
+        QRectF target(area);
+        QRectF source(raster_.rect());
+        bool hasVisibleRaster = true;
+        if (rasterRange_.isValid() && view_.rtSpan() > 0.0 && view_.mzSpan() > 0.0)
+        {
+          // Crop in data coordinates before projecting. During rapid zoom the old
+          // raster may cover millions of current view widths; drawing that whole
+          // image into an enormous QRectF can overflow a paint backend. Both the
+          // source and destination rectangles below are always image/plot bounded.
+          const PlotRange overlap{
+            std::max(rasterRange_.rtMin, view_.rtMin),
+            std::min(rasterRange_.rtMax, view_.rtMax),
+            std::max(rasterRange_.mzMin, view_.mzMin),
+            std::min(rasterRange_.mzMax, view_.mzMax)};
+          hasVisibleRaster = overlap.isValid();
+          if (hasVisibleRaster)
+          {
+            const auto rectFor = [](const PlotRange& selection, const PlotRange& bounds,
+                                    const QSizeF& size, bool swapped)
+            {
+              if (swapped) // x = m/z, y = RT (inverted)
+              {
+                return QRectF(
+                  (selection.mzMin - bounds.mzMin) / bounds.mzSpan() * size.width(),
+                  (bounds.rtMax - selection.rtMax) / bounds.rtSpan() * size.height(),
+                  selection.mzSpan() / bounds.mzSpan() * size.width(),
+                  selection.rtSpan() / bounds.rtSpan() * size.height());
+              }
+              return QRectF(
+                (selection.rtMin - bounds.rtMin) / bounds.rtSpan() * size.width(),
+                (bounds.mzMax - selection.mzMax) / bounds.mzSpan() * size.height(),
+                selection.rtSpan() / bounds.rtSpan() * size.width(),
+                selection.mzSpan() / bounds.mzSpan() * size.height());
+            };
+            source = rectFor(overlap, rasterRange_, raster_.size(), axesSwapped_);
+            target = rectFor(overlap, view_, area.size(), axesSwapped_);
+            target.translate(area.topLeft());
+          }
+        }
         if (hasVisibleRaster)
         {
-          const auto rectFor = [](const PlotRange& selection, const PlotRange& bounds,
-                                  const QSizeF& size, bool swapped)
-          {
-            if (swapped) // x = m/z, y = RT (inverted)
-            {
-              return QRectF(
-                (selection.mzMin - bounds.mzMin) / bounds.mzSpan() * size.width(),
-                (bounds.rtMax - selection.rtMax) / bounds.rtSpan() * size.height(),
-                selection.mzSpan() / bounds.mzSpan() * size.width(),
-                selection.rtSpan() / bounds.rtSpan() * size.height());
-            }
-            return QRectF(
-              (selection.rtMin - bounds.rtMin) / bounds.rtSpan() * size.width(),
-              (bounds.mzMax - selection.mzMax) / bounds.mzSpan() * size.height(),
-              selection.rtSpan() / bounds.rtSpan() * size.width(),
-              selection.mzSpan() / bounds.mzSpan() * size.height());
-          };
-          source = rectFor(overlap, rasterRange_, raster_.size(), axesSwapped_);
-          target = rectFor(overlap, view_, area.size(), axesSwapped_);
-          target.translate(area.topLeft());
+          painter.save();
+          painter.setClipRect(area);
+          painter.drawImage(target, raster_, source);
+          painter.restore();
         }
-      }
-      if (hasVisibleRaster)
-      {
-        painter.save();
-        painter.setClipRect(area);
-        painter.drawImage(target, raster_, source);
-        painter.restore();
       }
     }
     drawAxes(painter, area);
@@ -1381,10 +1396,7 @@ namespace OpenMSViewer
   void PeakMapWidget::resizeEvent(QResizeEvent* event)
   {
     QWidget::resizeEvent(event);
-    // Width stays fixed at the configured bound, while height follows the plot
-    // aspect ratio to preserve circular pixel footprints.
-    if (experiment_ && raster_.size() != boundedRenderSize()) scheduleRender();
-    else update();
+    update();
   }
 
   void PeakMapWidget::wheelEvent(QWheelEvent* event)

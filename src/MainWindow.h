@@ -29,6 +29,7 @@ class QLabel;
 class QLineEdit;
 class QMenu;
 class QProgressBar;
+class QScrollArea;
 class QSpinBox;
 class QStackedWidget;
 class QToolBar;
@@ -190,6 +191,7 @@ namespace OpenMSViewer
     WelcomeWidget* welcome_{nullptr};
     QWidget* peakMapPanel_{nullptr};
     QToolBar* peakMapControlBar_{nullptr};
+    QScrollArea* peakMapScroll_{nullptr};
     PeakMapWidget* peakMap_{nullptr};
     class PeakSurface3DWidget* surface3D_{nullptr};
     QDialog* surface3DDialog_{nullptr};

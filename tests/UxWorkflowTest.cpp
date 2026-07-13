@@ -30,6 +30,7 @@
 #include <QMouseEvent>
 #include <QSettings>
 #include <QSignalSpy>
+#include <QScrollArea>
 #include <QSpinBox>
 #include <QAbstractItemModel>
 #include <QStackedWidget>
@@ -165,16 +166,16 @@ private slots:
     QVERIFY(!interaction->isVisible());
     QVERIFY(!peakMap->accessibleName().isEmpty());
     auto* peakMapPanel = window.findChild<QWidget*>(QStringLiteral("peakMapPanel"));
+    auto* peakMapScroll = window.findChild<QScrollArea*>(QStringLiteral("peakMapScrollArea"));
     QVERIFY(peakMapPanel != nullptr);
-    QCOMPARE(peakMap->parentWidget(), peakMapPanel);
+    QVERIFY(peakMapScroll != nullptr);
+    QVERIFY(!peakMapScroll->widgetResizable());
+    QCOMPARE(peakMapScroll->widget(), peakMap);
+    QCOMPARE(peakMap->parentWidget(), peakMapScroll->viewport());
     window.loadFile(path);
     QTRY_VERIFY_WITH_TIMEOUT(peakMap->hasExperiment(), 5000);
-    QTRY_COMPARE_WITH_TIMEOUT(peakMap->rasterImage().width(), 768, 3000);
-    const int expectedRasterHeight = std::clamp(
-      static_cast<int>(std::lround(768.0 * (peakMap->height() - 72)
-                                   / static_cast<double>(peakMap->width() - 90))),
-      1, OpenMSViewer::PeakMapWidget::MaximumRasterWidth);
-    QTRY_COMPARE_WITH_TIMEOUT(peakMap->rasterImage().height(), expectedRasterHeight, 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(peakMap->rasterImage().size(), QSize(768, 384), 3000);
+    QCOMPARE(peakMap->size(), QSize(858, 456));
     QCOMPARE(stack->currentWidget(), peakMapPanel);
     QCOMPARE(scan->maximum(), 3);
     QCOMPARE(scan->text(), QStringLiteral("Scan 1"));

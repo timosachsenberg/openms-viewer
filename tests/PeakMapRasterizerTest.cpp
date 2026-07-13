@@ -199,15 +199,14 @@ private slots:
     widget.setExperiment(std::make_shared<OpenMS::MSExperiment>(source), range);
 
     QTRY_VERIFY_WITH_TIMEOUT(!widget.rasterImage().isNull(), 3000);
-    const auto expectedRasterSize = [&widget](int width)
-    {
-      const QSize plotSize(widget.width() - 90, widget.height() - 72);
-      return QSize(width, std::clamp(
-        static_cast<int>(std::lround(width * plotSize.height()
-                                     / static_cast<double>(plotSize.width()))),
-        1, OpenMSViewer::PeakMapWidget::MaximumRasterWidth));
-    };
-    QCOMPARE(widget.rasterImage().size(), expectedRasterSize(1024));
+    QCOMPARE(widget.rasterImage().size(), QSize(1024, 512));
+    QCOMPARE(widget.size(), QSize(1114, 584));
+
+    // At rest the plot is a literal raster copy, not a smoothed/scaled image.
+    const QImage frame = widget.grab().toImage();
+    for (int y = 96; y < 416; y += 53)
+      for (int x = 160; x < 850; x += 67)
+        QCOMPARE(frame.pixel(68 + x, 20 + y), widget.rasterImage().pixel(x, y));
 
     // Sparse content is still visible thanks to the adaptive spread.
     const QImage& raster = widget.rasterImage();
@@ -219,12 +218,13 @@ private slots:
     QVERIFY(nonBackground > 0);
 
     widget.setRasterWidth(640);
-    QTRY_COMPARE_WITH_TIMEOUT(widget.rasterImage().size(), expectedRasterSize(640), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.rasterImage().size(), QSize(640, 320), 3000);
+    QCOMPARE(widget.size(), QSize(730, 392));
     widget.resize(1200, 800);
-    QTRY_COMPARE_WITH_TIMEOUT(widget.rasterImage().size(), expectedRasterSize(640), 3000);
+    QCOMPARE(widget.size(), QSize(730, 392)); // layouts cannot rescale the canvas
 
     widget.setAxesSwapped(false);
-    QTRY_COMPARE_WITH_TIMEOUT(widget.rasterImage().size(), expectedRasterSize(640), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.rasterImage().size(), QSize(640, 320), 3000);
   }
 
   void rapidZoomNeverBuildsAnUnboundedPreview()
@@ -232,17 +232,12 @@ private slots:
     const auto source = OpenMSViewer::TestData::experiment();
     const OpenMSViewer::PlotRange range{9.0, 21.0, 390.0, 610.0};
     OpenMSViewer::PeakMapWidget widget;
-    widget.resize(1400, 500);  // deliberately different from the raster aspect
     widget.show();
     widget.setExperiment(std::make_shared<OpenMS::MSExperiment>(source), range);
     QTRY_VERIFY_WITH_TIMEOUT(!widget.rasterImage().isNull(), 3000);
 
-    const double horizontalScale = (widget.width() - 90)
-      / static_cast<double>(widget.rasterImage().width());
-    const double verticalScale = (widget.height() - 72)
-      / static_cast<double>(widget.rasterImage().height());
-    QVERIFY(std::abs(horizontalScale - verticalScale)
-            / std::max(horizontalScale, verticalScale) < 0.01);
+    QCOMPARE(widget.rasterImage().size(), QSize(widget.width() - 90,
+                                                widget.height() - 72));
 
     // Force paints between rapid view changes while the previous raster still
     // depicts a much wider range. The preview projection must remain finite and

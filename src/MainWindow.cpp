@@ -66,6 +66,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScreen>
+#include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStackedWidget>
@@ -655,9 +656,16 @@ namespace OpenMSViewer
     peakMapControlBar_->setMovable(false);
     peakMapControlBar_->setFloatable(false);
     peakMapControlBar_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    peakMap_ = new PeakMapWidget(peakMapPanel_);
+    peakMapScroll_ = new QScrollArea(peakMapPanel_);
+    peakMapScroll_->setObjectName(QStringLiteral("peakMapScrollArea"));
+    peakMapScroll_->setWidgetResizable(false);
+    peakMapScroll_->setAlignment(Qt::AlignCenter);
+    peakMapScroll_->setFrameShape(QFrame::NoFrame);
+    peakMapScroll_->setSizeAdjustPolicy(QAbstractScrollArea::AdjustIgnored);
+    peakMap_ = new PeakMapWidget;
+    peakMapScroll_->setWidget(peakMap_);
     peakMapLayout->addWidget(peakMapControlBar_);
-    peakMapLayout->addWidget(peakMap_, 1);
+    peakMapLayout->addWidget(peakMapScroll_, 1);
 
     centralStack_->addWidget(welcome_);
     centralStack_->addWidget(peakMapPanel_);
@@ -1316,7 +1324,7 @@ namespace OpenMSViewer
     peakMapRasterWidth_->setKeyboardTracking(false);
     peakMapRasterWidth_->setMaximumWidth(105);
     peakMapRasterWidth_->setToolTip(
-      tr("Fixed peak-map raster width; height follows the plot aspect ratio to preserve circular peaks"));
+      tr("Fixed 2:1 peak-map canvas rendered at 1:1 pixels; scroll when it is larger than the viewport"));
     peakMapRasterWidth_->setAccessibleName(tr("Peak-map raster width"));
     peakMapControlBar_->addWidget(peakMapRasterWidth_);
     connect(peakMapRasterWidth_, qOverload<int>(&QSpinBox::valueChanged),

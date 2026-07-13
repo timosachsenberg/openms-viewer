@@ -51,6 +51,7 @@ namespace OpenMSViewer
     void setMeasurementMode(bool enabled);
     void setLabelMode(bool enabled);
     void setShowMzLabels(bool show);
+    void setShowGrid(bool show);
     void setAutoYScale(bool enabled);
     void clearMeasurements();
     void clearLabels();
@@ -98,6 +99,7 @@ namespace OpenMSViewer
     bool measurementMode_{false};
     bool labelMode_{false};
     bool showMzLabels_{false};
+    bool showGrid_{true};
     bool autoYScale_{true};
     // Vertical scaling captured by the most recent paint so peakAt() can hit-test
     // against exactly what is on screen without rescanning the spectrum per move.

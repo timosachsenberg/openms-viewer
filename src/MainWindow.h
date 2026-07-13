@@ -243,6 +243,7 @@ namespace OpenMSViewer
     QAction* measureSpectrumAction_{nullptr};
     QAction* labelSpectrumAction_{nullptr};
     QAction* showMzLabelsAction_{nullptr};
+    QAction* showSpectrumGridAction_{nullptr};
     QAction* resetSpectrumViewAction_{nullptr};
     QAction* clearSpectrumMeasurementsAction_{nullptr};
     QAction* clearSpectrumLabelsAction_{nullptr};

@@ -439,6 +439,9 @@ namespace OpenMSViewer
     const bool dark = settings.value(QStringLiteral("appearance/dark"), true).toBool();
     darkThemeAction_->setChecked(dark);
     setDarkTheme(dark);
+    const bool spectrumGrid = settings.value(QStringLiteral("appearance/spectrumGrid"), true).toBool();
+    showSpectrumGridAction_->setChecked(spectrumGrid);
+    spectrum_->setShowGrid(spectrumGrid);
     recentFiles_ = settings.value(QStringLiteral("files/recent")).toStringList();
     lastPrimaryPath_ = settings.value(QStringLiteral("files/lastPrimary")).toString();
     rebuildRecentFiles();
@@ -858,6 +861,12 @@ namespace OpenMSViewer
     connect(showMzLabelsAction_, &QAction::toggled,
             spectrum_, &SpectrumWidget::setShowMzLabels);
 
+    showSpectrumGridAction_ = new QAction(tr("Show gridlines"), this);
+    showSpectrumGridAction_->setCheckable(true);
+    showSpectrumGridAction_->setChecked(true);
+    connect(showSpectrumGridAction_, &QAction::toggled,
+            spectrum_, &SpectrumWidget::setShowGrid);
+
     resetSpectrumViewAction_ = new QAction(tr("Reset spectrum m/z view"), this);
     connect(resetSpectrumViewAction_, &QAction::triggered,
             spectrum_, &SpectrumWidget::resetMzView);
@@ -1169,6 +1178,7 @@ namespace OpenMSViewer
     annotationMenu->addAction(mirrorSpectrumAction_);
     annotationMenu->addAction(showUnmatchedIonsAction_);
     annotationMenu->addAction(showMzLabelsAction_);
+    annotationMenu->addAction(showSpectrumGridAction_);
     annotationMenu->addSeparator();
     auto* toleranceContainer = new QWidget(annotationMenu);
     auto* toleranceLayout = new QHBoxLayout(toleranceContainer);
@@ -1750,6 +1760,7 @@ namespace OpenMSViewer
     for (QAction* action : {spectrumFirstAction_, spectrumPreviousAction_, spectrumNextAction_,
                             spectrumLastAction_, annotateSpectrumAction_, mirrorSpectrumAction_,
                             showUnmatchedIonsAction_, measureSpectrumAction_, showMzLabelsAction_,
+                            showSpectrumGridAction_,
                             resetSpectrumViewAction_, clearSpectrumMeasurementsAction_})
       if (action) action->setEnabled(available);
     if (spectrumLevel_) spectrumLevel_->setEnabled(available && !imagingStore_);
@@ -3134,6 +3145,7 @@ namespace OpenMSViewer
     settings.setValue(QStringLiteral("main/geometry"), saveGeometry());
     settings.setValue(QStringLiteral("main/state"), saveState());
     settings.setValue(QStringLiteral("appearance/dark"), darkThemeAction_->isChecked());
+    settings.setValue(QStringLiteral("appearance/spectrumGrid"), showSpectrumGridAction_->isChecked());
     settings.setValue(QStringLiteral("files/recent"), recentFiles_);
     settings.setValue(QStringLiteral("files/lastPrimary"), lastPrimaryPath_);
     for (auto it = dockVisibilityPreference_.cbegin(); it != dockVisibilityPreference_.cend(); ++it)

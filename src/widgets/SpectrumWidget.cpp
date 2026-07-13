@@ -185,6 +185,12 @@ namespace OpenMSViewer
     update();
   }
 
+  void SpectrumWidget::setShowGrid(bool show)
+  {
+    showGrid_ = show;
+    update();
+  }
+
   void SpectrumWidget::setAutoYScale(bool enabled)
   {
     autoYScale_ = enabled;
@@ -461,18 +467,21 @@ namespace OpenMSViewer
     // plots use and the classic TOPPView spectrum look — drawn behind the peaks so
     // the sticks stay crisp on top. Interior lines only; the frame edges and the
     // baseline are already the solid axis lines above.
-    painter.setPen(QPen(palette().color(QPalette::Mid), 1, Qt::DotLine));
-    for (int tick = 1; tick < 5; ++tick)
+    if (showGrid_)
     {
-      const int x = area.left() + tick * area.width() / 5;
-      painter.drawLine(x, area.top(), x, area.bottom());
-    }
-    if (!mirror)
-      for (int tick = 1; tick <= 4; ++tick)
+      painter.setPen(QPen(palette().color(QPalette::Mid), 1, Qt::DotLine));
+      for (int tick = 1; tick < 5; ++tick)
       {
-        const int y = baseline - tick * static_cast<int>(positiveHeight) / 4;
-        painter.drawLine(area.left(), y, area.right(), y);
+        const int x = area.left() + tick * area.width() / 5;
+        painter.drawLine(x, area.top(), x, area.bottom());
       }
+      if (!mirror)
+        for (int tick = 1; tick <= 4; ++tick)
+        {
+          const int y = baseline - tick * static_cast<int>(positiveHeight) / 4;
+          painter.drawLine(area.left(), y, area.right(), y);
+        }
+    }
 
     const auto fullRange = fullMzRange();
     const double mzMin = mzView_ ? mzView_->first : fullRange.first;

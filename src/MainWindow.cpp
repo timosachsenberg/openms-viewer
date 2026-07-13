@@ -1503,10 +1503,18 @@ namespace OpenMSViewer
   {
     if (!dock) return;
     if (dock->isFloating()) dock->setFloating(false);
-    // addDockWidget removes the panel from its current spot first; moving to a side
-    // area with existing panels splits (stacks) rather than tabs, so panels can be
-    // arranged vertically in a column.
-    addDockWidget(area, dock);
+    // If the target area already holds a visible panel, split it vertically so the
+    // moved panel STACKS beneath it (both visible) instead of tabbing on top of it.
+    // Only an empty area uses addDockWidget (which would otherwise tab).
+    QDockWidget* anchor = nullptr;
+    for (QDockWidget* other : findChildren<QDockWidget*>())
+      if (other != dock && !other->isFloating() && other->isVisible()
+          && dockWidgetArea(other) == area)
+      { anchor = other; break; }
+    if (anchor)
+      splitDockWidget(anchor, dock, Qt::Vertical);
+    else
+      addDockWidget(area, dock);
     dock->setVisible(true);
     dock->raise();
     dockVisibilityPreference_[dock->objectName()] = true;

@@ -87,12 +87,13 @@ private slots:
     moveLeft->trigger();
     QCOMPARE(window.dockWidgetArea(spectrumDock), Qt::LeftDockWidgetArea);
 
-    // A table joins the same column instead of only tabbing on the right.
+    // A table joins the same column and STACKS (splits) rather than tabbing.
     auto* featuresDock = window.findChild<QDockWidget*>(QStringLiteral("featuresDock"));
     auto* featuresLeft = window.findChild<QAction*>(QStringLiteral("featuresDockMoveLeft"));
     QVERIFY(featuresDock && featuresLeft);
     featuresLeft->trigger();
     QCOMPARE(window.dockWidgetArea(featuresDock), Qt::LeftDockWidgetArea);
+    QVERIFY(!window.tabifiedDockWidgets(featuresDock).contains(spectrumDock));
 
     moveRight->trigger();
     QCOMPARE(window.dockWidgetArea(spectrumDock), Qt::RightDockWidgetArea);

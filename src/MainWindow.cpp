@@ -455,6 +455,8 @@ namespace OpenMSViewer
     const bool hasSavedState = settings.contains(QStringLiteral("main/state"));
     if (hasSavedState)
       restoreState(settings.value(QStringLiteral("main/state")).toByteArray());
+    else
+      arrangeDocksDefault();  // fresh launch: tables full-width in the bottom, not the side
     // A floating panel becomes a separate top-level window that, on some
     // platforms (notably WSLg/Wayland), never receives mouse input — leaving it
     // impossible to move, dock, or close. Never start in that state: re-dock any
@@ -1651,31 +1653,7 @@ namespace OpenMSViewer
                               imagingDock_, oswDock_, consensusDock_, metadataDock_, logDock_})
       dock->setFloating(false);
 
-    addDockWidget(Qt::BottomDockWidgetArea, ticDock_);
-    addDockWidget(Qt::BottomDockWidgetArea, spectrumDock_);
-    splitDockWidget(ticDock_, spectrumDock_, Qt::Horizontal);
-    addDockWidget(Qt::BottomDockWidgetArea, chromatogramsDock_);
-    addDockWidget(Qt::BottomDockWidgetArea, ionMobilityDock_);
-    addDockWidget(Qt::BottomDockWidgetArea, imagingDock_);
-    addDockWidget(Qt::BottomDockWidgetArea, oswDock_);
-    addDockWidget(Qt::BottomDockWidgetArea, consensusDock_);
-    addDockWidget(Qt::BottomDockWidgetArea, logDock_);
-    tabifyDockWidget(ticDock_, chromatogramsDock_);
-    tabifyDockWidget(chromatogramsDock_, ionMobilityDock_);
-    tabifyDockWidget(ionMobilityDock_, imagingDock_);
-    tabifyDockWidget(imagingDock_, oswDock_);
-    tabifyDockWidget(oswDock_, consensusDock_);
-    tabifyDockWidget(consensusDock_, logDock_);
-
-    addDockWidget(Qt::RightDockWidgetArea, featuresDock_);
-    addDockWidget(Qt::RightDockWidgetArea, identificationsDock_);
-    addDockWidget(Qt::RightDockWidgetArea, spectraDock_);
-    addDockWidget(Qt::RightDockWidgetArea, faimsDock_);
-    addDockWidget(Qt::RightDockWidgetArea, metadataDock_);
-    tabifyDockWidget(featuresDock_, identificationsDock_);
-    tabifyDockWidget(featuresDock_, spectraDock_);
-    tabifyDockWidget(spectraDock_, faimsDock_);
-    tabifyDockWidget(faimsDock_, metadataDock_);
+    arrangeDocksDefault();
 
     if (document_.isEmpty() && !imagingStore_ && !hasOswData_ && !hasConsensusData_) showWelcomePage();
     else if (hasOswData_)
@@ -1715,6 +1693,25 @@ namespace OpenMSViewer
     statusBar()->showMessage(tr("Panel layout reset"), 3000);
   }
 
+  void MainWindow::arrangeDocksDefault()
+  {
+    // Everything lives in the bottom area — nothing in the narrow right column,
+    // where wide tables would be squeezed. A plots row on top (TIC beside the
+    // spectrum) sits over a FULL-WIDTH tabbed row of tables and panels below.
+    addDockWidget(Qt::BottomDockWidgetArea, ticDock_);
+    splitDockWidget(ticDock_, featuresDock_, Qt::Vertical);    // full-width row below the plots
+    splitDockWidget(ticDock_, spectrumDock_, Qt::Horizontal);  // plots row: TIC | spectrum
+    QDockWidget* previous = featuresDock_;
+    for (QDockWidget* dock : {identificationsDock_, spectraDock_, chromatogramsDock_,
+                              ionMobilityDock_, imagingDock_, faimsDock_, oswDock_,
+                              consensusDock_, metadataDock_, logDock_})
+    {
+      tabifyDockWidget(previous, dock);
+      previous = dock;
+    }
+    featuresDock_->raise();
+  }
+
   void MainWindow::applyLayoutPreset(LayoutPreset preset)
   {
     if (preset == LayoutPreset::Overview) { resetDockLayout(); return; }
@@ -1746,18 +1743,15 @@ namespace OpenMSViewer
     switch (preset)
     {
       case LayoutPreset::Identification:
-        // Analyte-centric: ID + spectra tables stacked at right, spectrum + TIC below.
-        addDockWidget(Qt::RightDockWidgetArea, identificationsDock_);
-        addDockWidget(Qt::RightDockWidgetArea, spectraDock_);
-        splitDockWidget(identificationsDock_, spectraDock_, Qt::Vertical);
+        // Analyte-centric: the annotated spectrum full width on top, the ID + spectra
+        // tables tabbed full width below (never a side column).
         addDockWidget(Qt::BottomDockWidgetArea, spectrumDock_);
-        addDockWidget(Qt::BottomDockWidgetArea, ticDock_);
-        splitDockWidget(spectrumDock_, ticDock_, Qt::Horizontal);
+        splitDockWidget(spectrumDock_, identificationsDock_, Qt::Vertical);
+        tabifyDockWidget(identificationsDock_, spectraDock_);
+        feature(spectrumDock_, true);
         feature(identificationsDock_, true);
         feature(spectraDock_, true);
-        feature(spectrumDock_, true);
-        feature(ticDock_, true);
-        hideRest({identificationsDock_, spectraDock_, spectrumDock_, ticDock_});
+        hideRest({spectrumDock_, identificationsDock_, spectraDock_});
         focus = identificationsDock_;
         name = tr("Identification");
         break;
@@ -1775,12 +1769,11 @@ namespace OpenMSViewer
         break;
 
       case LayoutPreset::Dia:
-        // Targeted DIA: OpenSWATH peak groups across the bottom, spectrum +
-        // chromatograms stacked at right.
+        // Targeted DIA: the OpenSWATH panel full width on top, spectrum beside the
+        // chromatograms in a plots row below.
         addDockWidget(Qt::BottomDockWidgetArea, oswDock_);
-        addDockWidget(Qt::RightDockWidgetArea, spectrumDock_);
-        addDockWidget(Qt::RightDockWidgetArea, chromatogramsDock_);
-        splitDockWidget(spectrumDock_, chromatogramsDock_, Qt::Vertical);
+        splitDockWidget(oswDock_, spectrumDock_, Qt::Vertical);
+        splitDockWidget(spectrumDock_, chromatogramsDock_, Qt::Horizontal);
         feature(oswDock_, true);
         feature(spectrumDock_, true);
         feature(chromatogramsDock_, true);

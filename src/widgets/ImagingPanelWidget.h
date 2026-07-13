@@ -54,6 +54,8 @@ namespace OpenMSViewer
     void setSelectedSpectrum(std::optional<std::size_t> spectrumIndex);
     [[nodiscard]] const QImage& renderedImage() const noexcept;
     [[nodiscard]] std::optional<std::size_t> selectedSpectrum() const noexcept;
+    // On-screen rectangle the (aspect-preserved) image occupies within the widget.
+    [[nodiscard]] QRect imageRect() const;
 
   signals:
     void pixelActivated(std::size_t spectrumIndex, std::uint32_t x, std::uint32_t y);
@@ -64,7 +66,6 @@ namespace OpenMSViewer
     void mouseMoveEvent(QMouseEvent* event) override;
 
   private:
-    [[nodiscard]] QRect imageRect() const;
     [[nodiscard]] std::optional<std::pair<std::uint32_t, std::uint32_t>> pixelAt(
       const QPointF& position) const;
     void rebuildImage();

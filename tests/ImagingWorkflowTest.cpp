@@ -202,9 +202,13 @@ private slots:
     QCOMPARE(spectrum->spectrumIndex(), std::size_t{0});
     dock->raise();
     QTest::qWait(30);
-    const QPoint lowerRight = panel->imageWidget()->rect().center()
-      + QPoint(panel->imageWidget()->width() / 8, panel->imageWidget()->height() / 8);
-    QTest::mouseClick(panel->imageWidget(), Qt::LeftButton, Qt::NoModifier, lowerRight);
+    // Click the exact centre of the bottom-right pixel (x=1, y=1 → spectrum 3),
+    // computed from the on-screen image rect so it is robust to the widget size /
+    // panel layout rather than guessing a fraction of the widget.
+    const QRect image = panel->imageWidget()->imageRect();
+    const QPoint bottomRightPixel = image.topLeft()
+      + QPoint(image.width() * 3 / 4, image.height() * 3 / 4);
+    QTest::mouseClick(panel->imageWidget(), Qt::LeftButton, Qt::NoModifier, bottomRightPixel);
     QTRY_COMPARE(spectrum->spectrumIndex(), std::size_t{3});
     QCOMPARE(panel->imageWidget()->selectedSpectrum().value(), std::size_t{3});
   }

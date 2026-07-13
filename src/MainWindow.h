@@ -97,6 +97,9 @@ namespace OpenMSViewer
     // stack them sensibly. Only panels with data are actually shown.
     enum class LayoutPreset { Overview, Identification, Imaging, Dia };
     void applyLayoutPreset(LayoutPreset preset);
+    // Canonical default arrangement: a plots row (TIC | spectrum) over a full-width
+    // tabbed row of tables/panels in the bottom area — no narrow right column.
+    void arrangeDocksDefault();
 
     void createActions();
     void createMenus();

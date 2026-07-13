@@ -1,0 +1,10 @@
+# Real datasets from archive.openms.de used to regenerate the docs screenshots.
+# Columns: id  tier  category  dest  url
+# tiers: small (~170MB) | large (~1.5GB) | xlarge (adds ~3GB MALDI)
+# dest is relative to the cache dir (default .screenshot-cache/). .zip is unzipped
+# in place; the MALDI .d is a directory fetched file-by-file.
+ltq_velos	small	experiment	Thermo-LTQ-Velos-PXD000155.mzML	https://archive.openms.de/openms/testfiles/raw-file-museum/Thermo-LTQ-Velos-PXD000155/20100609_mAbBBA2_JDH_110.mzML
+angiotensin	small	experiment_raw	Angiotensin_AllScans.raw	https://archive.openms.de/openms/testfiles/Angiotensin_AllScans.raw
+faims	large	faims	ExplorisFAIMS-DDA-LFQ.mzML	https://archive.openms.de/openms/testfiles/FAIMS/ExplorisFAIMS-DDA-LFQ.mzML
+dia_pasef	large	ion_mobility	DIA_HeLa_50ng_5_6min.d.zip	https://archive.openms.de/openms/testfiles/DIA_HeLa_50ng_5_6min.d.zip
+maldi	xlarge	imaging	250520_dhb_test_moustissue_1.d	https://archive.openms.de/openms/testfiles/MALDI/250520_dhb_test_moustissue_1.d/

@@ -5,3 +5,6 @@ compile_commands.json
 *.user
 *.swp
 
+
+# Local cache of large real datasets for screenshot regeneration (see tools/screenshots/)
+.screenshot-cache/

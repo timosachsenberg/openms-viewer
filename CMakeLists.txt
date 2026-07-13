@@ -155,6 +155,14 @@ set_target_properties(openms-viewer PROPERTIES
   MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
 )
 
+# Developer tool: regenerates docs/screenshots/ from cached archive.openms.de
+# datasets + fixtures (see tools/screenshots/). Standalone dev builds only; not
+# part of the embedded OpenMS release. Run offscreen from the repo root.
+if(OPENMS_VIEWER_STANDALONE)
+  add_executable(openms-viewer-gallery tools/screenshots/gallery.cpp)
+  target_link_libraries(openms-viewer-gallery PRIVATE openms_viewer_ui)
+endif()
+
 if(OPENMS_VIEWER_STANDALONE)
   # GNUInstallDirs is included here (not in embedded mode): it seeds global
   # CMAKE_INSTALL_* cache entries — including CMAKE_INSTALL_DOCDIR derived from

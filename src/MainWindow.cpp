@@ -457,7 +457,7 @@ namespace OpenMSViewer
     // panel the restored layout left floating.
     for (QDockWidget* dock : findChildren<QDockWidget*>())
       if (dock->isFloating()) dock->setFloating(false);
-    const bool dark = settings.value(QStringLiteral("appearance/dark"), true).toBool();
+    const bool dark = settings.value(QStringLiteral("appearance/dark"), false).toBool();
     darkThemeAction_->setChecked(dark);
     setDarkTheme(dark);
     const bool spectrumGrid = settings.value(QStringLiteral("appearance/spectrumGrid"), true).toBool();

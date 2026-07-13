@@ -881,7 +881,7 @@ namespace OpenMSViewer
     connect(zoomBackAction_, &QAction::triggered, peakMap_, &PeakMapWidget::zoomBack);
     peakMapPanel_->addAction(zoomBackAction_);
 
-    resetViewAction_ = new QAction(style()->standardIcon(QStyle::SP_DialogResetButton),
+    resetViewAction_ = new QAction(QIcon(QStringLiteral(":/icons/material-zoom-out-map.svg")),
                                    tr("Reset peak-map view"), this);
     resetViewAction_->setShortcut(Qt::Key_Home);
     resetViewAction_->setShortcutContext(Qt::WidgetWithChildrenShortcut);

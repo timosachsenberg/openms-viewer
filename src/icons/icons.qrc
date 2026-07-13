@@ -8,5 +8,6 @@
     <file alias="material-pan-tool.svg">material-pan-tool.svg</file>
     <file alias="material-straighten.svg">material-straighten.svg</file>
     <file alias="material-edit.svg">material-edit.svg</file>
+    <file alias="material-zoom-out-map.svg">material-zoom-out-map.svg</file>
   </qresource>
 </RCC>

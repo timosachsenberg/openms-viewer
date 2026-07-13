@@ -44,6 +44,15 @@ class UxWorkflowTest final : public QObject
   Q_OBJECT
 
 private slots:
+  void automaticMzLabelsAreEnabledByDefault()
+  {
+    QSettings().clear();
+    OpenMSViewer::MainWindow window;
+    auto* action = window.findChild<QAction*>(QStringLiteral("showMzLabels"));
+    QVERIFY(action != nullptr);
+    QVERIFY(action->isChecked());
+  }
+
   void rtInMinutesFormatsHelperAndTable()
   {
     // The shared helper is the single source of truth for RT display.

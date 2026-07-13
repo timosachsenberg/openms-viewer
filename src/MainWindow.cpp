@@ -1060,7 +1060,9 @@ namespace OpenMSViewer
     spectrumToolGroup->addAction(labelSpectrumAction_);
 
     showMzLabelsAction_ = new QAction(tr("Automatic m/z labels"), this);
+    showMzLabelsAction_->setObjectName(QStringLiteral("showMzLabels"));
     showMzLabelsAction_->setCheckable(true);
+    showMzLabelsAction_->setChecked(true);
     connect(showMzLabelsAction_, &QAction::toggled,
             spectrum_, &SpectrumWidget::setShowMzLabels);
 

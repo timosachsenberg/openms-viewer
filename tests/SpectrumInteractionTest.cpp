@@ -49,6 +49,7 @@ private slots:
   {
     auto experiment = std::make_shared<OpenMS::MSExperiment>(OpenMSViewer::TestData::experiment());
     OpenMSViewer::SpectrumWidget widget;
+    QVERIFY(widget.showMzLabels());
     widget.resize(820, 420);
     widget.show();
     widget.setExperiment(experiment);

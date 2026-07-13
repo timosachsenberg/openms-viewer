@@ -4,6 +4,7 @@
 #include "model/RtUnit.h"
 
 #include <QAbstractTableModel>
+#include <QAction>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -217,10 +218,10 @@ namespace OpenMSViewer
                        QStringLiteral("3"), QStringLiteral("4"), QStringLiteral("5+")});
     CompactControls::addLabeledMenuControl(filterMenu, tr("Charge"), charge_);
     filterMenu->addSeparator();
-    auto* reset = CompactControls::makeIconButton(
-      filterMenu, QIcon(QStringLiteral(":/icons/material-clear-all.svg")),
-      tr("Reset feature filters"), QStringLiteral("featureResetFilters"));
-    CompactControls::addMenuControl(filterMenu, reset);
+    auto* reset = filterMenu->addAction(
+      QIcon(QStringLiteral(":/icons/material-clear-all.svg")), tr("Reset filters"));
+    reset->setObjectName(QStringLiteral("featureResetFilters"));
+    reset->setToolTip(tr("Reset all feature table filters"));
     filterButton->setMenu(filterMenu);
     filters->addWidget(filterButton);
     countLabel_ = new QLabel(this);
@@ -257,7 +258,7 @@ namespace OpenMSViewer
             this, &FeatureTableWidget::updateFilters);
     connect(charge_, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &FeatureTableWidget::updateFilters);
-    connect(reset, &QToolButton::clicked, this, &FeatureTableWidget::resetFilters);
+    connect(reset, &QAction::triggered, this, &FeatureTableWidget::resetFilters);
     connect(exportButton, &QToolButton::clicked, this, &FeatureTableWidget::exportTsv);
     const auto activateRow = [this](const QModelIndex& proxyIndex)
     {
@@ -297,7 +298,8 @@ namespace OpenMSViewer
     const QModelIndex proxy = proxy_->mapFromSource(source);
     if (!proxy.isValid()) return;
     QScopedValueRollback guard(synchronizingSelection_, true);
-    table_->selectRow(proxy.row());
+    table_->selectionModel()->setCurrentIndex(
+      proxy, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     table_->scrollTo(proxy, QAbstractItemView::PositionAtCenter);
   }
 

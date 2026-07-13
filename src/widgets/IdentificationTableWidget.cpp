@@ -4,6 +4,7 @@
 #include "model/RtUnit.h"
 
 #include <QAbstractTableModel>
+#include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleValidator>
@@ -283,10 +284,10 @@ namespace OpenMSViewer
     showAllHits_->setObjectName(QStringLiteral("identificationAllHits"));
     CompactControls::addMenuControl(filterMenu, showAllHits_);
     filterMenu->addSeparator();
-    auto* reset = CompactControls::makeIconButton(
-      filterMenu, QIcon(QStringLiteral(":/icons/material-clear-all.svg")),
-      tr("Reset identification filters"), QStringLiteral("identificationResetFilters"));
-    CompactControls::addMenuControl(filterMenu, reset);
+    auto* reset = filterMenu->addAction(
+      QIcon(QStringLiteral(":/icons/material-clear-all.svg")), tr("Reset filters"));
+    reset->setObjectName(QStringLiteral("identificationResetFilters"));
+    reset->setToolTip(tr("Reset all identification table filters"));
     filters->setMenu(filterMenu);
     controls->addWidget(filters);
     countLabel_ = new QLabel(this);
@@ -325,7 +326,7 @@ namespace OpenMSViewer
     connect(sequenceFilter_, &QLineEdit::textChanged, this, &IdentificationTableWidget::updateFilters);
     connect(minimumScore_, &QLineEdit::textChanged, this, &IdentificationTableWidget::updateFilters);
     connect(showAllHits_, &QCheckBox::toggled, this, &IdentificationTableWidget::rebuildRows);
-    connect(reset, &QToolButton::clicked, this, [this]
+    connect(reset, &QAction::triggered, this, [this]
     {
       viewMode_->setCurrentIndex(0);
       sequenceFilter_->clear();
@@ -395,7 +396,8 @@ namespace OpenMSViewer
     const QModelIndex proxyIndex = proxy_->mapFromSource(model_->index(row, 0));
     if (!proxyIndex.isValid()) return;
     QScopedValueRollback guard(synchronizingSelection_, true);
-    table_->selectRow(proxyIndex.row());
+    table_->selectionModel()->setCurrentIndex(
+      proxyIndex, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     table_->scrollTo(proxyIndex, QAbstractItemView::PositionAtCenter);
     updateDetails(row);
   }

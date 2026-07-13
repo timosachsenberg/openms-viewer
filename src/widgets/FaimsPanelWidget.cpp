@@ -233,7 +233,9 @@ namespace OpenMSViewer
 
   QRect FaimsTracePlotWidget::plotRect() const
   {
-    return rect().adjusted(64, 34, -18, -40);
+    // The end ticks are centred on the plot edges. Keep half a label's width on
+    // the right so the final RT value is not clipped by the widget boundary.
+    return rect().adjusted(64, 34, -36, -40);
   }
 
   void FaimsTracePlotWidget::paintEvent(QPaintEvent*)

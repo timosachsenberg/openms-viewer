@@ -47,9 +47,14 @@ private slots:
     auto* featureWidget = window.findChild<OpenMSViewer::FeatureTableWidget*>();
     auto* table = featureWidget ? featureWidget->findChild<QTableView*>() : nullptr;
     auto* peakMap = window.findChild<OpenMSViewer::PeakMapWidget*>();
+    auto* resetFilters = featureWidget
+      ? featureWidget->findChild<QAction*>(QStringLiteral("featureResetFilters")) : nullptr;
     QVERIFY(featureWidget != nullptr);
     QVERIFY(table != nullptr);
     QVERIFY(peakMap != nullptr);
+    QVERIFY(resetFilters != nullptr);
+    QCOMPARE(resetFilters->text(), QStringLiteral("Reset filters"));
+    QVERIFY(!resetFilters->icon().isNull());
 
     QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 2, 5000);
     QTRY_VERIFY_WITH_TIMEOUT(peakMap->hasExperiment(), 5000);
@@ -75,6 +80,7 @@ private slots:
     QTRY_COMPARE(*peakMap->selectedFeature(), std::size_t{1});
     QTRY_COMPARE(table->selectionModel()->selectedRows().size(), 1);
     QCOMPARE(table->selectionModel()->selectedRows().front().data(Qt::UserRole).toULongLong(), qulonglong{1});
+    QCOMPARE(table->currentIndex().data(Qt::UserRole).toULongLong(), qulonglong{1});
 
     const auto intensityInputs = featureWidget->findChildren<QDoubleSpinBox*>();
     QCOMPARE(intensityInputs.size(), 2);

@@ -458,6 +458,28 @@ namespace OpenMSViewer
     first->addWidget(exportButton);
     layout->addLayout(first);
 
+    selectionNotice_ = new QWidget(this);
+    selectionNotice_->setObjectName(QStringLiteral("spectrumHiddenSelectionNotice"));
+    auto* selectionNoticeLayout = new QHBoxLayout(selectionNotice_);
+    selectionNoticeLayout->setContentsMargins(6, 2, 2, 2);
+    selectionNoticeLayout->setSpacing(6);
+    selectionNoticeLabel_ = new QLabel(selectionNotice_);
+    selectionNoticeLabel_->setObjectName(QStringLiteral("spectrumHiddenSelectionLabel"));
+    selectionNoticeLabel_->setStyleSheet(QStringLiteral("color: palette(placeholder-text);"));
+    selectionNoticeLayout->addWidget(selectionNoticeLabel_, 1);
+    auto* resetHiddenSelectionFilters = new QToolButton(selectionNotice_);
+    resetHiddenSelectionFilters->setObjectName(
+      QStringLiteral("spectrumResetHiddenSelectionFilters"));
+    resetHiddenSelectionFilters->setIcon(
+      QIcon(QStringLiteral(":/icons/material-clear-all.svg")));
+    resetHiddenSelectionFilters->setText(tr("Reset filters"));
+    resetHiddenSelectionFilters->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    resetHiddenSelectionFilters->setAutoRaise(true);
+    resetHiddenSelectionFilters->setToolTip(tr("Show the selected spectrum in the table"));
+    selectionNoticeLayout->addWidget(resetHiddenSelectionFilters);
+    selectionNotice_->setVisible(false);
+    layout->addWidget(selectionNotice_);
+
     model_ = new SpectrumTableModel(this);
     proxy_ = new SpectrumFilterProxyModel(this);
     proxy_->setSourceModel(model_);
@@ -489,8 +511,11 @@ namespace OpenMSViewer
       model_->setAllHits(enabled);
       updateColumns();
       updateCountLabel();
+      synchronizeSelectedSpectrum();
     });
     connect(reset, &QAction::triggered, this, &SpectrumTableWidget::resetFilters);
+    connect(resetHiddenSelectionFilters, &QToolButton::clicked,
+            this, &SpectrumTableWidget::resetFilters);
     connect(exportButton, &QToolButton::clicked, this, &SpectrumTableWidget::exportTsv);
     connect(table_->selectionModel(), &QItemSelectionModel::currentRowChanged,
             this, [this](const QModelIndex& index)
@@ -558,6 +583,10 @@ namespace OpenMSViewer
 
   void SpectrumTableWidget::clear()
   {
+    selectedSpectrumIndex_.reset();
+    selectedIdentificationIndex_.reset();
+    selectedHitIndex_.reset();
+    selectionNotice_->setVisible(false);
     setData({}, {});
   }
 
@@ -565,17 +594,39 @@ namespace OpenMSViewer
     std::size_t spectrumIndex, std::optional<std::size_t> identificationIndex,
     std::optional<std::size_t> hitIndex)
   {
-    const int row = model_->rowForSpectrumSelection(spectrumIndex, identificationIndex, hitIndex);
-    const QModelIndex proxyIndex = row < 0 ? QModelIndex()
-                                           : proxy_->mapFromSource(model_->index(row, 0));
-    QScopedValueRollback guard(synchronizingSelection_, true);
-    if (!proxyIndex.isValid())
+    selectedSpectrumIndex_ = spectrumIndex;
+    selectedIdentificationIndex_ = identificationIndex;
+    selectedHitIndex_ = hitIndex;
+    synchronizeSelectedSpectrum();
+  }
+
+  void SpectrumTableWidget::synchronizeSelectedSpectrum()
+  {
+    if (!selectedSpectrumIndex_)
     {
-      // The active spectrum is hidden by the current filter; drop the stale
-      // highlight so the table never contradicts the spectrum view.
-      table_->selectionModel()->clearSelection();
+      selectionNotice_->setVisible(false);
       return;
     }
+    const int row = model_->rowForSpectrumSelection(
+      *selectedSpectrumIndex_, selectedIdentificationIndex_, selectedHitIndex_);
+    QScopedValueRollback guard(synchronizingSelection_, true);
+    if (row < 0)
+    {
+      table_->selectionModel()->clear();
+      selectionNotice_->setVisible(false);
+      return;
+    }
+    const QModelIndex proxyIndex = proxy_->mapFromSource(model_->index(row, 0));
+    if (!proxyIndex.isValid())
+    {
+      table_->selectionModel()->clear();
+      selectionNoticeLabel_->setText(
+        tr("Spectrum #%1 is hidden by the current filters.")
+          .arg(*selectedSpectrumIndex_ + 1));
+      selectionNotice_->setVisible(true);
+      return;
+    }
+    selectionNotice_->setVisible(false);
     table_->selectionModel()->setCurrentIndex(
       proxyIndex, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     table_->scrollTo(proxyIndex, QAbstractItemView::PositionAtCenter);
@@ -636,6 +687,7 @@ namespace OpenMSViewer
     filter->setScoreThreshold(minimumScore_->isEnabled()
       ? optionalNumber(minimumScore_, scoreTip) : std::nullopt);
     updateCountLabel();
+    synchronizeSelectedSpectrum();
   }
 
   void SpectrumTableWidget::updateColumns()
@@ -656,6 +708,7 @@ namespace OpenMSViewer
     maximumRt_->clear();
     sequence_->clear();
     minimumScore_->clear();
+    allHits_->setChecked(false);
     updateFilters();
   }
 

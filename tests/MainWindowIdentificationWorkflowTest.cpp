@@ -9,6 +9,7 @@
 #include <OpenMS/FORMAT/IdXMLFile.h>
 #include <OpenMS/FORMAT/MzMLFile.h>
 
+#include <QAction>
 #include <QCheckBox>
 #include <QLineEdit>
 #include <QTableView>
@@ -53,12 +54,18 @@ private slots:
       ? spectrumTableWidget->findChild<QTableView*>(QStringLiteral("spectraTable")) : nullptr;
     auto* spectrumAllHits = spectrumTableWidget
       ? spectrumTableWidget->findChild<QCheckBox*>(QStringLiteral("spectrumAllHits")) : nullptr;
+    auto* resetFilters = identificationWidget
+      ? identificationWidget->findChild<QAction*>(
+          QStringLiteral("identificationResetFilters")) : nullptr;
     QVERIFY(identificationWidget != nullptr);
     QVERIFY(table != nullptr);
     QVERIFY(peakMap != nullptr);
     QVERIFY(spectrum != nullptr);
     QVERIFY(spectrumTable != nullptr);
     QVERIFY(spectrumAllHits != nullptr);
+    QVERIFY(resetFilters != nullptr);
+    QCOMPARE(resetFilters->text(), QStringLiteral("Reset filters"));
+    QVERIFY(!resetFilters->icon().isNull());
 
     QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 3, 5000);
     QTRY_VERIFY_WITH_TIMEOUT(peakMap->hasExperiment(), 5000);
@@ -132,6 +139,8 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(peakMap->selectedIdentification().has_value(), 2000);
     QTRY_COMPARE(*peakMap->selectedIdentification(), std::size_t{0});
     QTRY_COMPARE(spectrum->spectrumIndex(), std::size_t{1});
+    QTRY_VERIFY(table->currentIndex().isValid());
+    QCOMPARE(table->currentIndex().data(Qt::UserRole).toULongLong(), qulonglong{0});
     QTRY_VERIFY(spectrum->annotation().has_value());
     QTRY_COMPARE(spectrum->annotation()->sequence, QStringLiteral("PEPTIDE"));
   }

@@ -105,6 +105,9 @@ private slots:
     minimumRt->setText(QStringLiteral("0.3"));  // 18 seconds
     QCOMPARE(spectraTable->model()->rowCount(), 1);
     minimumRt->clear();
+    resetFilters->trigger();
+    QVERIFY(!allHits->isChecked());
+    QCOMPARE(spectraTable->model()->rowCount(), 3);
 
     std::optional<std::size_t> activatedSpectrum;
     connect(&spectra, &OpenMSViewer::SpectrumTableWidget::spectrumActivated,
@@ -197,6 +200,15 @@ private slots:
     auto* tic = window.findChild<OpenMSViewer::TicWidget*>();
     auto* search = window.findChild<QLineEdit*>(QStringLiteral("spectrumSearch"));
     auto* spectrumIndex = window.findChild<QSpinBox*>(QStringLiteral("spectrumIndex"));
+    auto* mode = spectra
+      ? spectra->findChild<QComboBox*>(QStringLiteral("spectrumModeFilter")) : nullptr;
+    auto* hiddenSelectionNotice = spectra
+      ? spectra->findChild<QWidget*>(QStringLiteral("spectrumHiddenSelectionNotice")) : nullptr;
+    auto* hiddenSelectionLabel = spectra
+      ? spectra->findChild<QLabel*>(QStringLiteral("spectrumHiddenSelectionLabel")) : nullptr;
+    auto* resetHiddenSelectionFilters = spectra
+      ? spectra->findChild<QToolButton*>(
+          QStringLiteral("spectrumResetHiddenSelectionFilters")) : nullptr;
     QVERIFY(spectra != nullptr);
     QVERIFY(spectraDock != nullptr);
     QVERIFY(spectrum != nullptr);
@@ -204,6 +216,10 @@ private slots:
     QVERIFY(tic != nullptr);
     QVERIFY(search != nullptr);
     QVERIFY(spectrumIndex != nullptr);
+    QVERIFY(mode != nullptr);
+    QVERIFY(hiddenSelectionNotice != nullptr);
+    QVERIFY(hiddenSelectionLabel != nullptr);
+    QVERIFY(resetHiddenSelectionFilters != nullptr);
     auto* table = spectra->findChild<QTableView*>(QStringLiteral("spectraTable"));
     QVERIFY(table != nullptr);
     QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 3, 5000);
@@ -265,6 +281,18 @@ private slots:
     table->selectionModel()->clear();
     QVERIFY(!table->currentIndex().isValid());
     QTest::mouseClick(peakMap, Qt::LeftButton, Qt::NoModifier, precursor);
+    QTRY_VERIFY(table->currentIndex().isValid());
+    QCOMPARE(table->currentIndex().data(Qt::UserRole).toULongLong(), qulonglong{1});
+
+    mode->setCurrentIndex(2);  // no identifications are loaded, hiding the MS/MS row
+    QTRY_COMPARE(table->model()->rowCount(), 0);
+    QVERIFY(!hiddenSelectionNotice->isHidden());
+    QVERIFY(hiddenSelectionLabel->text().contains(QStringLiteral("Spectrum #2")));
+    QVERIFY(!table->currentIndex().isValid());
+    resetHiddenSelectionFilters->click();
+    QTRY_COMPARE(mode->currentIndex(), 0);
+    QTRY_COMPARE(table->model()->rowCount(), 3);
+    QVERIFY(hiddenSelectionNotice->isHidden());
     QTRY_VERIFY(table->currentIndex().isValid());
     QCOMPARE(table->currentIndex().data(Qt::UserRole).toULongLong(), qulonglong{1});
   }

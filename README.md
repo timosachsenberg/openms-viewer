@@ -57,7 +57,11 @@ The central canvas rasterizes the visible RT × m·z window on every interaction
 
 ## Spectra and fragment annotation
 
-![Fragment spectrum](docs/screenshots/spectrum.png)
+![Annotated fragment spectrum with theoretical mirror](docs/screenshots/spectrum-annotated.png)
+
+*A b/y/a-annotated MS/MS spectrum with the theoretical spectrum mirrored below,
+the precursor marked, per-ion labels, and live coverage statistics
+(31/86 ions · 36 % here).*
 
 The spectrum viewer offers first/previous/next/last and MS-level-specific
 navigation, scan-number / native-ID / RT lookup, persistent wheel and box m·z
@@ -137,26 +141,42 @@ run, links through to the underlying spectrum.
 
 ## Ion mobility and diaPASEF
 
-![diaPASEF isolation windows](docs/screenshots/dia-windows.png)
+![Ion-mobility frame heatmap with mobilogram](docs/screenshots/ion-mobility.png)
 
 Ion-mobility frames are detected natively and rendered with OpenMS
-`rasterizeIMFrame`, with frame navigation, mobilograms, and zooming. For diaPASEF
-data the viewer reconstructs the **isolation-window scheme** across the acquisition
-cycle and overlays every m·z × ion-mobility window box (deduplicated across cycles
-by m·z window and mobility midpoint), making the staircased window groups directly
-visible.
+`rasterizeIMFrame` — an m·z × ion-mobility density map with the characteristic
+charge-state bands, a side mobilogram, and frame navigation.
 
-## FAIMS, imaging, and vendor data
+![diaPASEF isolation windows](docs/screenshots/dia-windows.png)
 
-- **FAIMS** — multi-CV datasets are detected automatically, with per-CV TIC
-  traces, a compensation-voltage filter shared by the peak map and TIC, and
-  synchronized per-CV peak-map small multiples.
-- **Imaging (MSI)** — imzML/IBD open on-disc with lazy spectrum decoding: TIC and
-  ppm-window ion images, pixel-to-spectrum navigation, and additive multi-ion RGB
-  overlays, all without holding the full imaging experiment in memory.
-- **Vendor raw** — Thermo `.raw` (needs a .NET runtime for the bridge) and Bruker
-  timsTOF `.d`/TDF (opentims, no vendor SDK) load through the OpenMS backends when
-  present; Bruker `.d` surfaces ion mobility straight into the IM panels.
+For diaPASEF data the viewer additionally reconstructs the **isolation-window
+scheme** across the acquisition cycle and overlays every m·z × ion-mobility window
+box (deduplicated across cycles by m·z window and mobility midpoint), making the
+staircased window groups directly visible.
+
+## FAIMS
+
+![FAIMS per-CV traces and small multiples](docs/screenshots/faims.png)
+
+Multi-CV datasets are detected automatically: a per-CV summary table, separate
+per-CV TIC traces, a compensation-voltage filter shared by the peak map and TIC,
+and synchronized per-CV peak-map small multiples. Table selection and spectrum
+navigation keep the active channel consistent.
+
+## Imaging (MSI)
+
+![Mass-spectrometry imaging ion image](docs/screenshots/imaging.png)
+
+imzML/IBD datasets open **on-disc** with lazy spectrum decoding — the full imaging
+experiment is never held in memory. The panel shows TIC and ppm-window ion images,
+a whole-image aggregate spectrum (click a peak to image it), pixel-to-spectrum
+navigation, and additive multi-ion RGB overlays.
+
+## Vendor raw data
+
+Thermo `.raw` (needs a .NET runtime for the bridge) and Bruker timsTOF `.d`/TDF
+(opentims, no vendor SDK) load through the OpenMS backends when present; Bruker
+`.d` surfaces ion mobility straight into the IM panels.
 
 ## Export and write-back
 

@@ -1,5 +1,7 @@
 #include "widgets/ChromatogramPanelWidget.h"
 
+#include "model/RtUnit.h"
+
 #include "model/TraceSmoothing.h"
 #include "plot/PlotAxis.h"
 #include "plot/PlotTheme.h"
@@ -75,7 +77,7 @@ namespace OpenMSViewer
         case PrecursorMz: return QStringLiteral("Q1 m/z");
         case Charge: return QStringLiteral("Z");
         case ProductMz: return QStringLiteral("Q3 m/z");
-        case RtRange: return QStringLiteral("RT range (s)");
+        case RtRange: return QStringLiteral("RT range (%1)").arg(RtUnit::unit(rtInMinutes_));
         case PointCount: return QStringLiteral("Points");
         case MaximumIntensity: return QStringLiteral("Maximum");
         case TotalIntensity: return QStringLiteral("Total");
@@ -126,7 +128,8 @@ namespace OpenMSViewer
                                                  : QStringLiteral("-");
         case RtRange:
           return record->points.empty() ? QStringLiteral("-")
-            : QStringLiteral("%1–%2").arg(record->rtMin, 0, 'f', 2).arg(record->rtMax, 0, 'f', 2);
+            : QStringLiteral("%1–%2").arg(RtUnit::format(record->rtMin, rtInMinutes_),
+                                          RtUnit::format(record->rtMax, rtInMinutes_));
         case PointCount: return static_cast<qulonglong>(record->points.size());
         case MaximumIntensity: return QString::number(record->maximumIntensity, 'e', 2);
         case TotalIntensity: return QString::number(record->totalIntensity, 'e', 2);
@@ -134,7 +137,17 @@ namespace OpenMSViewer
       }
     }
 
+    void setRtInMinutes(bool minutes)
+    {
+      if (rtInMinutes_ == minutes) return;
+      rtInMinutes_ = minutes;
+      emit headerDataChanged(Qt::Horizontal, RtRange, RtRange);
+      if (rowCount() > 0)
+        emit dataChanged(index(0, RtRange), index(rowCount() - 1, RtRange), {Qt::DisplayRole});
+    }
+
   private:
+    bool rtInMinutes_{false};
     std::vector<ChromatogramRecord> chromatograms_;
   };
 
@@ -573,6 +586,12 @@ namespace OpenMSViewer
   }
 
   ChromatogramPlotWidget* ChromatogramPanelWidget::plot() const noexcept { return plot_; }
+
+  void ChromatogramPanelWidget::setRtInMinutes(bool minutes)
+  {
+    plot_->setRtInMinutes(minutes);
+    model_->setRtInMinutes(minutes);
+  }
 
   void ChromatogramPanelWidget::updateSelection()
   {

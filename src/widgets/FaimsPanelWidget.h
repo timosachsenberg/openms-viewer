@@ -71,6 +71,7 @@ namespace OpenMSViewer
     void setChannels(const std::vector<FaimsChannelRecord>& channels);
     void setSelectedChannel(int channelIndex);
     void setPeakMapRange(const PlotRange& range);
+    void setRtInMinutes(bool minutes);
     [[nodiscard]] int selectedChannel() const noexcept;
 
   signals:
@@ -87,6 +88,7 @@ namespace OpenMSViewer
     int selectedChannel_{-1};
     PlotRange peakMapRange_;
     bool hasPeakMapRange_{false};
+    bool rtInMinutes_{false};
   };
 
   class FaimsPanelWidget final : public QWidget
@@ -102,6 +104,7 @@ namespace OpenMSViewer
     void clear();
     void setPeakMapRange(const PlotRange& range);
     void setSelectedChannel(int channelIndex);
+    void setRtInMinutes(bool minutes);
     [[nodiscard]] std::size_t channelCount() const noexcept;
     [[nodiscard]] int selectedChannel() const noexcept;
     [[nodiscard]] FaimsTracePlotWidget* plot() const noexcept;
@@ -113,11 +116,13 @@ namespace OpenMSViewer
 
   private:
     void applySelection(int selectorIndex, bool emitSignal);
+    [[nodiscard]] QString rtRangeText(const FaimsChannelRecord& channel) const;
 
     std::vector<FaimsChannelRecord> channels_;
     QComboBox* selector_{nullptr};
     QTableWidget* table_{nullptr};
     FaimsTracePlotWidget* plot_{nullptr};
     FaimsPeakMapsWidget* peakMaps_{nullptr};
+    bool rtInMinutes_{false};
   };
 }

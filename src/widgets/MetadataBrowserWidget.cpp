@@ -1,5 +1,7 @@
 #include "widgets/MetadataBrowserWidget.h"
 
+#include "model/RtUnit.h"
+
 #include <OpenMS/METADATA/DataProcessing.h>
 #include <OpenMS/METADATA/IonDetector.h>
 #include <OpenMS/METADATA/IonSource.h>
@@ -80,6 +82,13 @@ namespace OpenMSViewer
     rebuild();
   }
 
+  void MetadataBrowserWidget::setRtInMinutes(bool minutes)
+  {
+    if (rtInMinutes_ == minutes) return;
+    rtInMinutes_ = minutes;
+    rebuild();
+  }
+
   void MetadataBrowserWidget::clear()
   {
     experiment_.reset();
@@ -155,7 +164,10 @@ namespace OpenMSViewer
       auto* scanItem = new QTreeWidgetItem(
         tree_, {tr("Scan #%1").arg(*spectrumIndex_ + 1), text(spectrum.getNativeID())});
       scanItem->setExpanded(true);
-      add(scanItem, tr("RT"), QStringLiteral("%1 s").arg(spectrum.getRT(), 0, 'f', 3));
+      add(scanItem, tr("RT"),
+          QStringLiteral("%1 %2")
+            .arg(RtUnit::format(spectrum.getRT(), rtInMinutes_, 3))
+            .arg(RtUnit::unit(rtInMinutes_)));
       add(scanItem, tr("MS level"), QString::number(spectrum.getMSLevel()));
       add(scanItem, tr("Peaks"), QString::number(spectrum.size()));
       add(scanItem, tr("Type"),

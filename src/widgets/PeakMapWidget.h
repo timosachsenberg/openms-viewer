@@ -99,6 +99,7 @@ namespace OpenMSViewer
     void setShowConsensus(bool show);
     void zoomToConsensus(std::size_t consensusIndex);
     void setShowPrecursors(bool show);
+    void setRtInMinutes(bool minutes);
 
   signals:
     void viewRangeChanged(const OpenMSViewer::PlotRange& range);
@@ -208,6 +209,7 @@ namespace OpenMSViewer
     PeakMapIntensityScale intensityScale_{PeakMapIntensityScale::Equalized};
     PeakMapInteractionMode interactionMode_{PeakMapInteractionMode::Zoom};
     bool showMinimap_{true};
+    bool rtInMinutes_{false};
   };
 }
 

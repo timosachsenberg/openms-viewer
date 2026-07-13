@@ -121,6 +121,7 @@ namespace OpenMSViewer
     // reachable from the View → Dock panel menu and each panel's header menu — a
     // reliable alternative to drag-docking, which the custom header / WSLg block.
     void moveDock(QDockWidget* dock, Qt::DockWidgetArea area);
+    [[nodiscard]] bool rtInMinutes() const;
     void ensureFloatingDockVisible(QDockWidget* dock);
     void setDockAvailable(QDockWidget* dock, bool available);
     void initializeDockPreferences(bool hasSavedState);

@@ -1,5 +1,7 @@
 #include "widgets/FeatureTableWidget.h"
 
+#include "model/RtUnit.h"
+
 #include <QAbstractTableModel>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -37,6 +39,15 @@ namespace OpenMSViewer
       endResetModel();
     }
 
+    void setRtInMinutes(bool minutes)
+    {
+      if (rtInMinutes_ == minutes) return;
+      rtInMinutes_ = minutes;
+      emit headerDataChanged(Qt::Horizontal, Rt, Rt);
+      if (!features_.empty())
+        emit dataChanged(index(0, Rt), index(rowCount() - 1, Rt), {Qt::DisplayRole});
+    }
+
     [[nodiscard]] const FeatureRecord* featureForRow(int row) const noexcept
     {
       if (row < 0 || static_cast<std::size_t>(row) >= features_.size()) return nullptr;
@@ -68,7 +79,7 @@ namespace OpenMSViewer
       switch (section)
       {
         case Index: return QStringLiteral("#");
-        case Rt: return QStringLiteral("RT (s)");
+        case Rt: return RtUnit::columnHeader(rtInMinutes_);
         case Mz: return QStringLiteral("m/z");
         case Intensity: return QStringLiteral("Intensity");
         case Charge: return QStringLiteral("Z");
@@ -107,7 +118,7 @@ namespace OpenMSViewer
       switch (index.column())
       {
         case Index: return static_cast<qulonglong>(feature->index);
-        case Rt: return QString::number(feature->rt, 'f', 2);
+        case Rt: return RtUnit::format(feature->rt, rtInMinutes_);
         case Mz: return QString::number(feature->mz, 'f', 4);
         case Intensity: return QString::number(feature->intensity, 'e', 2);
         case Charge: return feature->charge == 0 ? QStringLiteral("-") : QString::number(feature->charge);
@@ -119,6 +130,7 @@ namespace OpenMSViewer
 
   private:
     std::vector<FeatureRecord> features_;
+    bool rtInMinutes_{false};
   };
 
   class FeatureFilterProxyModel final : public QSortFilterProxyModel
@@ -272,6 +284,11 @@ namespace OpenMSViewer
     QScopedValueRollback guard(synchronizingSelection_, true);
     table_->selectRow(proxy.row());
     table_->scrollTo(proxy, QAbstractItemView::PositionAtCenter);
+  }
+
+  void FeatureTableWidget::setRtInMinutes(bool minutes)
+  {
+    model_->setRtInMinutes(minutes);
   }
 
   void FeatureTableWidget::updateFilters()

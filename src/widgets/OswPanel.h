@@ -45,6 +45,7 @@ namespace OpenMSViewer
                  std::shared_ptr<ChromatogramSource> chromatograms,
                  const QString& chromatogramNote);
     void clear();
+    void setRtInMinutes(bool minutes);
 
   private:
     void reloadPrecursors();

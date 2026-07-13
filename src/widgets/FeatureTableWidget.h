@@ -28,6 +28,7 @@ namespace OpenMSViewer
     void setFeatures(const std::vector<FeatureRecord>& features);
     void clear();
     void selectFeature(std::size_t featureIndex);
+    void setRtInMinutes(bool minutes);
 
   signals:
     void featureActivated(std::size_t featureIndex);

@@ -25,6 +25,7 @@ namespace OpenMSViewer
 
     void setExperiment(std::shared_ptr<const OpenMS::MSExperiment> experiment);
     void setSpectrumIndex(std::optional<std::size_t> index);
+    void setRtInMinutes(bool minutes);
     void clear();
 
   private:
@@ -32,6 +33,7 @@ namespace OpenMSViewer
 
     std::shared_ptr<const OpenMS::MSExperiment> experiment_;
     std::optional<std::size_t> spectrumIndex_;
+    bool rtInMinutes_{false};
     QTreeWidget* tree_{nullptr};
   };
 }

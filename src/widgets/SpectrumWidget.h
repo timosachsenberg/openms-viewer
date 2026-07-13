@@ -53,6 +53,7 @@ namespace OpenMSViewer
     void setShowMzLabels(bool show);
     void setShowGrid(bool show);
     void setAutoYScale(bool enabled);
+    void setRtInMinutes(bool minutes);
     void clearMeasurements();
     void clearLabels();
     void resetMzView();
@@ -101,6 +102,7 @@ namespace OpenMSViewer
     bool showMzLabels_{false};
     bool showGrid_{true};
     bool autoYScale_{true};
+    bool rtInMinutes_{false};
     // Vertical scaling captured by the most recent paint so peakAt() can hit-test
     // against exactly what is on screen without rescanning the spectrum per move.
     double plotBaseline_{0.0};

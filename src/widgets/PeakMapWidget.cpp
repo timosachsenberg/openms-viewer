@@ -2,6 +2,7 @@
 
 #include "plot/PeakMapRasterizer.h"
 #include "plot/PlotAxis.h"
+#include "model/RtUnit.h"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -398,6 +399,14 @@ namespace OpenMSViewer
     update();
   }
 
+  void PeakMapWidget::setRtInMinutes(bool minutes)
+  {
+    if (rtInMinutes_ == minutes) return;
+    rtInMinutes_ = minutes;
+    setToolTip({});   // force the hover tooltip to rebuild in the new unit
+    update();         // raster pixels are unit-agnostic; only axes/readouts re-render
+  }
+
   void PeakMapWidget::zoomToConsensus(std::size_t consensusIndex)
   {
     if (!experiment_ || consensusIndex >= consensusFeatures_.size()) return;
@@ -517,12 +526,16 @@ namespace OpenMSViewer
       spin->setSingleStep((high - low) / 100.0);
       return spin;
     };
-    auto* rtMin = makeSpin(view_.rtMin, dataBounds_.rtMin, dataBounds_.rtMax, 3);
-    auto* rtMax = makeSpin(view_.rtMax, dataBounds_.rtMin, dataBounds_.rtMax, 3);
+    // RT spins display in the current unit; values are converted back to seconds
+    // (canonical) before navigating.
+    const double rtFactor = RtUnit::scale(rtInMinutes_);
+    const int rtDecimals = rtInMinutes_ ? 4 : 3;
+    auto* rtMin = makeSpin(view_.rtMin / rtFactor, dataBounds_.rtMin / rtFactor, dataBounds_.rtMax / rtFactor, rtDecimals);
+    auto* rtMax = makeSpin(view_.rtMax / rtFactor, dataBounds_.rtMin / rtFactor, dataBounds_.rtMax / rtFactor, rtDecimals);
     auto* mzMin = makeSpin(view_.mzMin, dataBounds_.mzMin, dataBounds_.mzMax, 5);
     auto* mzMax = makeSpin(view_.mzMax, dataBounds_.mzMin, dataBounds_.mzMax, 5);
-    form->addRow(tr("RT min (s)"), rtMin);
-    form->addRow(tr("RT max (s)"), rtMax);
+    form->addRow(tr("RT min (%1)").arg(RtUnit::unit(rtInMinutes_)), rtMin);
+    form->addRow(tr("RT max (%1)").arg(RtUnit::unit(rtInMinutes_)), rtMax);
     form->addRow(tr("m/z min"), mzMin);
     form->addRow(tr("m/z max"), mzMax);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
@@ -533,7 +546,8 @@ namespace OpenMSViewer
     // normalize() would silently expand an equal pair into a 1-unit interval).
     if (dialog.exec() == QDialog::Accepted
         && rtMax->value() > rtMin->value() && mzMax->value() > mzMin->value())
-      applyRange({rtMin->value(), rtMax->value(), mzMin->value(), mzMax->value()}, true);
+      applyRange({rtMin->value() * rtFactor, rtMax->value() * rtFactor,
+                  mzMin->value(), mzMax->value()}, true);
   }
 
   void PeakMapWidget::applyRange(const PlotRange& range, bool remember)
@@ -655,7 +669,8 @@ namespace OpenMSViewer
 
       const QString markerLabel = selectedMarkerMz_
         ? tr("MS%1 · precursor m/z %2").arg(selectedMsLevel_).arg(*selectedMarkerMz_, 0, 'f', 4)
-        : tr("MS%1 · RT %2 s").arg(selectedMsLevel_).arg(selectedRt_, 0, 'f', 1);
+        : tr("MS%1 · RT %2 %3").arg(selectedMsLevel_)
+            .arg(RtUnit::format(selectedRt_, rtInMinutes_, 1)).arg(RtUnit::unit(rtInMinutes_));
       painter.setPen(markerColor);
       const int markerLabelWidth = painter.fontMetrics().horizontalAdvance(markerLabel);
       if (axesSwapped_)
@@ -749,8 +764,9 @@ namespace OpenMSViewer
       painter.drawLine(dragStart_, dragCurrent_);
       const QPointF start = dataAt(dragStart_);
       const QPointF end = dataAt(dragCurrent_);
-      const QString label = tr("ΔRT %1 s   Δm/z %2")
-                              .arg(std::abs(end.x() - start.x()), 0, 'f', 2)
+      const QString label = tr("ΔRT %1 %2   Δm/z %3")
+                              .arg(RtUnit::format(std::abs(end.x() - start.x()), rtInMinutes_))
+                              .arg(RtUnit::unit(rtInMinutes_))
                               .arg(std::abs(end.y() - start.y()), 0, 'f', 4);
       const QRect labelRect = painter.fontMetrics().boundingRect(label).adjusted(-7, -4, 7, 4);
       QRect placed = labelRect;
@@ -766,14 +782,33 @@ namespace OpenMSViewer
     painter.setPen(QPen(palette().color(QPalette::Mid), 1));
     painter.drawRect(area);
 
-    const auto xTicks = axesSwapped_ ? PlotAxis::niceTicks(view_.mzMin, view_.mzMax, 7)
-                                     : PlotAxis::niceTicks(view_.rtMin, view_.rtMax, 7);
-    const auto yTicks = axesSwapped_ ? PlotAxis::niceTicks(view_.rtMin, view_.rtMax, 7)
-                                     : PlotAxis::niceTicks(view_.mzMin, view_.mzMax, 7);
+    // RT ticks: compute "nice" numbers on the DISPLAY (minutes) range so labels are
+    // round, then map each back to seconds for pixel positioning (factor == 1 in the
+    // seconds case, so this is a no-op there).
+    const double rtFactor = RtUnit::scale(rtInMinutes_);
+    const auto rtTicksSeconds = [&]
+    {
+      auto ticks = PlotAxis::niceTicks(view_.rtMin / rtFactor, view_.rtMax / rtFactor, 7);
+      for (double& tick : ticks) tick *= rtFactor;
+      return ticks;
+    }();
+    const auto mzTicks = PlotAxis::niceTicks(view_.mzMin, view_.mzMax, 7);
+
+    const auto& xTicks = axesSwapped_ ? mzTicks : rtTicksSeconds;
+    const auto& yTicks = axesSwapped_ ? rtTicksSeconds : mzTicks;
     const double xMin = axesSwapped_ ? view_.mzMin : view_.rtMin;
     const double xSpan = axesSwapped_ ? view_.mzSpan() : view_.rtSpan();
     const double yMin = axesSwapped_ ? view_.rtMin : view_.mzMin;
     const double ySpan = axesSwapped_ ? view_.rtSpan() : view_.mzSpan();
+    const bool xIsRt = !axesSwapped_;
+    const bool yIsRt = axesSwapped_;
+
+    // RT tick text is the value in display units (seconds ÷ factor), with precision
+    // matched to the displayed span; m/z is labelled as before.
+    const auto labelFor = [&](double value, double span, bool isRt)
+    {
+      return isRt ? tickLabel(value / rtFactor, span / rtFactor) : tickLabel(value, span);
+    };
 
     painter.setPen(palette().color(QPalette::Text));
     for (double value : xTicks)
@@ -781,22 +816,22 @@ namespace OpenMSViewer
       const int x = area.left() + static_cast<int>((value - xMin) / xSpan * area.width());
       painter.drawLine(x, area.bottom(), x, area.bottom() + 5);
       painter.drawText(QRect(x - 42, area.bottom() + 7, 84, 20), Qt::AlignHCenter | Qt::AlignTop,
-                       tickLabel(value, xSpan));
+                       labelFor(value, xSpan, xIsRt));
     }
     for (double value : yTicks)
     {
       const int y = area.bottom() - static_cast<int>((value - yMin) / ySpan * area.height());
       painter.drawLine(area.left() - 5, y, area.left(), y);
       painter.drawText(QRect(2, y - 10, area.left() - 10, 20), Qt::AlignRight | Qt::AlignVCenter,
-                       tickLabel(value, ySpan));
+                       labelFor(value, ySpan, yIsRt));
     }
 
     painter.drawText(QRect(area.left(), area.bottom() + 30, area.width(), 20), Qt::AlignCenter,
-                     axesSwapped_ ? tr("m/z") : tr("Retention time (s)"));
+                     axesSwapped_ ? tr("m/z") : RtUnit::axisTitle(rtInMinutes_));
     painter.translate(16, area.center().y());
     painter.rotate(-90);
     painter.drawText(QRect(-area.height() / 2, -10, area.height(), 20), Qt::AlignCenter,
-                     axesSwapped_ ? tr("Retention time (s)") : tr("m/z"));
+                     axesSwapped_ ? RtUnit::axisTitle(rtInMinutes_) : tr("m/z"));
     painter.restore();
   }
 
@@ -1339,9 +1374,10 @@ namespace OpenMSViewer
         if (nearest && *nearest < features_.size())
         {
           const FeatureRecord& feature = features_[*nearest];
-          setToolTip(tr("Feature #%1\nRT %2 s · m/z %3\nIntensity %4 · charge %5")
+          setToolTip(tr("Feature #%1\nRT %2 %3 · m/z %4\nIntensity %5 · charge %6")
                        .arg(feature.index)
-                       .arg(feature.rt, 0, 'f', 2)
+                       .arg(RtUnit::format(feature.rt, rtInMinutes_))
+                       .arg(RtUnit::unit(rtInMinutes_))
                        .arg(feature.mz, 0, 'f', 4)
                        .arg(feature.intensity, 0, 'e', 2)
                        .arg(feature.charge));
@@ -1351,9 +1387,10 @@ namespace OpenMSViewer
         {
           const IdentificationRecord& identification = identifications_[*nearestId];
           const QString sequence = identification.bestHit() ? identification.bestHit()->sequence : tr("No hit");
-          setToolTip(tr("Identification #%1\nRT %2 s · m/z %3\n%4")
+          setToolTip(tr("Identification #%1\nRT %2 %3 · m/z %4\n%5")
                        .arg(identification.index)
-                       .arg(identification.rt, 0, 'f', 2)
+                       .arg(RtUnit::format(identification.rt, rtInMinutes_))
+                       .arg(RtUnit::unit(rtInMinutes_))
                        .arg(identification.mz, 0, 'f', 4)
                        .arg(sequence));
           setCursor(Qt::PointingHandCursor);
@@ -1364,10 +1401,11 @@ namespace OpenMSViewer
           QString window = tr("no isolation window");
           if (marker.upperMz > marker.lowerMz)
             window = tr("window %1–%2").arg(marker.lowerMz, 0, 'f', 2).arg(marker.upperMz, 0, 'f', 2);
-          setToolTip(tr("MS%1 precursor · scan #%2\nRT %3 s · m/z %4 · charge %5\n%6")
+          setToolTip(tr("MS%1 precursor · scan #%2\nRT %3 %4 · m/z %5 · charge %6\n%7")
                        .arg(marker.msLevel)
                        .arg(marker.spectrumIndex + 1)
-                       .arg(marker.rt, 0, 'f', 2)
+                       .arg(RtUnit::format(marker.rt, rtInMinutes_))
+                       .arg(RtUnit::unit(rtInMinutes_))
                        .arg(marker.mz, 0, 'f', 4)
                        .arg(marker.charge)
                        .arg(window));

@@ -26,6 +26,7 @@ namespace OpenMSViewer
                  double libraryRt);
     void setShowAllTransitions(bool showAll);
     void setSmoothing(bool smooth);
+    void setRtInMinutes(bool minutes);
     void clear();
 
   protected:
@@ -49,6 +50,7 @@ namespace OpenMSViewer
     double libraryRt_{0.0};
     bool showAll_{false};
     bool smooth_{false};
+    bool rtInMinutes_{false};
     int topFragments_{6};
   };
 }

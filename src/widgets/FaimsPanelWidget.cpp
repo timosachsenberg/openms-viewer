@@ -1,5 +1,6 @@
 #include "widgets/FaimsPanelWidget.h"
 
+#include "model/RtUnit.h"
 #include "plot/PeakMapRasterizer.h"
 #include "plot/PlotTheme.h"
 
@@ -211,6 +212,13 @@ namespace OpenMSViewer
     update();
   }
 
+  void FaimsTracePlotWidget::setRtInMinutes(bool minutes)
+  {
+    if (rtInMinutes_ == minutes) return;
+    rtInMinutes_ = minutes;
+    update();
+  }
+
   int FaimsTracePlotWidget::selectedChannel() const noexcept { return selectedChannel_; }
 
   QRect FaimsTracePlotWidget::plotRect() const
@@ -291,10 +299,10 @@ namespace OpenMSViewer
       const double fraction = tick / 5.0;
       painter.drawText(QRect(area.left() + static_cast<int>(fraction * area.width()) - 35,
                              area.bottom() + 4, 70, 18), Qt::AlignHCenter | Qt::AlignTop,
-                       QString::number(rtMin + fraction * (rtMax - rtMin), 'f', 1));
+                       RtUnit::format(rtMin + fraction * (rtMax - rtMin), rtInMinutes_, 1));
     }
     painter.drawText(QRect(area.left(), height() - 22, area.width(), 18), Qt::AlignCenter,
-                     tr("Retention time (s)"));
+                     RtUnit::axisTitle(rtInMinutes_));
   }
 
   void FaimsTracePlotWidget::mousePressEvent(QMouseEvent* event)
@@ -351,7 +359,9 @@ namespace OpenMSViewer
     table_ = new QTableWidget(this);
     table_->setObjectName(QStringLiteral("faimsChannelTable"));
     table_->setColumnCount(4);
-    table_->setHorizontalHeaderLabels({tr("CV (V)"), tr("MS1 scans"), tr("RT range (s)"), tr("Total intensity")});
+    table_->setHorizontalHeaderLabels({tr("CV (V)"), tr("MS1 scans"),
+                                       tr("RT range (%1)").arg(RtUnit::unit(rtInMinutes_)),
+                                       tr("Total intensity")});
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->verticalHeader()->setVisible(false);
@@ -389,9 +399,7 @@ namespace OpenMSViewer
       const auto& channel = channels_[index];
       selector_->addItem(tr("CV %1 V").arg(channel.compensationVoltage, 0, 'f', 1),
                          static_cast<int>(index));
-      const QString rtRange = channel.tic.empty() ? QStringLiteral("-")
-        : QStringLiteral("%1–%2").arg(channel.tic.front().rt, 0, 'f', 2)
-                                      .arg(channel.tic.back().rt, 0, 'f', 2);
+      const QString rtRange = rtRangeText(channel);
       table_->setItem(static_cast<int>(index), 0,
                       new QTableWidgetItem(QString::number(channel.compensationVoltage, 'f', 1)));
       table_->setItem(static_cast<int>(index), 1,
@@ -422,6 +430,25 @@ namespace OpenMSViewer
   {
     plot_->setPeakMapRange(range);
     peakMaps_->setViewRange(range);
+  }
+
+  QString FaimsPanelWidget::rtRangeText(const FaimsChannelRecord& channel) const
+  {
+    return channel.tic.empty() ? QStringLiteral("-")
+      : QStringLiteral("%1–%2").arg(RtUnit::format(channel.tic.front().rt, rtInMinutes_))
+                                    .arg(RtUnit::format(channel.tic.back().rt, rtInMinutes_));
+  }
+
+  void FaimsPanelWidget::setRtInMinutes(bool minutes)
+  {
+    if (rtInMinutes_ == minutes) return;
+    rtInMinutes_ = minutes;
+    plot_->setRtInMinutes(minutes);
+    if (auto* header = table_->horizontalHeaderItem(2))
+      header->setText(tr("RT range (%1)").arg(RtUnit::unit(rtInMinutes_)));
+    for (std::size_t index = 0; index < channels_.size(); ++index)
+      if (auto* item = table_->item(static_cast<int>(index), 2))
+        item->setText(rtRangeText(channels_[index]));
   }
 
   void FaimsPanelWidget::setSelectedChannel(int channelIndex)

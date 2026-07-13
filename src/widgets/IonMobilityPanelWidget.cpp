@@ -1,5 +1,6 @@
 #include "widgets/IonMobilityPanelWidget.h"
 
+#include "model/RtUnit.h"
 #include "model/TraceSmoothing.h"
 #include "plot/PlotAxis.h"
 #include "plot/PlotTheme.h"
@@ -660,12 +661,7 @@ namespace OpenMSViewer
     const QSignalBlocker blocker(frameSelector_);
     frameSelector_->clear();
     for (const auto& frame : frames_)
-    {
-      QString label = tr("MS%1 · #%2 · RT %3 s")
-        .arg(frame.msLevel).arg(frame.spectrumIndex).arg(frame.rt, 0, 'f', 2);
-      if (frame.precursorMz) label += tr(" · %1 m/z").arg(*frame.precursorMz, 0, 'f', 4);
-      frameSelector_->addItem(label, QVariant::fromValue<qulonglong>(frame.spectrumIndex));
-    }
+      frameSelector_->addItem(frameLabel(frame), QVariant::fromValue<qulonglong>(frame.spectrumIndex));
     int first = -1;
     for (std::size_t position = 0; position < frames_.size(); ++position)
     {
@@ -719,6 +715,27 @@ namespace OpenMSViewer
     plot_->setColorMap(static_cast<PeakMapColorMap>(std::clamp(colorMapIndex, 0, 6)));
   }
 
+  void IonMobilityPanelWidget::setRtInMinutes(bool minutes)
+  {
+    if (rtInMinutes_ == minutes) return;
+    rtInMinutes_ = minutes;
+    // Re-render the frame RT shown in the selector items and the info readout.
+    const QSignalBlocker blocker(frameSelector_);
+    for (int i = 0; i < frameSelector_->count()
+                    && static_cast<std::size_t>(i) < frames_.size(); ++i)
+      frameSelector_->setItemText(i, frameLabel(frames_[static_cast<std::size_t>(i)]));
+    updateInfo();
+  }
+
+  QString IonMobilityPanelWidget::frameLabel(const IonMobilityFrameRecord& frame) const
+  {
+    QString label = tr("MS%1 · #%2 · RT %3 %4")
+      .arg(frame.msLevel).arg(frame.spectrumIndex)
+      .arg(RtUnit::format(frame.rt, rtInMinutes_), RtUnit::unit(rtInMinutes_));
+    if (frame.precursorMz) label += tr(" · %1 m/z").arg(*frame.precursorMz, 0, 'f', 4);
+    return label;
+  }
+
   std::size_t IonMobilityPanelWidget::frameCount() const noexcept { return frames_.size(); }
 
   std::optional<std::size_t> IonMobilityPanelWidget::selectedSpectrumIndex() const noexcept
@@ -757,8 +774,9 @@ namespace OpenMSViewer
       return;
     }
     const auto& frame = frames_[static_cast<std::size_t>(position)];
-    QString text = tr("MS%1 frame #%2 · RT %3 s")
-      .arg(frame.msLevel).arg(frame.spectrumIndex).arg(frame.rt, 0, 'f', 2);
+    QString text = tr("MS%1 frame #%2 · RT %3 %4")
+      .arg(frame.msLevel).arg(frame.spectrumIndex)
+      .arg(RtUnit::format(frame.rt, rtInMinutes_), RtUnit::unit(rtInMinutes_));
     if (frame.isolationWindowLower && frame.isolationWindowUpper)
       text += tr(" · isolation %1–%2 m/z")
         .arg(*frame.isolationWindowLower, 0, 'f', 2)

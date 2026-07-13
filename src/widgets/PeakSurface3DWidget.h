@@ -47,6 +47,7 @@ namespace OpenMSViewer
                  PeakMapColorMap colorMap, unsigned int msLevel = 1);
     void clear();
     void resetOrientation();
+    void setRtInMinutes(bool minutes);
 
   protected:
     void paintEvent(QPaintEvent* event) override;
@@ -66,6 +67,7 @@ namespace OpenMSViewer
     double pitch_{0.9};    // radians, elevation of the camera
     double zoom_{1.0};
     bool dragging_{false};
+    bool rtInMinutes_{false};
     QPoint dragLast_;
     QFutureWatcher<SurfaceGrid> watcher_;
     std::uint64_t desiredGeneration_{0};

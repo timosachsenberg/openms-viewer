@@ -33,6 +33,7 @@ namespace OpenMSViewer
     void selectSpectrum(std::size_t spectrumIndex,
                         std::optional<std::size_t> identificationIndex = std::nullopt,
                         std::optional<std::size_t> hitIndex = std::nullopt);
+    void setRtInMinutes(bool minutes);
     [[nodiscard]] int filteredRowCount() const noexcept;
 
   signals:

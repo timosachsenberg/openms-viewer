@@ -1,5 +1,6 @@
 #include "widgets/OswPanel.h"
 
+#include "model/RtUnit.h"
 #include "widgets/TransitionGroupPlot.h"
 
 #include <QAbstractTableModel>
@@ -99,6 +100,15 @@ namespace OpenMSViewer
       endResetModel();
     }
 
+    void setRtInMinutes(bool minutes)
+    {
+      if (rtInMinutes_ == minutes) return;
+      rtInMinutes_ = minutes;
+      emit headerDataChanged(Qt::Horizontal, ApexRt, Right);
+      if (!rows_.empty())
+        emit dataChanged(index(0, ApexRt), index(rowCount() - 1, Right), {Qt::DisplayRole});
+    }
+
     int rowCount(const QModelIndex& parent = {}) const override
     { return parent.isValid() ? 0 : static_cast<int>(rows_.size()); }
     int columnCount(const QModelIndex& = {}) const override { return ColumnCount; }
@@ -109,7 +119,7 @@ namespace OpenMSViewer
       switch (section)
       {
         case Rank:   return QStringLiteral("Rank");
-        case ApexRt: return QStringLiteral("Apex RT");
+        case ApexRt: return QStringLiteral("Apex RT (%1)").arg(RtUnit::unit(rtInMinutes_));
         case Left:   return QStringLiteral("Left");
         case Right:  return QStringLiteral("Right");
         case Area:   return QStringLiteral("Area");
@@ -133,9 +143,9 @@ namespace OpenMSViewer
       switch (index.column())
       {
         case Rank:   return group.rank ? QVariant(*group.rank) : (sortRole ? QVariant(1 << 30) : QVariant(QStringLiteral("–")));
-        case ApexRt: return sortRole ? QVariant(group.apexRt) : QVariant(QString::number(group.apexRt, 'f', 1));
-        case Left:   return sortRole ? QVariant(group.leftWidth) : QVariant(QString::number(group.leftWidth, 'f', 1));
-        case Right:  return sortRole ? QVariant(group.rightWidth) : QVariant(QString::number(group.rightWidth, 'f', 1));
+        case ApexRt: return sortRole ? QVariant(group.apexRt) : QVariant(RtUnit::format(group.apexRt, rtInMinutes_, 1));
+        case Left:   return sortRole ? QVariant(group.leftWidth) : QVariant(RtUnit::format(group.leftWidth, rtInMinutes_, 1));
+        case Right:  return sortRole ? QVariant(group.rightWidth) : QVariant(RtUnit::format(group.rightWidth, rtInMinutes_, 1));
         case Area:   return optional(group.areaIntensity, 'g', 4);
         case Score:  return optional(group.score, 'g', 4);
         case QValue: return optional(group.qValue, 'g', 3);
@@ -146,6 +156,7 @@ namespace OpenMSViewer
 
   private:
     std::vector<OswPeakGroup> rows_;
+    bool rtInMinutes_{false};
   };
 
   class OswPrecursorFilterProxy final : public QSortFilterProxyModel
@@ -342,6 +353,12 @@ namespace OpenMSViewer
     scoreTable_->setRowCount(0);
     countLabel_->clear();
     chromatogramNote_->clear();
+  }
+
+  void OswPanel::setRtInMinutes(bool minutes)
+  {
+    peakGroupModel_->setRtInMinutes(minutes);
+    plot_->setRtInMinutes(minutes);
   }
 
   void OswPanel::reloadPrecursors()

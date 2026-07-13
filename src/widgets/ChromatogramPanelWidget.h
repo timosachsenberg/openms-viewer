@@ -67,6 +67,7 @@ namespace OpenMSViewer
     void setChromatograms(const std::vector<ChromatogramRecord>& chromatograms);
     void clear();
     void setPeakMapRange(const PlotRange& range);
+    void setRtInMinutes(bool minutes);
     [[nodiscard]] std::size_t selectedChromatogramCount() const noexcept;
     [[nodiscard]] ChromatogramPlotWidget* plot() const noexcept;
 

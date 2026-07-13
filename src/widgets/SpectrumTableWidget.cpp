@@ -1,5 +1,7 @@
 #include "widgets/SpectrumTableWidget.h"
 
+#include "model/RtUnit.h"
+
 #include <QAbstractTableModel>
 #include <QCheckBox>
 #include <QComboBox>
@@ -77,6 +79,15 @@ namespace OpenMSViewer
       allHits_ = enabled;
       rebuildRows();
       endResetModel();
+    }
+
+    void setRtInMinutes(bool minutes)
+    {
+      if (rtInMinutes_ == minutes) return;
+      rtInMinutes_ = minutes;
+      emit headerDataChanged(Qt::Horizontal, Rt, Rt);
+      if (rowCount() > 0)
+        emit dataChanged(index(0, Rt), index(rowCount() - 1, Rt), {Qt::DisplayRole});
     }
 
     [[nodiscard]] const SpectrumRecord* spectrumForRow(int row) const noexcept
@@ -163,7 +174,7 @@ namespace OpenMSViewer
       switch (section)
       {
         case Index: return QStringLiteral("#");
-        case Rt: return QStringLiteral("RT (s)");
+        case Rt: return RtUnit::columnHeader(rtInMinutes_);
         case MsLevel: return QStringLiteral("MS");
         case CompensationVoltage: return QStringLiteral("CV");
         case PeakCount: return QStringLiteral("Peaks");
@@ -218,7 +229,7 @@ namespace OpenMSViewer
       switch (index.column())
       {
         case Index: return static_cast<qulonglong>(spectrum->index);
-        case Rt: return QString::number(spectrum->rt, 'f', 2);
+        case Rt: return RtUnit::format(spectrum->rt, rtInMinutes_);
         case MsLevel: return spectrum->msLevel;
         case CompensationVoltage:
           return spectrum->compensationVoltage
@@ -290,6 +301,7 @@ namespace OpenMSViewer
     std::vector<IdentificationRecord> identifications_;
     std::vector<Row> rows_;
     bool allHits_{false};
+    bool rtInMinutes_{false};
   };
 
   class SpectrumFilterProxyModel final : public QSortFilterProxyModel
@@ -468,6 +480,8 @@ namespace OpenMSViewer
 
   int SpectrumTableWidget::filteredRowCount() const noexcept { return proxy_->rowCount(); }
 
+  void SpectrumTableWidget::setRtInMinutes(bool minutes) { model_->setRtInMinutes(minutes); }
+
   void SpectrumTableWidget::updateFilters()
   {
     auto optionalNumber = [](const QString& text) -> std::optional<double>
@@ -520,7 +534,10 @@ namespace OpenMSViewer
     {
       if (table_->isColumnHidden(column)) continue;
       if (!first) stream << '\t';
-      stream << model_->headerData(column, Qt::Horizontal, Qt::DisplayRole).toString();
+      // Export stays canonical seconds regardless of the on-screen RT unit toggle.
+      stream << (column == SpectrumTableModel::Rt
+                   ? RtUnit::columnHeader(false)
+                   : model_->headerData(column, Qt::Horizontal, Qt::DisplayRole).toString());
       first = false;
     }
     stream << '\n';
@@ -531,7 +548,10 @@ namespace OpenMSViewer
       {
         if (table_->isColumnHidden(column)) continue;
         if (!first) stream << '\t';
-        QString value = proxy_->data(proxy_->index(row, column), Qt::DisplayRole).toString();
+        // RT is exported in canonical seconds; UserRole carries the raw seconds value.
+        QString value = column == SpectrumTableModel::Rt
+          ? RtUnit::format(proxy_->data(proxy_->index(row, column), Qt::UserRole).toDouble(), false)
+          : proxy_->data(proxy_->index(row, column), Qt::DisplayRole).toString();
         value.replace('\t', ' ');
         value.replace('\n', ' ');
         stream << value;

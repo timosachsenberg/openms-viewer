@@ -29,6 +29,7 @@ namespace OpenMSViewer
     void setIdentifications(const std::vector<IdentificationRecord>& identifications);
     void clear();
     void selectIdentification(std::size_t identificationIndex, std::size_t hitIndex = 0);
+    void setRtInMinutes(bool minutes);
 
   signals:
     void identificationActivated(std::size_t identificationIndex, std::size_t hitIndex);
@@ -52,5 +53,6 @@ namespace OpenMSViewer
     QLabel* countLabel_{nullptr};
     QPlainTextEdit* details_{nullptr};
     bool synchronizingSelection_{false};
+    bool rtInMinutes_{false};
   };
 }

@@ -1,5 +1,7 @@
 #include "widgets/SpectrumWidget.h"
 
+#include "model/RtUnit.h"
+
 #include <QPainter>
 #include <QFontMetrics>
 #include <QInputDialog>
@@ -194,6 +196,13 @@ namespace OpenMSViewer
   void SpectrumWidget::setAutoYScale(bool enabled)
   {
     autoYScale_ = enabled;
+    update();
+  }
+
+  void SpectrumWidget::setRtInMinutes(bool minutes)
+  {
+    if (rtInMinutes_ == minutes) return;
+    rtInMinutes_ = minutes;
     update();
   }
 
@@ -847,10 +856,11 @@ namespace OpenMSViewer
     QString title = standaloneSpectrum_
       ? tr("#%1/%2   MS%3   pixel spectrum   %4 peaks")
           .arg(spectrumIndex_ + 1).arg(totalSpectra_).arg(spectrum.getMSLevel()).arg(spectrum.size())
-      : tr("#%1   MS%2   RT %3 s   %4 peaks")
+      : tr("#%1   MS%2   RT %3 %4   %5 peaks")
                       .arg(spectrumIndex_ + 1)
                       .arg(spectrum.getMSLevel())
-                      .arg(spectrum.getRT(), 0, 'f', 2)
+                      .arg(RtUnit::format(spectrum.getRT(), rtInMinutes_))
+                      .arg(RtUnit::unit(rtInMinutes_))
                       .arg(spectrum.size());
     if (annotated)
       title += tr("   %1 (z=%2)   %3/%4 ions · %5% coverage")

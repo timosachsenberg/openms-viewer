@@ -1,5 +1,6 @@
 #include "widgets/ConsensusPanel.h"
 
+#include "model/RtUnit.h"
 #include "widgets/ConsensusQuantChart.h"
 
 #include <QAbstractTableModel>
@@ -36,6 +37,16 @@ namespace OpenMSViewer
     [[nodiscard]] const ConsensusFeatureRecord& row(int index) const
     { return rows_[static_cast<std::size_t>(index)]; }
 
+    void setRtInMinutes(bool minutes)
+    {
+      if (rtInMinutes_ == minutes) return;
+      rtInMinutes_ = minutes;
+      emit headerDataChanged(Qt::Horizontal, Rt, Rt);
+      if (!rows_.empty())
+        emit dataChanged(index(0, Rt), index(static_cast<int>(rows_.size()) - 1, Rt),
+                         {Qt::DisplayRole});
+    }
+
     int rowCount(const QModelIndex& parent = {}) const override
     { return parent.isValid() ? 0 : static_cast<int>(rows_.size()); }
     int columnCount(const QModelIndex& = {}) const override { return ColumnCount; }
@@ -45,7 +56,7 @@ namespace OpenMSViewer
       if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
       switch (section)
       {
-        case Rt:        return QStringLiteral("RT");
+        case Rt:        return RtUnit::columnHeader(rtInMinutes_);
         case Mz:        return QStringLiteral("m/z");
         case Charge:    return QStringLiteral("z");
         case Quality:   return QStringLiteral("Quality");
@@ -64,7 +75,7 @@ namespace OpenMSViewer
       const bool sortRole = role == Qt::UserRole;
       switch (index.column())
       {
-        case Rt:        return sortRole ? QVariant(record.rt) : QVariant(QString::number(record.rt, 'f', 1));
+        case Rt:        return sortRole ? QVariant(record.rt) : QVariant(RtUnit::format(record.rt, rtInMinutes_, 1));
         case Mz:        return sortRole ? QVariant(record.mz) : QVariant(QString::number(record.mz, 'f', 4));
         case Charge:    return record.charge;
         case Quality:   return sortRole ? QVariant(record.quality) : QVariant(QString::number(record.quality, 'g', 3));
@@ -79,6 +90,7 @@ namespace OpenMSViewer
 
   private:
     std::vector<ConsensusFeatureRecord> rows_;
+    bool rtInMinutes_{false};
   };
 
   class ConsensusFilterProxy final : public QSortFilterProxyModel
@@ -205,6 +217,11 @@ namespace OpenMSViewer
     chart_->clear();
     detailLabel_->clear();
     countLabel_->clear();
+  }
+
+  void ConsensusPanel::setRtInMinutes(bool minutes)
+  {
+    model_->setRtInMinutes(minutes);
   }
 
   void ConsensusPanel::selectFeature(std::size_t index)

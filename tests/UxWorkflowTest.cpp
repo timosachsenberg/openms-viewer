@@ -3,7 +3,10 @@
 #include "MainWindow.h"
 #include "model/ChromatogramSource.h"
 #include "model/OswStore.h"
+#include "model/RtUnit.h"
+#include "model/RunData.h"
 #include "widgets/ChromatogramPanelWidget.h"
+#include "widgets/FeatureTableWidget.h"
 #include "widgets/LoadingOverlayWidget.h"
 #include "widgets/PeakMapWidget.h"
 #include "widgets/ToastOverlay.h"
@@ -27,7 +30,9 @@
 #include <QSettings>
 #include <QSignalSpy>
 #include <QSpinBox>
+#include <QAbstractItemModel>
 #include <QStackedWidget>
+#include <QTableView>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
@@ -37,6 +42,39 @@ class UxWorkflowTest final : public QObject
   Q_OBJECT
 
 private slots:
+  void rtInMinutesFormatsHelperAndTable()
+  {
+    // The shared helper is the single source of truth for RT display.
+    QCOMPARE(OpenMSViewer::RtUnit::format(120.0, false), QStringLiteral("120.00"));
+    QCOMPARE(OpenMSViewer::RtUnit::format(120.0, true), QStringLiteral("2.000"));
+    QCOMPARE(OpenMSViewer::RtUnit::columnHeader(false), QStringLiteral("RT (s)"));
+    QCOMPARE(OpenMSViewer::RtUnit::columnHeader(true), QStringLiteral("RT (min)"));
+
+    // A model-backed table re-renders its RT column header + values on toggle.
+    OpenMSViewer::FeatureTableWidget table;
+    OpenMSViewer::FeatureRecord record;
+    record.index = 0;
+    record.rt = 120.0;
+    record.mz = 500.0;
+    record.charge = 2;
+    record.intensity = 1000.0;
+    table.setFeatures({record});
+    auto* view = table.findChild<QTableView*>(QStringLiteral("featureTable"));
+    QVERIFY(view != nullptr && view->model() != nullptr);
+    QAbstractItemModel* model = view->model();
+    int rtColumn = -1;
+    for (int column = 0; column < model->columnCount(); ++column)
+      if (model->headerData(column, Qt::Horizontal).toString().contains(QStringLiteral("RT")))
+      { rtColumn = column; break; }
+    QVERIFY(rtColumn >= 0);
+    QVERIFY(model->headerData(rtColumn, Qt::Horizontal).toString().contains(QStringLiteral("(s)")));
+    QCOMPARE(model->index(0, rtColumn).data().toString(), QStringLiteral("120.00"));
+
+    table.setRtInMinutes(true);
+    QVERIFY(model->headerData(rtColumn, Qt::Horizontal).toString().contains(QStringLiteral("(min)")));
+    QCOMPARE(model->index(0, rtColumn).data().toString(), QStringLiteral("2.000"));
+  }
+
   void dockPanelMoveActionsRedockVertically()
   {
     OpenMSViewer::MainWindow window;

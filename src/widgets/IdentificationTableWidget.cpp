@@ -1,5 +1,7 @@
 #include "widgets/IdentificationTableWidget.h"
 
+#include "model/RtUnit.h"
+
 #include <QAbstractTableModel>
 #include <QCheckBox>
 #include <QComboBox>
@@ -19,6 +21,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <optional>
 
@@ -46,6 +49,15 @@ namespace OpenMSViewer
       showAllHits_ = show;
       rebuildRows_();
       endResetModel();
+    }
+
+    void setRtInMinutes(bool minutes)
+    {
+      if (rtInMinutes_ == minutes) return;
+      rtInMinutes_ = minutes;
+      emit headerDataChanged(Qt::Horizontal, Rt, Rt);
+      if (rowCount() > 0)
+        emit dataChanged(index(0, Rt), index(rowCount() - 1, Rt), {Qt::DisplayRole});
     }
 
     [[nodiscard]] const IdentificationRecord* identificationForRow(int row) const noexcept
@@ -96,7 +108,7 @@ namespace OpenMSViewer
       switch (section)
       {
         case Index: return QStringLiteral("#");
-        case Rt: return QStringLiteral("RT (s)");
+        case Rt: return RtUnit::columnHeader(rtInMinutes_);
         case Mz: return QStringLiteral("m/z");
         case Sequence: return QStringLiteral("Sequence");
         case Charge: return QStringLiteral("Z");
@@ -144,8 +156,8 @@ namespace OpenMSViewer
       switch (index.column())
       {
         case Index: return static_cast<qulonglong>(identification->index);
-        case Rt: return std::isfinite(identification->rt) ? QString::number(identification->rt, 'f', 2)
-                                                        : QStringLiteral("-");
+        case Rt: return std::isfinite(identification->rt)
+          ? RtUnit::format(identification->rt, rtInMinutes_) : QStringLiteral("-");
         case Mz: return std::isfinite(identification->mz) ? QString::number(identification->mz, 'f', 4)
                                                          : QStringLiteral("-");
         case Sequence: return hit ? hit->sequence : QStringLiteral("-");
@@ -175,6 +187,7 @@ namespace OpenMSViewer
     std::vector<IdentificationRecord> identifications_;
     std::vector<Row> rows_;
     bool showAllHits_{false};
+    bool rtInMinutes_{false};
   };
 
   class IdentificationFilterProxy final : public QSortFilterProxyModel
@@ -313,6 +326,16 @@ namespace OpenMSViewer
     updateDetails(row);
   }
 
+  void IdentificationTableWidget::setRtInMinutes(bool minutes)
+  {
+    if (rtInMinutes_ == minutes) return;
+    rtInMinutes_ = minutes;
+    model_->setRtInMinutes(minutes);
+    // Refresh the details pane so its RT readout re-renders in the new unit.
+    const QModelIndex current = table_->selectionModel()->currentIndex();
+    if (current.isValid()) updateDetails(proxy_->mapToSource(current).row());
+  }
+
   void IdentificationTableWidget::updateFilters()
   {
     auto* proxy = static_cast<IdentificationFilterProxy*>(proxy_);
@@ -344,7 +367,15 @@ namespace OpenMSViewer
       for (int column = 0; column < IdentificationTableModel::ColumnCount; ++column)
       {
         if (column) stream << '\t';
-        stream << proxy_->index(row, column).data(Qt::DisplayRole).toString();
+        const QModelIndex cell = proxy_->index(row, column);
+        if (column == IdentificationTableModel::Rt)
+        {
+          // Export stays canonical: RT in seconds regardless of the display toggle.
+          const double rt = cell.data(Qt::UserRole).toDouble();
+          stream << (std::isfinite(rt) ? RtUnit::format(rt, false) : QStringLiteral("-"));
+        }
+        else
+          stream << cell.data(Qt::DisplayRole).toString();
       }
       stream << '\n';
     }
@@ -372,9 +403,10 @@ namespace OpenMSViewer
           .arg(*identification->spectrumIndex + 1)
           .arg(identification->spectrumReference);
       else
-        lines << tr("Linked spectrum #%1 · by RT/m·z (ΔRT %2 s · Δm/z %3 Da)")
+        lines << tr("Linked spectrum #%1 · by RT/m·z (ΔRT %2 %3 · Δm/z %4 Da)")
           .arg(*identification->spectrumIndex + 1)
-          .arg(identification->linkRtError, 0, 'f', 3)
+          .arg(RtUnit::format(identification->linkRtError, rtInMinutes_, 3))
+          .arg(RtUnit::unit(rtInMinutes_))
           .arg(identification->linkMzError, 0, 'f', 5);
     }
     for (const auto& [key, value] : identification->metaValues)

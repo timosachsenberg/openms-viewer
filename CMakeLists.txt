@@ -51,6 +51,7 @@ add_library(openms_viewer_core STATIC
   src/model/ImagingDocument.cpp
   src/model/ImagingDocument.h
   src/model/RunData.h
+  src/model/RtUnit.h
   src/model/SelectionController.cpp
   src/model/SelectionController.h
   src/model/ViewerDocument.cpp

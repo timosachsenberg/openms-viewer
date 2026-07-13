@@ -1,5 +1,7 @@
 #include "widgets/PeakSurface3DWidget.h"
 
+#include "model/RtUnit.h"
+
 #include "plot/RasterShading.h"
 
 #include <QtConcurrent/QtConcurrentRun>
@@ -89,6 +91,13 @@ namespace OpenMSViewer
     experiment_.reset();
     grid_ = {};
     ++desiredGeneration_;
+    update();
+  }
+
+  void PeakSurface3DWidget::setRtInMinutes(bool minutes)
+  {
+    if (rtInMinutes_ == minutes) return;
+    rtInMinutes_ = minutes;
     update();
   }
 
@@ -229,8 +238,9 @@ namespace OpenMSViewer
     // Title + orientation hint.
     painter.setPen(palette().color(QPalette::Text));
     painter.drawText(QRect(8, 6, width() - 16, 18), Qt::AlignLeft | Qt::AlignVCenter,
-      tr("3-D surface · RT %1–%2 s · m/z %3–%4")
-        .arg(range_.rtMin, 0, 'f', 1).arg(range_.rtMax, 0, 'f', 1)
+      tr("3-D surface · RT %1–%2 %3 · m/z %4–%5")
+        .arg(RtUnit::format(range_.rtMin, rtInMinutes_, 1), RtUnit::format(range_.rtMax, rtInMinutes_, 1),
+             RtUnit::unit(rtInMinutes_))
         .arg(range_.mzMin, 0, 'f', 2).arg(range_.mzMax, 0, 'f', 2));
     if (watcher_.isRunning())
     {

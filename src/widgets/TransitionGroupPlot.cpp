@@ -1,5 +1,6 @@
 #include "widgets/TransitionGroupPlot.h"
 
+#include "model/RtUnit.h"
 #include "model/TraceSmoothing.h"
 #include "plot/PlotAxis.h"
 
@@ -61,6 +62,13 @@ namespace OpenMSViewer
     if (smooth_ == smooth) return;
     smooth_ = smooth;
     rebuildSmoothing();
+    update();
+  }
+
+  void TransitionGroupPlot::setRtInMinutes(bool minutes)
+  {
+    if (rtInMinutes_ == minutes) return;
+    rtInMinutes_ = minutes;
     update();
   }
 
@@ -177,12 +185,15 @@ namespace OpenMSViewer
     { return area.bottom() - intensity / intensityMax * area.height() * 0.96; };
 
     // Nice-tick RT + intensity gridlines (shared helper, as the TIC/chromatogram).
-    const auto rtTicks = PlotAxis::niceTicks(rtMin, rtMax, 6);
+    // RT ticks are computed on the display-unit range (seconds or minutes) so the
+    // labels are round numbers, then mapped back to seconds for the x mapping.
+    const double rtFactor = RtUnit::scale(rtInMinutes_);
+    const auto rtTicks = PlotAxis::niceTicks(rtMin / rtFactor, rtMax / rtFactor, 6);
     const auto intensityTicks = PlotAxis::niceTicks(0.0, intensityMax, 5);
     painter.setPen(QPen(palette().color(QPalette::Mid), 1.0, Qt::DotLine));
     for (const double tick : rtTicks)
     {
-      const double x = mapX(tick);
+      const double x = mapX(tick * rtFactor);
       if (x >= area.left() - 0.5 && x <= area.right() + 0.5)
         painter.drawLine(QPointF(x, area.top()), QPointF(x, area.bottom()));
     }
@@ -291,7 +302,7 @@ namespace OpenMSViewer
       : std::min(4, static_cast<int>(std::ceil(-std::log10(rtStep))));
     for (const double tick : rtTicks)
     {
-      const double x = mapX(tick);
+      const double x = mapX(tick * rtFactor);
       if (x < area.left() - 0.5 || x > area.right() + 0.5) continue;
       painter.drawLine(QPointF(x, area.bottom()), QPointF(x, area.bottom() + 4.0));
       painter.drawText(QRectF(x - 42.0, area.bottom() + 5.0, 84.0, 15.0),
@@ -305,7 +316,7 @@ namespace OpenMSViewer
                        Qt::AlignRight | Qt::AlignVCenter, QString::number(tick, 'g', 3));
     }
     painter.drawText(QRectF(area.left(), height() - 22.0, area.width(), 18.0),
-                     Qt::AlignCenter, tr("Retention time (s)"));
+                     Qt::AlignCenter, RtUnit::axisTitle(rtInMinutes_));
 
     // Legend: colour-matched fragment ion labels. Entries are measured before
     // drawing (so the last never protrudes); when the row is full the remaining

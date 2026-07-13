@@ -119,6 +119,7 @@ namespace OpenMSViewer
     void setSpectrumMzRange(double minimumMz, double maximumMz, bool reset);
     void setPeakMapMzRange(double minimumMz, double maximumMz);
     void setColorMap(int colorMapIndex);
+    void setRtInMinutes(bool minutes);
     [[nodiscard]] std::size_t frameCount() const noexcept;
     [[nodiscard]] std::optional<std::size_t> selectedSpectrumIndex() const noexcept;
     [[nodiscard]] IonMobilityPlotWidget* plot() const noexcept;
@@ -129,9 +130,11 @@ namespace OpenMSViewer
   private:
     void selectPosition(int position, bool activateSpectrum);
     void updateInfo();
+    [[nodiscard]] QString frameLabel(const IonMobilityFrameRecord& frame) const;
 
     std::shared_ptr<const OpenMS::MSExperiment> experiment_;
     std::vector<IonMobilityFrameRecord> frames_;
+    bool rtInMinutes_{false};
     QComboBox* frameSelector_{nullptr};
     QLabel* info_{nullptr};
     QLabel* range_{nullptr};

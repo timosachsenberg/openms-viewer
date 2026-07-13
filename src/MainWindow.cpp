@@ -2,6 +2,8 @@
 
 #include "model/FormatRegistry.h"
 
+#include "model/RtUnit.h"
+
 #include <OpenMS/FORMAT/BrukerTimsImagingFile.h>
 #include <OpenMS/FORMAT/FileTypes.h>
 #include <OpenMS/KERNEL/ConsensusMap.h>
@@ -361,7 +363,8 @@ namespace OpenMSViewer
       if (featureLoadWatcher_.isRunning()) return;  // a load is replacing the map
       const std::size_t index = document_.addFeature(rt, mz, 0.0, 1);
       selection_.setFeature(index);  // fans out to peak map + table (after featuresChanged)
-      notify(tr("Added feature at RT %1 s · m/z %2").arg(rt, 0, 'f', 1).arg(mz, 0, 'f', 4),
+      notify(tr("Added feature at RT %1 %2 · m/z %3")
+               .arg(RtUnit::format(rt, rtInMinutes(), 1), RtUnit::unit(rtInMinutes())).arg(mz, 0, 'f', 4),
              ToastLevel::Info);
     });
     connect(peakMap_, &PeakMapWidget::featureMoveRequested, this,
@@ -407,7 +410,8 @@ namespace OpenMSViewer
     connect(peakMap_, &PeakMapWidget::cursorPositionChanged, this,
             [this](double rt, double mz, double intensity)
     {
-      QString text = tr("RT %1 s · m/z %2").arg(rt, 0, 'f', 2).arg(mz, 0, 'f', 4);
+      QString text = tr("RT %1 %2 · m/z %3")
+        .arg(RtUnit::format(rt, rtInMinutes()), RtUnit::unit(rtInMinutes())).arg(mz, 0, 'f', 4);
       if (intensity >= 0.0) text += tr(" · I %1").arg(intensity, 0, 'g', 4);
       cursorContext_->setText(text);
     });
@@ -762,8 +766,24 @@ namespace OpenMSViewer
     rtInMinutesAction_ = new QAction(tr("RT in minutes"), this);
     rtInMinutesAction_->setCheckable(true);
     connect(rtInMinutesAction_, &QAction::toggled, tic_, &TicWidget::setRtInMinutes);
-    connect(rtInMinutesAction_, &QAction::toggled,
-            chromatograms_->plot(), &ChromatogramPlotWidget::setRtInMinutes);
+    connect(rtInMinutesAction_, &QAction::toggled, chromatograms_, &ChromatogramPanelWidget::setRtInMinutes);
+    connect(rtInMinutesAction_, &QAction::toggled, peakMap_, &PeakMapWidget::setRtInMinutes);
+    connect(rtInMinutesAction_, &QAction::toggled, spectrum_, &SpectrumWidget::setRtInMinutes);
+    connect(rtInMinutesAction_, &QAction::toggled, features_, &FeatureTableWidget::setRtInMinutes);
+    connect(rtInMinutesAction_, &QAction::toggled, spectra_, &SpectrumTableWidget::setRtInMinutes);
+    connect(rtInMinutesAction_, &QAction::toggled, identifications_, &IdentificationTableWidget::setRtInMinutes);
+    connect(rtInMinutesAction_, &QAction::toggled, consensus_, &ConsensusPanel::setRtInMinutes);
+    connect(rtInMinutesAction_, &QAction::toggled, faims_, &FaimsPanelWidget::setRtInMinutes);
+    connect(rtInMinutesAction_, &QAction::toggled, ionMobility_, &IonMobilityPanelWidget::setRtInMinutes);
+    connect(rtInMinutesAction_, &QAction::toggled, osw_, &OswPanel::setRtInMinutes);
+    connect(rtInMinutesAction_, &QAction::toggled, metadata_, &MetadataBrowserWidget::setRtInMinutes);
+    connect(rtInMinutesAction_, &QAction::toggled, surface3D_, &PeakSurface3DWidget::setRtInMinutes);
+    // Refresh MainWindow's own cached RT readouts (status bar / context labels).
+    connect(rtInMinutesAction_, &QAction::toggled, this, [this]
+    {
+      updateSpectrumStatus();
+      if (peakMap_ && peakMap_->hasExperiment()) applyPeakMapViewRange(peakMap_->viewRange());
+    });
 
     relativeIntensityAction_ = new QAction(tr("Relative spectrum intensity"), this);
     relativeIntensityAction_->setCheckable(true);
@@ -1474,6 +1494,11 @@ namespace OpenMSViewer
     setDockAvailable(logDock_, true);
   }
 
+  bool MainWindow::rtInMinutes() const
+  {
+    return rtInMinutesAction_ && rtInMinutesAction_->isChecked();
+  }
+
   void MainWindow::moveDock(QDockWidget* dock, Qt::DockWidgetArea area)
   {
     if (!dock) return;
@@ -1567,8 +1592,8 @@ namespace OpenMSViewer
     if (!PeakSurface3DWidget::viewFitsForSurface(view))
     {
       statusBar()->showMessage(
-        tr("Zoom the peak map in (RT ≤ %1 s, m/z ≤ %2) before opening the 3-D view")
-          .arg(PeakSurface3DWidget::kMaxRtSpan, 0, 'f', 0)
+        tr("Zoom the peak map in (RT ≤ %1 %2, m/z ≤ %3) before opening the 3-D view")
+          .arg(RtUnit::format(PeakSurface3DWidget::kMaxRtSpan, rtInMinutes(), 0), RtUnit::unit(rtInMinutes()))
           .arg(PeakSurface3DWidget::kMaxMzSpan, 0, 'f', 0), 5000);
       return;
     }
@@ -2865,8 +2890,9 @@ namespace OpenMSViewer
     chromatograms_->setPeakMapRange(range);
     faims_->setPeakMapRange(range);
     ionMobility_->setPeakMapMzRange(range.mzMin, range.mzMax);
-    viewContext_->setText(tr("View RT %1–%2 s · m/z %3–%4")
-      .arg(range.rtMin, 0, 'f', 1).arg(range.rtMax, 0, 'f', 1)
+    viewContext_->setText(tr("View RT %1–%2 %3 · m/z %4–%5")
+      .arg(RtUnit::format(range.rtMin, rtInMinutes(), 1), RtUnit::format(range.rtMax, rtInMinutes(), 1),
+           RtUnit::unit(rtInMinutes()))
       .arg(range.mzMin, 0, 'f', 2).arg(range.mzMax, 0, 'f', 2));
   }
 
@@ -2993,9 +3019,9 @@ namespace OpenMSViewer
     if (!feature) return;
     peakMap_->setSelectedFeature(featureIndex);
     features_->selectFeature(featureIndex);
-    statusBar()->showMessage(tr("Feature %1 · RT %2 s · m/z %3 · intensity %4 · charge %5")
+    statusBar()->showMessage(tr("Feature %1 · RT %2 %3 · m/z %4 · intensity %5 · charge %6")
       .arg(featureIndex)
-      .arg(feature->rt, 0, 'f', 2)
+      .arg(RtUnit::format(feature->rt, rtInMinutes()), RtUnit::unit(rtInMinutes()))
       .arg(feature->mz, 0, 'f', 4)
       .arg(feature->intensity, 0, 'e', 2)
       .arg(feature->charge), 6000);
@@ -3147,11 +3173,11 @@ namespace OpenMSViewer
     const std::size_t selectedSpectrum = *selection_.spectrum();
     const auto* selected = document_.spectrum(selectedSpectrum);
     if (!selected) return;
-    selectionContext_->setText(tr("Scan %1/%2 · MS%3 · RT %4 s · %5 peaks")
+    selectionContext_->setText(tr("Scan %1/%2 · MS%3 · RT %4 %5 · %6 peaks")
       .arg(selectedSpectrum + 1)
       .arg(document_.statistics().spectrumCount)
       .arg(selected->getMSLevel())
-      .arg(selected->getRT(), 0, 'f', 2)
+      .arg(RtUnit::format(selected->getRT(), rtInMinutes()), RtUnit::unit(rtInMinutes()))
       .arg(selected->size()));
     if (const SpectrumRecord* record = document_.spectrumRecord(selectedSpectrum))
     {
@@ -3164,11 +3190,11 @@ namespace OpenMSViewer
         details << tr("FAIMS CV %1 V").arg(*record->compensationVoltage, 0, 'f', 1);
       selectionContext_->setToolTip(details.join(QLatin1Char('\n')));
     }
-    statusBar()->showMessage(tr("Spectrum %1/%2 · MS%3 · RT %4 s · %5 peaks")
+    statusBar()->showMessage(tr("Spectrum %1/%2 · MS%3 · RT %4 %5 · %6 peaks")
       .arg(selectedSpectrum + 1)
       .arg(document_.statistics().spectrumCount)
       .arg(selected->getMSLevel())
-      .arg(selected->getRT(), 0, 'f', 2)
+      .arg(RtUnit::format(selected->getRT(), rtInMinutes()), RtUnit::unit(rtInMinutes()))
       .arg(selected->size()));
   }
 

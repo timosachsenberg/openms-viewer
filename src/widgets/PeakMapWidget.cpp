@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDebug>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QMouseEvent>
@@ -21,6 +22,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
 #include <limits>
 
 namespace OpenMSViewer
@@ -55,9 +57,22 @@ namespace OpenMSViewer
     {
       if (activeGeneration_ == desiredGeneration_)
       {
-        raster_ = renderWatcher_.result();
-        rasterRange_ = pendingRasterRange_;         // remember what this image depicts
-        rasterAxesSwapped_ = pendingAxesSwapped_;   // ...and in which axis orientation
+        try
+        {
+          raster_ = renderWatcher_.result();
+          rasterRange_ = pendingRasterRange_;         // remember what this image depicts
+          rasterAxesSwapped_ = pendingAxesSwapped_;   // ...and in which axis orientation
+        }
+        catch (const std::exception& error)
+        {
+          raster_ = {};
+          qWarning() << "Peak-map rendering failed:" << error.what();
+        }
+        catch (...)
+        {
+          raster_ = {};
+          qWarning() << "Peak-map rendering failed with an unknown error";
+        }
         update();
       }
       else if (experiment_)
@@ -164,6 +179,7 @@ namespace OpenMSViewer
 
   bool PeakMapWidget::axesSwapped() const noexcept { return axesSwapped_; }
   PeakMapColorMap PeakMapWidget::colorMap() const noexcept { return colorMap_; }
+  int PeakMapWidget::rasterWidth() const noexcept { return rasterWidth_; }
   const PlotRange& PeakMapWidget::viewRange() const noexcept { return view_; }
   bool PeakMapWidget::canZoomBack() const noexcept { return !history_.empty(); }
   bool PeakMapWidget::hasExperiment() const noexcept { return experiment_ != nullptr; }
@@ -306,6 +322,15 @@ namespace OpenMSViewer
     ++desiredMinimapGeneration_;
     scheduleRender();
     startMinimapRender();
+  }
+
+  void PeakMapWidget::setRasterWidth(int width)
+  {
+    const int bounded = std::clamp(width, MinimumRasterWidth, MaximumRasterWidth);
+    if (rasterWidth_ == bounded) return;
+    rasterWidth_ = bounded;
+    raster_ = {};
+    scheduleRender();
   }
 
   void PeakMapWidget::setInteractionMode(int modeIndex)
@@ -475,19 +500,19 @@ namespace OpenMSViewer
     return {area.left() + rtFraction * area.width(), area.bottom() - mzFraction * area.height()};
   }
 
-  QSize PeakMapWidget::densityAwareRenderSize() const
+  QSize PeakMapWidget::boundedRenderSize() const
   {
-    // Render at full canvas resolution. The rasterizer grows sparse points into
-    // small blobs (adaptive spread), so deep zooms show crisp peaks instead of a
-    // low-resolution grid stretched to fill the view.
-    //
-    // Scale by the device pixel ratio so the raster is generated at PHYSICAL
-    // resolution; drawing the higher-res image into the logical plot rect keeps
-    // the flagship 2D view sharp on HiDPI/Retina displays instead of upscaling a
-    // 1x image. On a 1x display dpr == 1.0, so this is a no-op.
-    const QSize logical = plotRect().size();
-    const double dpr = devicePixelRatioF();
-    return QSize(std::lround(logical.width() * dpr), std::lround(logical.height() * dpr));
+    // Like a Datashader canvas, the user-selected width is the fixed extraction
+    // bound. Derive only the height from the plot aspect ratio so QPainter uses
+    // the same horizontal and vertical pixel scale; circular spread kernels then
+    // stay circular instead of becoming ellipses in a wide or narrow window.
+    const QSize plotSize = plotRect().size();
+    if (plotSize.width() <= 0 || plotSize.height() <= 0) return {};
+    const int height = std::clamp(
+      static_cast<int>(std::lround(rasterWidth_ * plotSize.height()
+                                   / static_cast<double>(plotSize.width()))),
+      1, MaximumRasterWidth);
+    return QSize(rasterWidth_, height);
   }
 
   void PeakMapWidget::scheduleRender()
@@ -509,7 +534,7 @@ namespace OpenMSViewer
   void PeakMapWidget::startRender()
   {
     if (!experiment_ || renderWatcher_.isRunning()) return;
-    const QSize renderSize = densityAwareRenderSize();
+    const QSize renderSize = boundedRenderSize();
     if (renderSize.width() <= 0 || renderSize.height() <= 0) return;
 
     activeGeneration_ = desiredGeneration_;
@@ -627,32 +652,51 @@ namespace OpenMSViewer
       // Fractions map against the plot rect's continuous edges, so at rest
       // (rasterRange_==view_) the target is exactly `area`.
       QRectF target(area);
+      QRectF source(raster_.rect());
+      bool hasVisibleRaster = true;
       if (rasterRange_.isValid() && view_.rtSpan() > 0.0 && view_.mzSpan() > 0.0)
       {
-        const auto fracRt = [&](double rt) { return (rt - view_.rtMin) / view_.rtSpan(); };
-        const auto fracMz = [&](double mz) { return (mz - view_.mzMin) / view_.mzSpan(); };
-        double x0, x1, y0, y1;
-        if (axesSwapped_)   // x = m/z, y = RT (inverted: rtMax at top)
+        // Crop in data coordinates before projecting. During rapid zoom the old
+        // raster may cover millions of current view widths; drawing that whole
+        // image into an enormous QRectF can overflow a paint backend. Both the
+        // source and destination rectangles below are always image/plot bounded.
+        const PlotRange overlap{
+          std::max(rasterRange_.rtMin, view_.rtMin),
+          std::min(rasterRange_.rtMax, view_.rtMax),
+          std::max(rasterRange_.mzMin, view_.mzMin),
+          std::min(rasterRange_.mzMax, view_.mzMax)};
+        hasVisibleRaster = overlap.isValid();
+        if (hasVisibleRaster)
         {
-          x0 = area.left() + fracMz(rasterRange_.mzMin) * area.width();
-          x1 = area.left() + fracMz(rasterRange_.mzMax) * area.width();
-          y0 = area.top() + (1.0 - fracRt(rasterRange_.rtMax)) * area.height();
-          y1 = area.top() + (1.0 - fracRt(rasterRange_.rtMin)) * area.height();
+          const auto rectFor = [](const PlotRange& selection, const PlotRange& bounds,
+                                  const QSizeF& size, bool swapped)
+          {
+            if (swapped) // x = m/z, y = RT (inverted)
+            {
+              return QRectF(
+                (selection.mzMin - bounds.mzMin) / bounds.mzSpan() * size.width(),
+                (bounds.rtMax - selection.rtMax) / bounds.rtSpan() * size.height(),
+                selection.mzSpan() / bounds.mzSpan() * size.width(),
+                selection.rtSpan() / bounds.rtSpan() * size.height());
+            }
+            return QRectF(
+              (selection.rtMin - bounds.rtMin) / bounds.rtSpan() * size.width(),
+              (bounds.mzMax - selection.mzMax) / bounds.mzSpan() * size.height(),
+              selection.rtSpan() / bounds.rtSpan() * size.width(),
+              selection.mzSpan() / bounds.mzSpan() * size.height());
+          };
+          source = rectFor(overlap, rasterRange_, raster_.size(), axesSwapped_);
+          target = rectFor(overlap, view_, area.size(), axesSwapped_);
+          target.translate(area.topLeft());
         }
-        else                // x = RT, y = m/z (inverted: mzMax at top)
-        {
-          x0 = area.left() + fracRt(rasterRange_.rtMin) * area.width();
-          x1 = area.left() + fracRt(rasterRange_.rtMax) * area.width();
-          y0 = area.top() + (1.0 - fracMz(rasterRange_.mzMax)) * area.height();
-          y1 = area.top() + (1.0 - fracMz(rasterRange_.mzMin)) * area.height();
-        }
-        target = QRectF(QPointF(std::min(x0, x1), std::min(y0, y1)),
-                        QPointF(std::max(x0, x1), std::max(y0, y1)));
       }
-      painter.save();
-      painter.setClipRect(area);
-      painter.drawImage(target, raster_);
-      painter.restore();
+      if (hasVisibleRaster)
+      {
+        painter.save();
+        painter.setClipRect(area);
+        painter.drawImage(target, raster_, source);
+        painter.restore();
+      }
     }
     drawAxes(painter, area);
 
@@ -1337,7 +1381,10 @@ namespace OpenMSViewer
   void PeakMapWidget::resizeEvent(QResizeEvent* event)
   {
     QWidget::resizeEvent(event);
-    scheduleRender();
+    // Width stays fixed at the configured bound, while height follows the plot
+    // aspect ratio to preserve circular pixel footprints.
+    if (experiment_ && raster_.size() != boundedRenderSize()) scheduleRender();
+    else update();
   }
 
   void PeakMapWidget::wheelEvent(QWheelEvent* event)

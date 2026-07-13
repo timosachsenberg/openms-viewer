@@ -51,15 +51,10 @@ namespace OpenMSViewer
                      PeakMapIntensityScale intensityScale)
     {
       float maximum = 0.0F;
-      std::size_t occupied = 0;
       for (const float value : values)
       {
         maximum = std::max(maximum, value);
-        if (value > 0.0F) ++occupied;
       }
-
-      const double occupancy = values.empty()
-        ? 0.0 : static_cast<double>(occupied) / static_cast<double>(values.size());
 
       QImage image(size, QImage::Format_RGB32);
       // Background is the colormap floor so "no data" blends into "lowest data".
@@ -73,11 +68,11 @@ namespace OpenMSViewer
       if (intensityScale == PeakMapIntensityScale::Equalized)
         equalization = RasterShading::buildEqualization(values);
 
-      // Adaptive spread (dynspread) for display only: grow occupied cells into
-      // small blobs when the view is sparse; dense views are left untouched.
-      // Max-dilation reuses original values, so the CDF above still applies.
-      if (occupied > 0)
-        RasterShading::dilateMax(values, mzBins, rtBins, RasterShading::dynspreadRadius(occupancy));
+      // Datashader-style dynspread for display only: choose a radius from local
+      // neighbor density, then grow through the default circular footprint. Max
+      // compositing reuses original values, so the CDF above still applies.
+      const int spreadRadius = RasterShading::dynspreadRadius(values, mzBins, rtBins);
+      RasterShading::dilateMaxCircular(values, mzBins, rtBins, spreadRadius);
 
       const double logMaximum = std::log1p(static_cast<double>(maximum));
       for (std::size_t mzIndex = 0; mzIndex < mzBins; ++mzIndex)

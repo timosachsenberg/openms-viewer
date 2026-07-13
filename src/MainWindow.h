@@ -277,6 +277,7 @@ namespace OpenMSViewer
     QMenu* recentFilesMenu_{nullptr};
     QComboBox* spectrumLevel_{nullptr};
     QSpinBox* spectrumIndex_{nullptr};
+    QSpinBox* peakMapRasterWidth_{nullptr};
     QLineEdit* spectrumSearch_{nullptr};
     QDoubleSpinBox* annotationTolerance_{nullptr};
     std::shared_ptr<ImagingStore> imagingStore_;

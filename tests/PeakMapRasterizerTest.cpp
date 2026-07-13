@@ -2,6 +2,7 @@
 
 #include "plot/PeakMapRasterizer.h"
 #include "plot/PlotRange.h"
+#include "plot/RasterShading.h"
 #include "widgets/PeakMapWidget.h"
 #include "widgets/PeakSurface3DWidget.h"
 
@@ -12,6 +13,8 @@
 #include <QTest>
 #include <QTimer>
 
+#include <algorithm>
+#include <cmath>
 #include <optional>
 
 namespace
@@ -168,7 +171,25 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!widget.minimapImage().isNull(), 3000);
   }
 
-  void rendersPeakMapAtFullResolution()
+  void datashaderDynspreadUsesNeighborDensityAndCircularFootprint()
+  {
+    constexpr std::size_t side = 17;
+    constexpr std::size_t center = 8;
+    std::vector<float> isolated(side * side, 0.0F);
+    isolated[center * side + center] = 10.0F;
+    QCOMPARE(OpenMSViewer::RasterShading::dynspreadRadius(isolated, side, side), 4);
+
+    OpenMSViewer::RasterShading::dilateMaxCircular(isolated, side, side, 4);
+    QCOMPARE(isolated[center * side + center + 4], 10.0F);       // cardinal edge is inside
+    QCOMPARE(isolated[(center + 4) * side + center + 4], 0.0F); // square corner is outside
+
+    std::vector<float> adjacent(side * side, 0.0F);
+    adjacent[center * side + center] = 10.0F;
+    adjacent[center * side + center + 1] = 5.0F;
+    QCOMPARE(OpenMSViewer::RasterShading::dynspreadRadius(adjacent, side, side), 0);
+  }
+
+  void rendersPeakMapAtConfiguredFixedResolution()
   {
     const auto source = OpenMSViewer::TestData::experiment();
     const OpenMSViewer::PlotRange range{9.0, 21.0, 390.0, 610.0};
@@ -178,10 +199,15 @@ private slots:
     widget.setExperiment(std::make_shared<OpenMS::MSExperiment>(source), range);
 
     QTRY_VERIFY_WITH_TIMEOUT(!widget.rasterImage().isNull(), 3000);
-    // The raster is rendered at full canvas resolution on both axes — no longer
-    // capped to the number of visible scans — so deep zooms stay crisp.
-    QVERIFY(widget.rasterImage().width() > 700);
-    QVERIFY(widget.rasterImage().height() > 400);
+    const auto expectedRasterSize = [&widget](int width)
+    {
+      const QSize plotSize(widget.width() - 90, widget.height() - 72);
+      return QSize(width, std::clamp(
+        static_cast<int>(std::lround(width * plotSize.height()
+                                     / static_cast<double>(plotSize.width()))),
+        1, OpenMSViewer::PeakMapWidget::MaximumRasterWidth));
+    };
+    QCOMPARE(widget.rasterImage().size(), expectedRasterSize(1024));
 
     // Sparse content is still visible thanks to the adaptive spread.
     const QImage& raster = widget.rasterImage();
@@ -192,9 +218,41 @@ private slots:
         if (raster.pixel(column, row) != floor) { ++nonBackground; break; }
     QVERIFY(nonBackground > 0);
 
+    widget.setRasterWidth(640);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.rasterImage().size(), expectedRasterSize(640), 3000);
+    widget.resize(1200, 800);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.rasterImage().size(), expectedRasterSize(640), 3000);
+
     widget.setAxesSwapped(false);
-    QTRY_VERIFY_WITH_TIMEOUT(widget.rasterImage().width() > 700, 3000);
-    QVERIFY(widget.rasterImage().height() > 400);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.rasterImage().size(), expectedRasterSize(640), 3000);
+  }
+
+  void rapidZoomNeverBuildsAnUnboundedPreview()
+  {
+    const auto source = OpenMSViewer::TestData::experiment();
+    const OpenMSViewer::PlotRange range{9.0, 21.0, 390.0, 610.0};
+    OpenMSViewer::PeakMapWidget widget;
+    widget.resize(1400, 500);  // deliberately different from the raster aspect
+    widget.show();
+    widget.setExperiment(std::make_shared<OpenMS::MSExperiment>(source), range);
+    QTRY_VERIFY_WITH_TIMEOUT(!widget.rasterImage().isNull(), 3000);
+
+    const double horizontalScale = (widget.width() - 90)
+      / static_cast<double>(widget.rasterImage().width());
+    const double verticalScale = (widget.height() - 72)
+      / static_cast<double>(widget.rasterImage().height());
+    QVERIFY(std::abs(horizontalScale - verticalScale)
+            / std::max(horizontalScale, verticalScale) < 0.01);
+
+    // Force paints between rapid view changes while the previous raster still
+    // depicts a much wider range. The preview projection must remain finite and
+    // bounded instead of asking QPainter to draw a billion-pixel target image.
+    for (int step = 0; step < 80; ++step)
+    {
+      widget.zoomIn();
+      QApplication::processEvents();
+      QVERIFY(!widget.grab().isNull());
+    }
   }
 
   void equalizationRevealsFaintPeaks()

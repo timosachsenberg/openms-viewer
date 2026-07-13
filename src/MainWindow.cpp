@@ -608,6 +608,8 @@ namespace OpenMSViewer
     const bool spectrumGrid = settings.value(QStringLiteral("appearance/spectrumGrid"), true).toBool();
     showSpectrumGridAction_->setChecked(spectrumGrid);
     spectrum_->setShowGrid(spectrumGrid);
+    peakMapRasterWidth_->setValue(settings.value(
+      QStringLiteral("peakMap/rasterWidth"), PeakMapWidget::DefaultRasterWidth).toInt());
     recentFiles_ = settings.value(QStringLiteral("files/recent")).toStringList();
     lastPrimaryPath_ = settings.value(QStringLiteral("files/lastPrimary")).toString();
     rebuildRecentFiles();
@@ -1300,6 +1302,25 @@ namespace OpenMSViewer
     peakMapControlBar_->addWidget(scale);
     connect(scale, qOverload<int>(&QComboBox::currentIndexChanged),
             peakMap_, &PeakMapWidget::setIntensityScale);
+
+    auto* rasterLabel = new QLabel(tr("Raster width"), peakMapControlBar_);
+    rasterLabel->setObjectName(QStringLiteral("peakMapRasterLabel"));
+    peakMapControlBar_->addWidget(rasterLabel);
+    peakMapRasterWidth_ = new QSpinBox(peakMapControlBar_);
+    peakMapRasterWidth_->setObjectName(QStringLiteral("peakMapRasterWidth"));
+    peakMapRasterWidth_->setRange(PeakMapWidget::MinimumRasterWidth,
+                                  PeakMapWidget::MaximumRasterWidth);
+    peakMapRasterWidth_->setSingleStep(128);
+    peakMapRasterWidth_->setValue(PeakMapWidget::DefaultRasterWidth);
+    peakMapRasterWidth_->setSuffix(tr(" px"));
+    peakMapRasterWidth_->setKeyboardTracking(false);
+    peakMapRasterWidth_->setMaximumWidth(105);
+    peakMapRasterWidth_->setToolTip(
+      tr("Fixed peak-map raster width; height follows the plot aspect ratio to preserve circular peaks"));
+    peakMapRasterWidth_->setAccessibleName(tr("Peak-map raster width"));
+    peakMapControlBar_->addWidget(peakMapRasterWidth_);
+    connect(peakMapRasterWidth_, qOverload<int>(&QSpinBox::valueChanged),
+            peakMap_, &PeakMapWidget::setRasterWidth);
 
     auto* display = new QToolButton(peakMapControlBar_);
     display->setObjectName(QStringLiteral("peakMapDisplayOptions"));
@@ -3750,6 +3771,7 @@ namespace OpenMSViewer
     settings.setValue(QStringLiteral("main/state"), saveState());
     settings.setValue(QStringLiteral("appearance/dark"), darkThemeAction_->isChecked());
     settings.setValue(QStringLiteral("appearance/spectrumGrid"), showSpectrumGridAction_->isChecked());
+    settings.setValue(QStringLiteral("peakMap/rasterWidth"), peakMapRasterWidth_->value());
     settings.setValue(QStringLiteral("files/recent"), recentFiles_);
     settings.setValue(QStringLiteral("files/lastPrimary"), lastPrimaryPath_);
     for (auto it = dockVisibilityPreference_.cbegin(); it != dockVisibilityPreference_.cend(); ++it)

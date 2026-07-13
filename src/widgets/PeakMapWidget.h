@@ -41,6 +41,10 @@ namespace OpenMSViewer
     Q_OBJECT
 
   public:
+    static constexpr int DefaultRasterWidth = 1024;
+    static constexpr int MinimumRasterWidth = 256;
+    static constexpr int MaximumRasterWidth = 4096;
+
     explicit PeakMapWidget(QWidget* parent = nullptr);
     ~PeakMapWidget() override;
 
@@ -62,6 +66,7 @@ namespace OpenMSViewer
 
     [[nodiscard]] bool axesSwapped() const noexcept;
     [[nodiscard]] PeakMapColorMap colorMap() const noexcept;
+    [[nodiscard]] int rasterWidth() const noexcept;
     [[nodiscard]] const PlotRange& viewRange() const noexcept;
     [[nodiscard]] bool canZoomBack() const noexcept;
     [[nodiscard]] bool hasExperiment() const noexcept;
@@ -87,6 +92,7 @@ namespace OpenMSViewer
     void setRtRange(double minimumRt, double maximumRt);
     void setColorMap(int colorMapIndex);
     void setIntensityScale(int intensityScaleIndex);
+    void setRasterWidth(int width);
     void setInteractionMode(int modeIndex);
     void setShowMinimap(bool show);
     void setShowFeatureCentroids(bool show);
@@ -139,7 +145,7 @@ namespace OpenMSViewer
     void recenterFromMinimap(const QPointF& position);
     [[nodiscard]] QPointF dataAt(const QPointF& position) const;
     [[nodiscard]] QPointF pixelFor(double rt, double mz) const;
-    [[nodiscard]] QSize densityAwareRenderSize() const;
+    [[nodiscard]] QSize boundedRenderSize() const;
     void scheduleRender();
     void startRender();
     void startMinimapRender();
@@ -213,6 +219,7 @@ namespace OpenMSViewer
     QImage minimap_;
     PeakMapColorMap colorMap_{PeakMapColorMap::Viridis};
     PeakMapIntensityScale intensityScale_{PeakMapIntensityScale::Equalized};
+    int rasterWidth_{DefaultRasterWidth};
     PeakMapInteractionMode interactionMode_{PeakMapInteractionMode::Zoom};
     bool showMinimap_{true};
     bool rtInMinutes_{false};

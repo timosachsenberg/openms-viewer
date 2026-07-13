@@ -150,10 +150,14 @@ private slots:
     auto* interaction = window.findChild<QComboBox*>(QStringLiteral("peakMapInteractionMode"));
     auto* level = window.findChild<QComboBox*>(QStringLiteral("spectrumLevelFilter"));
     auto* scan = window.findChild<QSpinBox*>(QStringLiteral("spectrumIndex"));
+    auto* rasterWidth = window.findChild<QSpinBox*>(QStringLiteral("peakMapRasterWidth"));
     auto* runContext = window.findChild<QLabel*>(QStringLiteral("runContext"));
     auto* loading = window.findChild<OpenMSViewer::LoadingOverlayWidget*>();
     auto* ticDock = window.findChild<QDockWidget*>(QStringLiteral("ticDock"));
-    QVERIFY(stack && welcome && peakMap && interaction && level && scan && runContext && loading && ticDock);
+    QVERIFY(stack && welcome && peakMap && interaction && level && scan && rasterWidth
+            && runContext && loading && ticDock);
+    QCOMPARE(rasterWidth->value(), OpenMSViewer::PeakMapWidget::DefaultRasterWidth);
+    rasterWidth->setValue(768);
     QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(welcome));
     QVERIFY(!ticDock->toggleViewAction()->isEnabled());
     QCOMPARE(interaction->count(), 4);  // Zoom / Pan / Measure / Edit
@@ -165,6 +169,12 @@ private slots:
     QCOMPARE(peakMap->parentWidget(), peakMapPanel);
     window.loadFile(path);
     QTRY_VERIFY_WITH_TIMEOUT(peakMap->hasExperiment(), 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(peakMap->rasterImage().width(), 768, 3000);
+    const int expectedRasterHeight = std::clamp(
+      static_cast<int>(std::lround(768.0 * (peakMap->height() - 72)
+                                   / static_cast<double>(peakMap->width() - 90))),
+      1, OpenMSViewer::PeakMapWidget::MaximumRasterWidth);
+    QTRY_COMPARE_WITH_TIMEOUT(peakMap->rasterImage().height(), expectedRasterHeight, 3000);
     QCOMPARE(stack->currentWidget(), peakMapPanel);
     QCOMPARE(scan->maximum(), 3);
     QCOMPARE(scan->text(), QStringLiteral("Scan 1"));

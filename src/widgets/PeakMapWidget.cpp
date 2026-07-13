@@ -786,7 +786,6 @@ namespace OpenMSViewer
     drawPrecursors(painter);
     drawFeatures(painter);
     drawIdentifications(painter);
-    drawLegend(painter, area);
 
     if (showMinimap_ && isZoomedIn() && !minimap_.isNull())
     {
@@ -861,18 +860,15 @@ namespace OpenMSViewer
     {
       painter.setPen(QPen(QColor(255, 215, 70), 2));
       painter.drawLine(dragStart_, dragCurrent_);
-      const QPointF start = dataAt(dragStart_);
-      const QPointF end = dataAt(dragCurrent_);
-      const QString label = tr("ΔRT %1 %2   Δm/z %3")
-                              .arg(RtUnit::format(std::abs(end.x() - start.x()), rtInMinutes_))
-                              .arg(RtUnit::unit(rtInMinutes_))
-                              .arg(std::abs(end.y() - start.y()), 0, 'f', 4);
-      const QRect labelRect = painter.fontMetrics().boundingRect(label).adjusted(-7, -4, 7, 4);
-      QRect placed = labelRect;
-      placed.moveCenter((dragStart_ + dragCurrent_) / 2);
-      painter.fillRect(placed, QColor(0, 0, 0, 190));
-      painter.drawText(placed, Qt::AlignCenter, label);
+      painter.setBrush(QColor(255, 215, 70));
+      painter.drawEllipse(dragStart_, 3, 3);
+      painter.drawEllipse(dragCurrent_, 3, 3);
     }
+
+    // Keep interaction guidance/readouts inside the peak-map canvas but away
+    // from the measured data. Drawing it last also prevents the measurement
+    // line from crossing through the fixed top-left badge.
+    drawLegend(painter, area);
   }
 
   void PeakMapWidget::drawAxes(QPainter& painter, const QRect& area) const
@@ -1266,17 +1262,30 @@ namespace OpenMSViewer
     const QString mode = interactionMode_ == PeakMapInteractionMode::Pan ? tr("Pan")
       : interactionMode_ == PeakMapInteractionMode::Measure ? tr("Measure")
       : interactionMode_ == PeakMapInteractionMode::Edit ? tr("Edit") : tr("Zoom");
-    const QString hint = interactionMode_ == PeakMapInteractionMode::Edit
-      ? tr("Edit features · click empty = add · drag = move · dbl-click = edit · Del = delete")
-      : tr("%1 mode · wheel zoom · double-click reset").arg(mode);
-    const int hintWidth = painter.fontMetrics().horizontalAdvance(hint) + 18;
-    const QRect hintRect(area.left() + 8, area.top() + 8, hintWidth, 24);
+    QString hint;
+    if (dragMode_ == DragMode::Measure)
+    {
+      const QPointF start = dataAt(dragStart_);
+      const QPointF end = dataAt(dragCurrent_);
+      hint = tr("ΔRT %1 %2 · Δm/z %3")
+               .arg(RtUnit::format(std::abs(end.x() - start.x()), rtInMinutes_))
+               .arg(RtUnit::unit(rtInMinutes_))
+               .arg(std::abs(end.y() - start.y()), 0, 'f', 4);
+    }
+    else if (interactionMode_ == PeakMapInteractionMode::Edit)
+      hint = tr("Edit features · click empty = add · drag = move · dbl-click = edit · Del = delete");
+    else
+      hint = tr("%1 mode · wheel zoom · double-click reset").arg(mode);
+    const int hintWidth = painter.fontMetrics().horizontalAdvance(hint) + 14;
+    // The plot reserves a 20 px top margin. Keep this readout inside the
+    // PeakMapWidget but outside the raster so it never hides a peak.
+    const QRect hintRect(area.left() + 8, 1, hintWidth, 18);
     painter.setPen(QColor(230, 230, 235));
     painter.setBrush(QColor(0, 0, 0, 155));
     painter.drawRoundedRect(hintRect, 5, 5);
     painter.drawText(hintRect, Qt::AlignCenter, hint);
 
-    int legendY = hintRect.bottom() + 8;
+    int legendY = area.top() + 8;
     if (showFeatureCentroids_ && !features_.empty())
     {
       painter.setPen(Qt::white);

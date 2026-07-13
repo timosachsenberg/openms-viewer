@@ -57,6 +57,7 @@ namespace OpenMSViewer
     QLineEdit* maximumRt_{nullptr};
     QLineEdit* sequence_{nullptr};
     QLineEdit* minimumScore_{nullptr};
+    QLabel* scoreThresholdLabel_{nullptr};
     QCheckBox* advanced_{nullptr};
     QCheckBox* metadata_{nullptr};
     QCheckBox* allHits_{nullptr};

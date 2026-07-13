@@ -888,6 +888,24 @@ namespace OpenMSViewer
     return index;
   }
 
+  std::size_t ViewerDocument::insertFeature(std::size_t index, const OpenMS::Feature& feature)
+  {
+    if (!featureMap_) featureMap_ = std::make_shared<OpenMS::FeatureMap>();
+    index = std::min(index, featureMap_->size());
+    featureMap_->insert(featureMap_->begin() + static_cast<std::ptrdiff_t>(index), feature);
+    features_ = buildFeatureRecords(*featureMap_);
+    emit featuresChanged();
+    return index;
+  }
+
+  void ViewerDocument::replaceFeature(std::size_t index, const OpenMS::Feature& feature)
+  {
+    if (!featureMap_ || index >= featureMap_->size()) return;
+    (*featureMap_)[index] = feature;
+    features_ = buildFeatureRecords(*featureMap_);
+    emit featuresChanged();
+  }
+
   void ViewerDocument::updateFeature(std::size_t index, double rt, double mz,
                                      double intensity, int charge)
   {
@@ -911,6 +929,12 @@ namespace OpenMSViewer
     featureMap_->erase(featureMap_->begin() + static_cast<std::ptrdiff_t>(index));
     features_ = buildFeatureRecords(*featureMap_);
     emit featuresChanged();
+  }
+
+  std::optional<OpenMS::Feature> ViewerDocument::featureCopy(std::size_t index) const
+  {
+    if (!featureMap_ || index >= featureMap_->size()) return std::nullopt;
+    return (*featureMap_)[index];
   }
 
   bool ViewerDocument::isEmpty() const noexcept { return experiment_ == nullptr; }

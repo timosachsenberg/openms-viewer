@@ -5,6 +5,7 @@
 #include <QAbstractTableModel>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleValidator>
 #include <QFileDialog>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -41,6 +42,15 @@ namespace OpenMSViewer
           values.push_back(QStringLiteral("Hit:%1=%2").arg(key, value));
       }
       return values.join(QStringLiteral("; "));
+    }
+
+    void setNumericValidity(QLineEdit* edit, bool valid, const QString& normalTip,
+                            const QString& errorTip = {})
+    {
+      edit->setProperty("invalidInput", !valid);
+      edit->setStyleSheet(valid ? QString{}
+                                : QStringLiteral("QLineEdit { border: 1px solid #c43c3c; }"));
+      edit->setToolTip(valid ? normalTip : errorTip);
     }
   }
 
@@ -317,13 +327,14 @@ namespace OpenMSViewer
     void setMinimumRt(std::optional<double> value) { minimumRt_ = value; invalidateRowsFilter(); }
     void setMaximumRt(std::optional<double> value) { maximumRt_ = value; invalidateRowsFilter(); }
     void setSequence(const QString& value) { sequence_ = value; invalidateRowsFilter(); }
-    void setMinimumScore(std::optional<double> value) { minimumScore_ = value; invalidateRowsFilter(); }
+    void setScoreThreshold(std::optional<double> value) { scoreThreshold_ = value; invalidateRowsFilter(); }
 
   protected:
     bool filterAcceptsRow(int sourceRow, const QModelIndex&) const override
     {
       const auto* model = static_cast<const SpectrumTableModel*>(sourceModel());
       const SpectrumRecord* spectrum = model ? model->spectrumForRow(sourceRow) : nullptr;
+      const IdentificationRecord* identification = model ? model->identificationForRow(sourceRow) : nullptr;
       const PeptideHitRecord* hit = model ? model->hitForRow(sourceRow) : nullptr;
       if (!spectrum) return false;
       if (mode_ == 1 && spectrum->msLevel != 2) return false;
@@ -332,7 +343,13 @@ namespace OpenMSViewer
       if (maximumRt_ && spectrum->rt > *maximumRt_) return false;
       if (!sequence_.isEmpty() && (!hit || !hit->sequence.contains(sequence_, Qt::CaseInsensitive)))
         return false;
-      if (minimumScore_ && (!hit || hit->score < *minimumScore_)) return false;
+      if (scoreThreshold_)
+      {
+        if (!hit || !identification) return false;
+        const bool keep = identification->higherScoreBetter ? hit->score >= *scoreThreshold_
+                                                            : hit->score <= *scoreThreshold_;
+        if (!keep) return false;
+      }
       return true;
     }
 
@@ -341,7 +358,7 @@ namespace OpenMSViewer
     std::optional<double> minimumRt_;
     std::optional<double> maximumRt_;
     QString sequence_;
-    std::optional<double> minimumScore_;
+    std::optional<double> scoreThreshold_;
   };
 
   SpectrumTableWidget::SpectrumTableWidget(QWidget* parent) : QWidget(parent)
@@ -360,22 +377,34 @@ namespace OpenMSViewer
     minimumRt_->setObjectName(QStringLiteral("spectrumMinimumRt"));
     minimumRt_->setPlaceholderText(tr("minimum"));
     minimumRt_->setMaximumWidth(85);
+    auto* rtValidator = new QDoubleValidator(0.0, 1.0e300, 12, minimumRt_);
+    rtValidator->setNotation(QDoubleValidator::ScientificNotation);
+    minimumRt_->setValidator(rtValidator);
     first->addWidget(minimumRt_);
     first->addWidget(new QLabel(QStringLiteral("–"), this));
     maximumRt_ = new QLineEdit(this);
     maximumRt_->setObjectName(QStringLiteral("spectrumMaximumRt"));
     maximumRt_->setPlaceholderText(tr("maximum"));
     maximumRt_->setMaximumWidth(85);
+    auto* maximumRtValidator = new QDoubleValidator(0.0, 1.0e300, 12, maximumRt_);
+    maximumRtValidator->setNotation(QDoubleValidator::ScientificNotation);
+    maximumRt_->setValidator(maximumRtValidator);
     first->addWidget(maximumRt_);
     sequence_ = new QLineEdit(this);
     sequence_->setObjectName(QStringLiteral("spectrumSequenceFilter"));
     sequence_->setPlaceholderText(tr("Sequence contains…"));
     sequence_->setMaximumWidth(180);
     first->addWidget(sequence_);
+    scoreThresholdLabel_ = new QLabel(tr("Score threshold"), this);
+    scoreThresholdLabel_->setObjectName(QStringLiteral("spectrumScoreThresholdLabel"));
+    first->addWidget(scoreThresholdLabel_);
     minimumScore_ = new QLineEdit(this);
     minimumScore_->setObjectName(QStringLiteral("spectrumMinimumScore"));
-    minimumScore_->setPlaceholderText(tr("Minimum score"));
+    minimumScore_->setPlaceholderText(tr("threshold"));
     minimumScore_->setMaximumWidth(105);
+    auto* scoreValidator = new QDoubleValidator(-1.0e300, 1.0e300, 12, minimumScore_);
+    scoreValidator->setNotation(QDoubleValidator::ScientificNotation);
+    minimumScore_->setValidator(scoreValidator);
     first->addWidget(minimumScore_);
     auto* reset = new QPushButton(tr("Reset"), this);
     first->addWidget(reset);
@@ -458,6 +487,40 @@ namespace OpenMSViewer
                                     const std::vector<IdentificationRecord>& identifications)
   {
     model_->setData(spectra, identifications);
+    bool haveScores = false;
+    bool mixedDirection = false;
+    bool higherIsBetter = true;
+    QString scoreType;
+    bool mixedTypes = false;
+    for (const IdentificationRecord& identification : identifications)
+    {
+      if (identification.hits.empty()) continue;
+      if (!haveScores)
+      {
+        haveScores = true;
+        higherIsBetter = identification.higherScoreBetter;
+        scoreType = identification.scoreType;
+      }
+      else
+      {
+        mixedDirection |= higherIsBetter != identification.higherScoreBetter;
+        mixedTypes |= scoreType != identification.scoreType;
+      }
+    }
+    const QString scoreName = !mixedTypes && !scoreType.isEmpty() ? scoreType : tr("Score");
+    const bool scoreFilterable = haveScores && !mixedTypes && !mixedDirection;
+    scoreThresholdLabel_->setText(mixedTypes || mixedDirection
+      ? tr("Mixed score semantics") : !haveScores ? tr("Score threshold")
+      : tr("%1 %2").arg(scoreName, higherIsBetter ? QStringLiteral("≥") : QStringLiteral("≤")));
+    minimumScore_->setEnabled(scoreFilterable);
+    if (!scoreFilterable) minimumScore_->clear();
+    minimumScore_->setToolTip(!haveScores
+      ? tr("Load identifications to filter by score")
+      : !scoreFilterable
+      ? tr("Score filtering is disabled because the loaded score types are not comparable")
+      : higherIsBetter ? tr("Keep hits with a score greater than or equal to this value")
+                       : tr("Keep hits with a score less than or equal to this value"));
+    updateFilters();
     updateColumns();
     table_->resizeColumnsToContents();
     updateCountLabel();
@@ -465,8 +528,7 @@ namespace OpenMSViewer
 
   void SpectrumTableWidget::clear()
   {
-    model_->setData({}, {});
-    updateCountLabel();
+    setData({}, {});
   }
 
   void SpectrumTableWidget::selectSpectrum(
@@ -501,10 +563,18 @@ namespace OpenMSViewer
 
   void SpectrumTableWidget::updateFilters()
   {
-    auto optionalNumber = [](const QString& text) -> std::optional<double>
+    auto optionalNumber = [](QLineEdit* edit, const QString& normalTip) -> std::optional<double>
     {
+      const QString text = edit->text().trimmed();
+      if (text.isEmpty())
+      {
+        setNumericValidity(edit, true, normalTip);
+        return std::nullopt;
+      }
       bool valid = false;
-      const double value = text.trimmed().toDouble(&valid);
+      const double value = text.toDouble(&valid);
+      valid = valid && edit->hasAcceptableInput();
+      setNumericValidity(edit, valid, normalTip, QObject::tr("Enter a valid number"));
       return valid ? std::optional<double>{value} : std::nullopt;
     };
     // RT boxes are entered in the displayed unit; the proxy filters raw seconds.
@@ -514,11 +584,26 @@ namespace OpenMSViewer
       return value ? std::optional<double>{*value * rtScale} : std::nullopt;
     };
     auto* filter = static_cast<SpectrumFilterProxyModel*>(proxy_);
+    const QString rtTip = tr("Enter retention time in %1").arg(RtUnit::unit(rtInMinutes_));
+    std::optional<double> minimumRt = optionalNumber(minimumRt_, rtTip);
+    std::optional<double> maximumRt = optionalNumber(maximumRt_, rtTip);
+    if (minimumRt && maximumRt && *minimumRt > *maximumRt)
+    {
+      const QString error = tr("Minimum RT must not exceed maximum RT");
+      setNumericValidity(minimumRt_, false, rtTip, error);
+      setNumericValidity(maximumRt_, false, rtTip, error);
+      minimumRt.reset();
+      maximumRt.reset();
+    }
+    const QString scoreTip = scoreThresholdLabel_->text().contains(QChar(0x2264))
+      ? tr("Keep hits at or below this score") : scoreThresholdLabel_->text().contains(QChar(0x2265))
+      ? tr("Keep hits at or above this score") : tr("Filter using each score type's confidence direction");
     filter->setMode(mode_->currentIndex());
-    filter->setMinimumRt(toSeconds(optionalNumber(minimumRt_->text())));
-    filter->setMaximumRt(toSeconds(optionalNumber(maximumRt_->text())));
+    filter->setMinimumRt(toSeconds(minimumRt));
+    filter->setMaximumRt(toSeconds(maximumRt));
     filter->setSequence(sequence_->text().trimmed());
-    filter->setMinimumScore(optionalNumber(minimumScore_->text()));
+    filter->setScoreThreshold(minimumScore_->isEnabled()
+      ? optionalNumber(minimumScore_, scoreTip) : std::nullopt);
     updateCountLabel();
   }
 

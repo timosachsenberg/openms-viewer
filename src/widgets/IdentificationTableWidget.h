@@ -49,6 +49,7 @@ namespace OpenMSViewer
     QComboBox* viewMode_{nullptr};
     QLineEdit* sequenceFilter_{nullptr};
     QLineEdit* minimumScore_{nullptr};
+    QLabel* scoreThresholdLabel_{nullptr};
     QCheckBox* showAllHits_{nullptr};
     QLabel* countLabel_{nullptr};
     QPlainTextEdit* details_{nullptr};

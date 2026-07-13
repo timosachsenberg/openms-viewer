@@ -19,6 +19,7 @@ namespace OpenMSViewer
 
   signals:
     void openRequested();
+    void openFolderRequested();
     void recentFileRequested(const QString& path);
 
   private:

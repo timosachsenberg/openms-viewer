@@ -1,6 +1,7 @@
 #include "TestData.h"
 
 #include "MainWindow.h"
+#include "widgets/FeatureEditDialog.h"
 #include "widgets/FeatureTableWidget.h"
 #include "widgets/PeakMapWidget.h"
 
@@ -8,10 +9,13 @@
 #include <OpenMS/FORMAT/MzMLFile.h>
 
 #include <QComboBox>
+#include <QAction>
 #include <QDoubleSpinBox>
+#include <QTableWidget>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 
 class MainWindowFeatureWorkflowTest final : public QObject
 {
@@ -85,7 +89,7 @@ private slots:
     QTRY_COMPARE(table->model()->rowCount(), 1);
   }
 
-  // Edit mode: clicking empty space creates a feature; Delete removes the selected one.
+  // Edit mode confirms new feature values and every mutation is undoable.
   void editModeCreatesAndDeletesFeatures()
   {
     QTemporaryDir directory;
@@ -104,7 +108,21 @@ private slots:
     peakMap->setInteractionMode(3);  // Edit
     peakMap->resetView();
     const QPoint spot = peakMap->mapDataToWidget(15.0, 500.0).toPoint();
+    bool dialogAccepted = false;
+    QTimer dialogCloser;
+    dialogCloser.setInterval(20);
+    connect(&dialogCloser, &QTimer::timeout, &window, [&]
+    {
+      if (auto* dialog = window.findChild<OpenMSViewer::FeatureEditDialog*>())
+      {
+        dialogAccepted = true;
+        dialog->accept();
+      }
+    });
+    dialogCloser.start();
     QTest::mouseClick(peakMap, Qt::LeftButton, Qt::NoModifier, spot);  // empty → create
+    QTRY_VERIFY_WITH_TIMEOUT(dialogAccepted, 2000);
+    dialogCloser.stop();
 
     auto* featureWidget = window.findChild<OpenMSViewer::FeatureTableWidget*>();
     QVERIFY(featureWidget != nullptr);
@@ -112,10 +130,34 @@ private slots:
     QVERIFY(table != nullptr);
     QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 3000);
     QTRY_VERIFY_WITH_TIMEOUT(peakMap->selectedFeature().has_value(), 2000);
+    QVERIFY(window.windowTitle().startsWith(QStringLiteral("* ")));
+
+    auto* layers = window.findChild<QTableWidget*>(QStringLiteral("dataLayersTable"));
+    auto* undo = window.findChild<QAction*>(QStringLiteral("undoFeatureEdit"));
+    auto* redo = window.findChild<QAction*>(QStringLiteral("redoFeatureEdit"));
+    QVERIFY(layers != nullptr);
+    QVERIFY(undo != nullptr);
+    QVERIFY(redo != nullptr);
+    QTRY_COMPARE(layers->rowCount(), 2);  // primary run + feature layer
+    QVERIFY(layers->item(1, 2)->text().contains(QStringLiteral("Modified")));
+
+    undo->trigger();
+    QTRY_COMPARE(table->model()->rowCount(), 0);
+    QVERIFY(!window.windowTitle().startsWith(QStringLiteral("* ")));
+    redo->trigger();
+    QTRY_COMPARE(table->model()->rowCount(), 1);
+    peakMap->setSelectedFeature(std::size_t{0});
 
     peakMap->setFocus();
     QTest::keyClick(peakMap, Qt::Key_Delete);  // selected feature → delete
     QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 0, 3000);
+    undo->trigger();
+    QTRY_COMPARE(table->model()->rowCount(), 1);
+    undo->trigger();  // undo the original add
+    QTRY_COMPARE(table->model()->rowCount(), 0);
+    QVERIFY(!window.windowTitle().startsWith(QStringLiteral("* ")));
+    redo->trigger();  // dirty-stack destruction must not emit into already-deleted child widgets
+    QTRY_COMPARE(table->model()->rowCount(), 1);
   }
 };
 

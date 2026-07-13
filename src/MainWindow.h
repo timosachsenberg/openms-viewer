@@ -32,12 +32,14 @@ class QProgressBar;
 class QSpinBox;
 class QStackedWidget;
 class QToolBar;
+class QUndoStack;
 class QWidget;
 
 namespace OpenMSViewer
 {
   class PeakMapWidget;
   class ChromatogramPanelWidget;
+  class DataLayersWidget;
   class FaimsPanelWidget;
   class FeatureTableWidget;
   class IdentificationTableWidget;
@@ -112,10 +114,16 @@ namespace OpenMSViewer
     void showDataPage();
     void updateRunContext();
     void updateWindowTitle();
-    void saveFeatures();
+    [[nodiscard]] bool saveFeatures(bool choosePath = false);
     void saveIdentifications();
     void saveConsensus();
     void updateSaveActions();
+    void updateDataLayers();
+    void updateFeatureEditState();
+    void closeData();
+    void removeLayer(int layer);
+    [[nodiscard]] bool confirmFeatureChanges(const QString& action);
+    [[nodiscard]] bool editedFeaturesWouldBeReplacedBy(const QString& path) const;
     [[nodiscard]] QString askSavePath(const QString& title, const QString& sourcePath,
                                       const QString& fallbackStem, const QString& suffix);
     // Consensus peak-map overlay: highlight on selection, and on activation drill
@@ -189,6 +197,7 @@ namespace OpenMSViewer
     QToolBar* spectrumControlBar_{nullptr};
     LoadingOverlayWidget* loadingOverlay_{nullptr};
     ChromatogramPanelWidget* chromatograms_{nullptr};
+    DataLayersWidget* dataLayers_{nullptr};
     FaimsPanelWidget* faims_{nullptr};
     FeatureTableWidget* features_{nullptr};
     IdentificationTableWidget* identifications_{nullptr};
@@ -208,6 +217,7 @@ namespace OpenMSViewer
     QDockWidget* identificationsDock_{nullptr};
     QDockWidget* spectraDock_{nullptr};
     QDockWidget* chromatogramsDock_{nullptr};
+    QDockWidget* dataLayersDock_{nullptr};
     QDockWidget* faimsDock_{nullptr};
     QDockWidget* ionMobilityDock_{nullptr};
     QDockWidget* imagingDock_{nullptr};
@@ -227,6 +237,7 @@ namespace OpenMSViewer
     QAction* closeDataAction_{nullptr};
     QAction* exportMzMLAction_{nullptr};
     QAction* saveFeaturesAction_{nullptr};
+    QAction* saveFeaturesAsAction_{nullptr};
     QAction* saveIdentificationsAction_{nullptr};
     QAction* saveConsensusAction_{nullptr};
     QAction* zoomBackAction_{nullptr};
@@ -261,6 +272,8 @@ namespace OpenMSViewer
     QAction* resetSpectrumViewAction_{nullptr};
     QAction* clearSpectrumMeasurementsAction_{nullptr};
     QAction* clearSpectrumLabelsAction_{nullptr};
+    QAction* undoFeatureAction_{nullptr};
+    QAction* redoFeatureAction_{nullptr};
     QMenu* recentFilesMenu_{nullptr};
     QComboBox* spectrumLevel_{nullptr};
     QSpinBox* spectrumIndex_{nullptr};
@@ -270,6 +283,8 @@ namespace OpenMSViewer
     ImagingSummary imagingSummary_;
     QStringList recentFiles_;
     QString lastPrimaryPath_;
+    QString featureSavePath_;
+    QUndoStack* featureUndoStack_{nullptr};
     QMap<QString, bool> dockVisibilityPreference_;
     bool updatingSpectrumIndex_{false};
     bool hasOswData_{false};

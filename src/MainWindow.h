@@ -276,6 +276,7 @@ namespace OpenMSViewer
     QAction* clearSpectrumLabelsAction_{nullptr};
     QAction* undoFeatureAction_{nullptr};
     QAction* redoFeatureAction_{nullptr};
+    QAction* editFeaturesModeAction_{nullptr};
     QMenu* recentFilesMenu_{nullptr};
     QComboBox* spectrumLevel_{nullptr};
     QSpinBox* spectrumIndex_{nullptr};

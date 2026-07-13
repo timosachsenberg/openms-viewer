@@ -866,6 +866,13 @@ namespace OpenMSViewer
     redoFeatureAction_->setObjectName(QStringLiteral("redoFeatureEdit"));
     undoFeatureAction_->setShortcut(QKeySequence::Undo);
     redoFeatureAction_->setShortcut(QKeySequence::Redo);
+    editFeaturesModeAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/interaction-edit.svg")), tr("Edit features mode (E)"), this);
+    editFeaturesModeAction_->setObjectName(QStringLiteral("peakMapEditMode"));
+    editFeaturesModeAction_->setCheckable(true);
+    editFeaturesModeAction_->setData(3);
+    editFeaturesModeAction_->setToolTip(
+      tr("Edit features — drag a feature or click empty space (E)"));
 
     zoomBackAction_ = new QAction(style()->standardIcon(QStyle::SP_ArrowBack), tr("Previous view"), this);
     zoomBackAction_->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Left));
@@ -1172,6 +1179,8 @@ namespace OpenMSViewer
     auto* editMenu = menuBar()->addMenu(tr("&Edit"));
     editMenu->addAction(undoFeatureAction_);
     editMenu->addAction(redoFeatureAction_);
+    editMenu->addSeparator();
+    editMenu->addAction(editFeaturesModeAction_);
 
     // View holds only global chrome; peak-map and spectrum options now live in
     // the peak-map / spectrum panel control bars.
@@ -1282,26 +1291,51 @@ namespace OpenMSViewer
     peakMapControlBar_->addAction(zoomBackAction_);
     peakMapControlBar_->addAction(resetViewAction_);
 
-    auto* modeLabel = new QLabel(tr("Mode"), peakMapControlBar_);
-    modeLabel->setObjectName(QStringLiteral("peakMapModeLabel"));
-    peakMapControlBar_->addWidget(modeLabel);
-    auto* interactionMode = new QComboBox(peakMapControlBar_);
-    interactionMode->setObjectName(QStringLiteral("peakMapInteractionMode"));
-    interactionMode->setIconSize(QSize(20, 20));
-    interactionMode->addItem(QIcon(QStringLiteral(":/icons/interaction-zoom.svg")), tr("Zoom (Z)"));
-    interactionMode->addItem(QIcon(QStringLiteral(":/icons/interaction-pan.svg")), tr("Pan (P)"));
-    interactionMode->addItem(QIcon(QStringLiteral(":/icons/interaction-measure.svg")), tr("Measure (M)"));
-    interactionMode->addItem(QIcon(QStringLiteral(":/icons/interaction-edit.svg")), tr("Edit features (E)"));
-    interactionMode->setToolTip(tr("Choose what dragging in the peak map does"));
-    interactionMode->setAccessibleName(tr("Peak-map interaction mode"));
-    peakMapControlBar_->addWidget(interactionMode);
-    connect(interactionMode, qOverload<int>(&QComboBox::currentIndexChanged),
-            peakMap_, &PeakMapWidget::setInteractionMode);
-    connect(peakMap_, &PeakMapWidget::interactionModeChanged, interactionMode,
-            [interactionMode](int modeIndex)
+    auto* interactionModes = new QWidget(peakMapControlBar_);
+    interactionModes->setObjectName(QStringLiteral("peakMapInteractionModes"));
+    auto* interactionLayout = new QHBoxLayout(interactionModes);
+    interactionLayout->setContentsMargins(0, 0, 0, 0);
+    interactionLayout->setSpacing(1);
+    auto* interactionGroup = new QActionGroup(interactionModes);
+    interactionGroup->setObjectName(QStringLiteral("peakMapInteractionModeGroup"));
+    interactionGroup->setExclusive(true);
+    const auto addInteractionButton = [&](int id, const QString& objectName,
+                                          const QString& iconPath, const QString& hint)
+    {
+      auto* action = new QAction(QIcon(iconPath), hint, interactionGroup);
+      action->setObjectName(objectName + QStringLiteral("Action"));
+      action->setCheckable(true);
+      action->setData(id);
+      action->setToolTip(hint);
+      auto* button = new QToolButton(interactionModes);
+      button->setObjectName(objectName);
+      button->setDefaultAction(action);
+      button->setIconSize(QSize(22, 22));
+      button->setAutoRaise(true);
+      button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+      button->setAccessibleName(hint);
+      interactionLayout->addWidget(button);
+      return action;
+    };
+    auto* zoomMode = addInteractionButton(
+      0, QStringLiteral("peakMapZoomMode"), QStringLiteral(":/icons/interaction-zoom.svg"),
+      tr("Zoom — drag a rectangle (Z)"));
+    addInteractionButton(
+      1, QStringLiteral("peakMapPanMode"), QStringLiteral(":/icons/interaction-pan.svg"),
+      tr("Pan — drag to move the view (P)"));
+    addInteractionButton(
+      2, QStringLiteral("peakMapMeasureMode"), QStringLiteral(":/icons/interaction-measure.svg"),
+      tr("Measure — drag between peaks (M)"));
+    interactionGroup->addAction(editFeaturesModeAction_);
+    zoomMode->setChecked(true);
+    peakMapControlBar_->addWidget(interactionModes);
+    connect(interactionGroup, &QActionGroup::triggered, peakMap_,
+            [this](QAction* action) { peakMap_->setInteractionMode(action->data().toInt()); });
+    connect(peakMap_, &PeakMapWidget::interactionModeChanged, interactionGroup,
+            [interactionGroup](int modeIndex)
             {
-              const QSignalBlocker blocker(interactionMode);
-              interactionMode->setCurrentIndex(modeIndex);
+              for (QAction* action : interactionGroup->actions())
+                if (action->data().toInt() == modeIndex) { action->setChecked(true); break; }
             });
 
     auto* colorLabel = new QLabel(tr("Color"), peakMapControlBar_);
@@ -2274,6 +2308,8 @@ namespace OpenMSViewer
       peakMapControlBar_->setEnabled(enabled);
       peakMapControlBar_->setVisible(enabled);
     }
+    if (editFeaturesModeAction_) editFeaturesModeAction_->setEnabled(enabled);
+    if (!enabled && peakMap_) peakMap_->setInteractionMode(0);
     resetViewAction_->setEnabled(enabled);
     if (!enabled) zoomBackAction_->setEnabled(false);
   }

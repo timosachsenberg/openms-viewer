@@ -11,7 +11,9 @@
 #include <QDialogButtonBox>
 #include <QDebug>
 #include <QDoubleSpinBox>
+#include <QEnterEvent>
 #include <QFormLayout>
+#include <QIcon>
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QPainter>
@@ -1334,8 +1336,28 @@ namespace OpenMSViewer
 
   void PeakMapWidget::updateInteractionCursor()
   {
-    if (interactionMode_ == PeakMapInteractionMode::Pan) setCursor(Qt::OpenHandCursor);
-    else setCursor(Qt::CrossCursor);
+    const auto useIcon = [this](const QString& path, const QPoint& hotSpot,
+                                Qt::CursorShape fallback)
+    {
+      const QPixmap pixmap = QIcon(path).pixmap(QSize(32, 32));
+      if (pixmap.isNull()) setCursor(fallback);
+      else setCursor(QCursor(pixmap, hotSpot.x(), hotSpot.y()));
+    };
+    switch (interactionMode_)
+    {
+      case PeakMapInteractionMode::Zoom:
+        useIcon(QStringLiteral(":/icons/interaction-zoom.svg"), {4, 4}, Qt::CrossCursor);
+        break;
+      case PeakMapInteractionMode::Pan:
+        useIcon(QStringLiteral(":/icons/interaction-pan.svg"), {16, 16}, Qt::OpenHandCursor);
+        break;
+      case PeakMapInteractionMode::Measure:
+        useIcon(QStringLiteral(":/icons/interaction-measure.svg"), {4, 4}, Qt::CrossCursor);
+        break;
+      case PeakMapInteractionMode::Edit:
+        useIcon(QStringLiteral(":/icons/interaction-edit.svg"), {5, 26}, Qt::PointingHandCursor);
+        break;
+    }
   }
 
   std::optional<std::size_t> PeakMapWidget::nearestIdentification(const QPointF& position) const
@@ -1684,6 +1706,12 @@ namespace OpenMSViewer
       return;
     }
     QWidget::mouseDoubleClickEvent(event);
+  }
+
+  void PeakMapWidget::enterEvent(QEnterEvent* event)
+  {
+    updateInteractionCursor();
+    QWidget::enterEvent(event);
   }
 
   void PeakMapWidget::leaveEvent(QEvent* event)

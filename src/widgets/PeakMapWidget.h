@@ -17,6 +17,7 @@
 #include <optional>
 #include <vector>
 
+class QEnterEvent;
 class QKeyEvent;
 
 namespace OpenMSViewer
@@ -131,6 +132,7 @@ namespace OpenMSViewer
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void enterEvent(QEnterEvent* event) override;
     void leaveEvent(QEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
 

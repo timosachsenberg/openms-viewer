@@ -18,6 +18,8 @@
 #include "widgets/DataLayersWidget.h"
 #include "widgets/FaimsPanelWidget.h"
 #include "widgets/FeatureTableWidget.h"
+#include "widgets/HelpDialog.h"
+#include "widgets/TableClipboard.h"
 #include "widgets/IdentificationTableWidget.h"
 #include "widgets/SpectrumTableWidget.h"
 #include "widgets/IonMobilityPanelWidget.h"
@@ -52,6 +54,8 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QStyleHints>
+#include <QTableView>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QKeySequence>
@@ -616,14 +620,28 @@ namespace OpenMSViewer
     // panel the restored layout left floating.
     for (QDockWidget* dock : findChildren<QDockWidget*>())
       if (dock->isFloating()) dock->setFloating(false);
-    const bool dark = settings.value(QStringLiteral("appearance/dark"), false).toBool();
-    darkThemeAction_->setChecked(dark);
-    setDarkTheme(dark);
+    // Theme mode: prefer the new tri-state key, fall back to the legacy boolean,
+    // default to following the OS on a fresh install.
+    QString themeMode;
+    if (settings.contains(QStringLiteral("appearance/themeMode")))
+      themeMode = settings.value(QStringLiteral("appearance/themeMode")).toString();
+    else if (settings.contains(QStringLiteral("appearance/dark")))
+      themeMode = settings.value(QStringLiteral("appearance/dark")).toBool()
+                    ? QStringLiteral("dark") : QStringLiteral("light");
+    else
+      themeMode = QStringLiteral("system");
+    if (themeMode == QLatin1String("dark")) themeDarkAction_->setChecked(true);
+    else if (themeMode == QLatin1String("light")) themeLightAction_->setChecked(true);
+    else themeSystemAction_->setChecked(true);
+    applyThemeMode();
     const bool spectrumGrid = settings.value(QStringLiteral("appearance/spectrumGrid"), true).toBool();
     showSpectrumGridAction_->setChecked(spectrumGrid);
     spectrum_->setShowGrid(spectrumGrid);
     peakMapRasterWidth_->setValue(settings.value(
       QStringLiteral("peakMap/rasterWidth"), PeakMapWidget::DefaultRasterWidth).toInt());
+    syncDisplayPreferences(/*save=*/false);
+    // Ctrl+C on any results table copies the current selection as TSV.
+    for (QTableView* view : findChildren<QTableView*>()) enableTsvClipboardCopy(view);
     recentFiles_ = settings.value(QStringLiteral("files/recent")).toStringList();
     lastPrimaryPath_ = settings.value(QStringLiteral("files/lastPrimary")).toString();
     rebuildRecentFiles();
@@ -923,9 +941,22 @@ namespace OpenMSViewer
       tr("Show the zoomed region as a rotatable 3-D intensity surface (zoom in first)"));
     connect(surface3DAction_, &QAction::triggered, this, &MainWindow::show3DSurface);
 
-    darkThemeAction_ = new QAction(tr("Dark theme"), this);
-    darkThemeAction_->setCheckable(true);
-    connect(darkThemeAction_, &QAction::toggled, this, &MainWindow::setDarkTheme);
+    themeSystemAction_ = new QAction(tr("System"), this);
+    themeLightAction_ = new QAction(tr("Light"), this);
+    themeDarkAction_ = new QAction(tr("Dark"), this);
+    auto* themeGroup = new QActionGroup(this);
+    for (QAction* themeAction : {themeSystemAction_, themeLightAction_, themeDarkAction_})
+    {
+      themeAction->setCheckable(true);
+      themeGroup->addAction(themeAction);
+      connect(themeAction, &QAction::triggered, this, &MainWindow::applyThemeMode);
+    }
+    themeSystemAction_->setChecked(true);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    // Re-apply automatically when the OS flips light/dark while "System" is active.
+    connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this,
+            [this] { if (themeSystemAction_->isChecked()) applyThemeMode(); });
+#endif
 
     showMinimapAction_ = new QAction(tr("Peak-map minimap"), this);
     showMinimapAction_->setCheckable(true);
@@ -1189,7 +1220,10 @@ namespace OpenMSViewer
     // View holds only global chrome; peak-map and spectrum options now live in
     // the peak-map / spectrum panel control bars.
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
-    viewMenu->addAction(darkThemeAction_);
+    auto* themeMenu = viewMenu->addMenu(tr("Theme"));
+    themeMenu->addAction(themeSystemAction_);
+    themeMenu->addAction(themeLightAction_);
+    themeMenu->addAction(themeDarkAction_);
     viewMenu->addAction(rtInMinutesAction_);
     auto* layoutMenu = viewMenu->addMenu(tr("Layout"));
     const auto addPreset = [this, layoutMenu](const QString& text, LayoutPreset preset, const QString& objectName)
@@ -1257,24 +1291,13 @@ namespace OpenMSViewer
            "title and are offered for saving before they are replaced or closed.\n\n"
            "Tip: you can select several related files in one Open dialog, or drag them onto the window."));
     });
-    auto* shortcutsAction = new QAction(tr("Plot interactions and shortcuts…"), this);
+    auto* shortcutsAction = new QAction(tr("Help & reference…"), this);
     shortcutsAction->setShortcut(QKeySequence::HelpContents);
     addAction(shortcutsAction);
     helpMenu->addAction(shortcutsAction);
     connect(shortcutsAction, &QAction::triggered, this, [this]
     {
-      QMessageBox::information(this, tr("Plot interactions and shortcuts"),
-        tr("Peak map\n"
-           "  Z: zoom mode   P: pan mode   M: measure mode\n"
-           "  Wheel: zoom at cursor   Double-click/Home: reset view\n"
-           "  Alt/Ctrl-drag: temporary pan   Shift-drag: temporary measure\n"
-           "  Alt+Left: previous view\n\n"
-           "Spectrum and traces\n"
-           "  Wheel: zoom   drag: select range   double-click: reset\n"
-           "  Ctrl+M: measure spectrum peak distance\n\n"
-           "Files and window\n"
-           "  Ctrl+O: open   Ctrl+S: save features   Ctrl+Z/Y: undo/redo feature edit\n"
-           "  Ctrl+R: reload   Ctrl+W: close data   F11: fullscreen"));
+      HelpDialog::showHelp(this);
     });
     helpMenu->addAction(tr("About OpenMS Viewer"), this, [this]
     {
@@ -3842,6 +3865,72 @@ namespace OpenMSViewer
     for (QWidget* widget : findChildren<QWidget*>()) widget->update();
   }
 
+  bool MainWindow::systemPrefersDark()
+  {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    return QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
+#else
+    // Qt < 6.5 has no colour-scheme query; approximate from the platform palette.
+    const QColor window = QApplication::palette().color(QPalette::Window);
+    const double luminance =
+      0.299 * window.redF() + 0.587 * window.greenF() + 0.114 * window.blueF();
+    return luminance < 0.5;
+#endif
+  }
+
+  void MainWindow::applyThemeMode()
+  {
+    const bool dark = themeDarkAction_->isChecked()
+                      || (themeSystemAction_->isChecked() && systemPrefersDark());
+    setDarkTheme(dark);
+  }
+
+  void MainWindow::syncDisplayPreferences(bool save)
+  {
+    QSettings settings;
+    // Checkable view toggles. The same list drives save and restore.
+    const std::pair<QLatin1String, QAction*> toggles[] = {
+      {QLatin1String("view/rtInMinutes"), rtInMinutesAction_},
+      {QLatin1String("peakMap/swapAxes"), swapAxesAction_},
+      {QLatin1String("peakMap/showMinimap"), showMinimapAction_},
+      {QLatin1String("spectrum/relativeIntensity"), relativeIntensityAction_},
+      {QLatin1String("spectrum/autoYScale"), autoYScaleAction_},
+      {QLatin1String("spectrum/mirror"), mirrorSpectrumAction_},
+      {QLatin1String("spectrum/annotate"), annotateSpectrumAction_},
+      {QLatin1String("spectrum/showMzLabels"), showMzLabelsAction_},
+      {QLatin1String("spectrum/showUnmatchedIons"), showUnmatchedIonsAction_},
+      {QLatin1String("overlay/centroids"), showCentroidsAction_},
+      {QLatin1String("overlay/featureBounds"), showFeatureBoundsAction_},
+      {QLatin1String("overlay/featureHulls"), showFeatureHullsAction_},
+      {QLatin1String("overlay/identifications"), showIdentificationsAction_},
+      {QLatin1String("overlay/identificationSequences"), showIdentificationSequencesAction_},
+      {QLatin1String("overlay/precursors"), showPrecursorsAction_},
+      {QLatin1String("overlay/consensus"), showConsensusAction_},
+    };
+    for (const auto& [key, action] : toggles)
+    {
+      if (!action) continue;
+      if (save) settings.setValue(key, action->isChecked());
+      else if (settings.contains(key)) action->setChecked(settings.value(key).toBool());
+    }
+    // Combos are looked up by object name so they need not be promoted to members.
+    const auto syncCombo = [&](QLatin1String key, QLatin1String objectName)
+    {
+      auto* combo = findChild<QComboBox*>(objectName);
+      if (!combo) return;
+      if (save) settings.setValue(key, combo->currentIndex());
+      else if (settings.contains(key)) combo->setCurrentIndex(settings.value(key).toInt());
+    };
+    syncCombo(QLatin1String("peakMap/colorMap"), QLatin1String("peakMapColorMap"));
+    syncCombo(QLatin1String("peakMap/intensityScale"), QLatin1String("peakMapIntensityScale"));
+    if (annotationTolerance_)
+    {
+      const QLatin1String key("spectrum/annotationTolerance");
+      if (save) settings.setValue(key, annotationTolerance_->value());
+      else if (settings.contains(key)) annotationTolerance_->setValue(settings.value(key).toDouble());
+    }
+  }
+
   void MainWindow::closeEvent(QCloseEvent* event)
   {
     if (!confirmFeatureChanges(tr("exit OpenMS Viewer")))
@@ -3852,9 +3941,13 @@ namespace OpenMSViewer
     QSettings settings;
     settings.setValue(QStringLiteral("main/geometry"), saveGeometry());
     settings.setValue(QStringLiteral("main/state"), saveState());
-    settings.setValue(QStringLiteral("appearance/dark"), darkThemeAction_->isChecked());
+    const QString themeMode = themeDarkAction_->isChecked()  ? QStringLiteral("dark")
+                              : themeLightAction_->isChecked() ? QStringLiteral("light")
+                                                               : QStringLiteral("system");
+    settings.setValue(QStringLiteral("appearance/themeMode"), themeMode);
     settings.setValue(QStringLiteral("appearance/spectrumGrid"), showSpectrumGridAction_->isChecked());
     settings.setValue(QStringLiteral("peakMap/rasterWidth"), peakMapRasterWidth_->value());
+    syncDisplayPreferences(/*save=*/true);
     settings.setValue(QStringLiteral("files/recent"), recentFiles_);
     settings.setValue(QStringLiteral("files/lastPrimary"), lastPrimaryPath_);
     for (auto it = dockVisibilityPreference_.cbegin(); it != dockVisibilityPreference_.cend(); ++it)

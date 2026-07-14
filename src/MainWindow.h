@@ -84,6 +84,14 @@ namespace OpenMSViewer
     void selectFeature(std::size_t index);
     void selectIdentification(std::size_t index, std::size_t hitIndex = 0);
     void setDarkTheme(bool dark);
+    // Apply the currently selected theme mode (System/Light/Dark) to the palette.
+    void applyThemeMode();
+    // True when the OS reports a dark colour scheme (Qt 6.5+); otherwise inferred
+    // from the startup palette luminance as a best-effort fallback.
+    static bool systemPrefersDark();
+    // Persist (save=true) or restore (save=false) per-panel display preferences.
+    // A single key list drives both directions so they cannot drift apart.
+    void syncDisplayPreferences(bool save);
     void setFaimsChannel(int channelIndex);
     void selectImagingSpectrum(std::size_t index);
     void exportMzML();
@@ -250,7 +258,9 @@ namespace OpenMSViewer
     QAction* spectrumLastAction_{nullptr};
     QAction* swapAxesAction_{nullptr};
     QAction* surface3DAction_{nullptr};
-    QAction* darkThemeAction_{nullptr};
+    QAction* themeSystemAction_{nullptr};
+    QAction* themeLightAction_{nullptr};
+    QAction* themeDarkAction_{nullptr};
     QAction* showMinimapAction_{nullptr};
     QAction* rtInMinutesAction_{nullptr};
     QAction* relativeIntensityAction_{nullptr};

@@ -155,6 +155,13 @@ jobs:
           cmake --install "$OPENMS_BUILD" --component cmake
           cmake --install "$OPENMS_BUILD" --component share
 
+          # OpenMS develop builds BrukerTimsImagingFile into OpenMS.dll, but
+          # currently omits its public header from the OpenMS_headers install
+          # component. Keep the standalone SDK complete for the viewer build.
+          cmake -E copy_if_different \
+            "$OPENMS_SOURCE/src/openms/include/OpenMS/FORMAT/BrukerTimsImagingFile.h" \
+            "$OPENMS_INSTALL/include/OpenMS/FORMAT/BrukerTimsImagingFile.h"
+
       - name: Build and install OpenMS Viewer
         shell: bash
         run: |

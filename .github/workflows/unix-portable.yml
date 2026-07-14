@@ -7,6 +7,10 @@ on:
       - .github/workflows/unix-portable.yml
       - cmake/DeployRuntimeDependencies.cmake
       - cmake/FixupMacBundle.cmake
+      # The packaged app compiles + smoke-runs here, so exercise it when the
+      # portable runtime code or build config changes, not just the workflow.
+      - src/**
+      - CMakeLists.txt
 
 permissions:
   contents: read
@@ -131,8 +135,10 @@ jobs:
           # libicui18n.so.73. Install the exact upstream ICU 73.2 runtime into
           # /usr/local/lib (also picked up by the later dependency-deploy step).
           icu_tgz="$RUNNER_TEMP/icu4c-73_2-Ubuntu22.04-x64.tgz"
+          icu_sha256=ce669c2a36d735dfc36375e8536e030b0b79c5f0bc67025a6413fc1404b07e8b
           curl -fsSL -o "$icu_tgz" \
             "https://github.com/unicode-org/icu/releases/download/release-73-2/icu4c-73_2-Ubuntu22.04-x64.tgz"
+          echo "$icu_sha256  $icu_tgz" | sha256sum -c -
           mkdir -p "$RUNNER_TEMP/icu"
           tar -xzf "$icu_tgz" -C "$RUNNER_TEMP/icu"
           sudo find "$RUNNER_TEMP/icu" -name 'libicu*.so.73*' -exec cp -a {} /usr/local/lib/ \;

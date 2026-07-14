@@ -1,13 +1,31 @@
 cmake_minimum_required(VERSION 3.24)
 
-foreach(_required IN ITEMS EXECUTABLE DESTINATION SEARCH_DIRECTORIES)
+foreach(_required IN ITEMS DESTINATION SEARCH_DIRECTORIES)
   if(NOT DEFINED ${_required} OR "${${_required}}" STREQUAL "")
     message(FATAL_ERROR "${_required} must be passed with -D${_required}=...")
   endif()
 endforeach()
 
-if(NOT EXISTS "${EXECUTABLE}")
-  message(FATAL_ERROR "Executable does not exist: ${EXECUTABLE}")
+if((NOT DEFINED EXECUTABLE OR "${EXECUTABLE}" STREQUAL "")
+   AND (NOT DEFINED LIBRARIES OR "${LIBRARIES}" STREQUAL ""))
+  message(FATAL_ERROR "At least one of EXECUTABLE or LIBRARIES must be passed")
+endif()
+
+set(_dependency_roots)
+if(DEFINED EXECUTABLE AND NOT "${EXECUTABLE}" STREQUAL "")
+  if(NOT EXISTS "${EXECUTABLE}")
+    message(FATAL_ERROR "Executable does not exist: ${EXECUTABLE}")
+  endif()
+  list(APPEND _dependency_roots EXECUTABLES "${EXECUTABLE}")
+endif()
+
+if(DEFINED LIBRARIES AND NOT "${LIBRARIES}" STREQUAL "")
+  foreach(_library IN LISTS LIBRARIES)
+    if(NOT EXISTS "${_library}")
+      message(FATAL_ERROR "Runtime library does not exist: ${_library}")
+    endif()
+  endforeach()
+  list(APPEND _dependency_roots LIBRARIES ${LIBRARIES})
 endif()
 
 file(MAKE_DIRECTORY "${DESTINATION}")
@@ -41,10 +59,20 @@ if(WIN32)
     ".*[\\/][Ss][Yy][Ss][Tt][Ee][Mm]32[\\/].*"
   )
 elseif(APPLE)
-  set(_pre_excludes "/usr/lib/.*" "/System/.*")
-  set(_post_excludes)
-else()
   set(_pre_excludes)
+  set(_post_excludes "^/usr/lib/.*" "^/System/.*")
+else()
+  # Exclude the glibc/loader ABI surface before resolution. In particular,
+  # linux-vdso has no filesystem path and would otherwise be reported as an
+  # unresolved portable dependency.
+  set(_pre_excludes
+    "^linux-vdso.*"
+    "^ld-linux-.*"
+    "^libc\\.so.*"
+    "^libdl\\.so.*"
+    "^libm\\.so.*"
+    "^libpthread\\.so.*"
+  )
   set(_post_excludes
     ".*/ld-linux-.*"
     ".*/linux-vdso.*"
@@ -56,7 +84,7 @@ else()
 endif()
 
 file(GET_RUNTIME_DEPENDENCIES
-  EXECUTABLES "${EXECUTABLE}"
+  ${_dependency_roots}
   DIRECTORIES ${_search_directories}
   RESOLVED_DEPENDENCIES_VAR _resolved_dependencies
   UNRESOLVED_DEPENDENCIES_VAR _unresolved_dependencies

@@ -1,0 +1,618 @@
+name: Linux and macOS portable packages
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/unix-portable.yml
+      - cmake/DeployRuntimeDependencies.cmake
+      - cmake/FixupMacBundle.cmake
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unix-portable-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  QT_VERSION: 6.8.3
+  DOTNET_SDK_VERSION: 8.0.x
+  OPENMS_SOURCE: ${{ github.workspace }}/_deps/OpenMS
+  OPENMS_CONTRIB: ${{ github.workspace }}/_deps/contrib
+  OPENMS_CONTRIB_SOURCE: ${{ github.workspace }}/_deps/contrib-source
+  OPENMS_BUILD: ${{ github.workspace }}/_build/OpenMS
+  OPENMS_INSTALL: ${{ github.workspace }}/_install/OpenMS
+  VIEWER_BUILD: ${{ github.workspace }}/_build/viewer
+  VIEWER_STAGE: ${{ github.workspace }}/_stage/OpenMSViewer
+  THERMO_TEST_DATA: ${{ github.workspace }}/_deps/OpenMS/src/tests/topp/THIRDPARTY/ginkgotoxin-ms-switching.raw
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+
+jobs:
+  package-unix:
+    name: ${{ matrix.platform }} ${{ matrix.arch }} portable ZIP
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 210
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux
+            runner: ubuntu-24.04
+            arch: x64
+            qt_host: linux
+            qt_arch: linux_gcc_64
+            contrib_asset: contrib_build-Linux.tar.gz
+            deployment_target: ''
+          - platform: macOS
+            runner: macos-15
+            arch: arm64
+            qt_host: mac
+            qt_arch: homebrew-arm64
+            contrib_asset: contrib_build-macOS.tar.gz
+            deployment_target: '14.0'
+    env:
+      PACKAGE_PLATFORM: ${{ matrix.platform }}
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
+
+    steps:
+      - name: Check out OpenMS Viewer
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Check out OpenMS develop
+        uses: actions/checkout@v6
+        with:
+          repository: OpenMS/OpenMS
+          ref: develop
+          path: _deps/OpenMS
+          persist-credentials: false
+
+      - name: Record source revisions
+        shell: bash
+        run: |
+          viewer_sha=$(git rev-parse HEAD)
+          openms_sha=$(git -C "$OPENMS_SOURCE" rev-parse HEAD)
+          echo "VIEWER_SHA=$viewer_sha" >> "$GITHUB_ENV"
+          echo "OPENMS_SHA=$openms_sha" >> "$GITHUB_ENV"
+          echo "OPENMS_SHORT_SHA=${openms_sha:0:12}" >> "$GITHUB_ENV"
+
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libgl1-mesa-dev \
+            libxcb-cursor0 \
+            libxcb-xinerama0 \
+            libxkbcommon-x11-0 \
+            ninja-build \
+            patchelf \
+            zip
+
+      - name: Install macOS packaging tools
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+        run: |
+          brew install libomp ninja qtbase qtsvg qtimageformats
+          echo "HOMEBREW_PREFIX=$(brew --prefix)" >> "$GITHUB_ENV"
+          echo "QT_ROOT_DIR=$(brew --prefix qtbase)" >> "$GITHUB_ENV"
+          echo "QT_EXTRA_PREFIXES=$(brew --prefix qtsvg);$(brew --prefix qtimageformats)" >> "$GITHUB_ENV"
+
+      - name: Install Qt
+        if: runner.os == 'Linux'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: ${{ matrix.qt_host }}
+          target: desktop
+          arch: ${{ matrix.qt_arch }}
+          archives: qtbase qtsvg qtimageformats
+          cache: true
+
+      - name: Record Qt installation
+        shell: bash
+        run: |
+          qtpaths="$QT_ROOT_DIR/bin/qtpaths6"
+          if [[ ! -x "$qtpaths" ]]; then
+            qtpaths="$QT_ROOT_DIR/bin/qtpaths"
+          fi
+          test -x "$qtpaths"
+          echo "DEPLOYED_QT_VERSION=$($qtpaths --query QT_VERSION)" >> "$GITHUB_ENV"
+          echo "QT_PLUGIN_DIR=$($qtpaths --query QT_INSTALL_PLUGINS)" >> "$GITHUB_ENV"
+
+      - name: Install .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Download OpenMS contrib dependencies
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONTRIB_ASSET: ${{ matrix.contrib_asset }}
+        run: |
+          contrib_tag=$(gh release view --repo OpenMS/contrib --json tagName --jq .tagName)
+          echo "CONTRIB_TAG=$contrib_tag" >> "$GITHUB_ENV"
+          mkdir -p "$OPENMS_CONTRIB"
+          gh release download "$contrib_tag" \
+            --repo OpenMS/contrib \
+            --pattern "$CONTRIB_ASSET" \
+            --dir "$OPENMS_CONTRIB"
+          tar xzf "$OPENMS_CONTRIB/$CONTRIB_ASSET" -C "$OPENMS_CONTRIB"
+          rm "$OPENMS_CONTRIB/$CONTRIB_ASSET"
+          git clone --depth 1 --branch "$contrib_tag" \
+            https://github.com/OpenMS/contrib.git "$OPENMS_CONTRIB_SOURCE"
+
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            representative=$(find "$OPENMS_CONTRIB/lib" -type f -name '*.dylib' -print -quit)
+            test -n "$representative"
+            lipo -archs "$representative" | grep -qw arm64
+          else
+            representative=$(find "$OPENMS_CONTRIB/lib" -type f -name '*.so.*' -print -quit)
+            test -n "$representative"
+            file "$representative" | grep -q 'x86-64'
+          fi
+
+      - name: Configure OpenMS core
+        shell: bash
+        run: |
+          cmake_prefix="$QT_ROOT_DIR/lib/cmake;$QT_ROOT_DIR;$OPENMS_CONTRIB"
+          openmp_args=()
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            openmp_root=$(brew --prefix libomp)
+            cmake_prefix="$cmake_prefix;$QT_EXTRA_PREFIXES;$HOMEBREW_PREFIX;$openmp_root"
+            openmp_args+=("-DOpenMP_ROOT=$openmp_root")
+          fi
+
+          cmake -S "$OPENMS_SOURCE" -B "$OPENMS_BUILD" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$OPENMS_INSTALL" \
+            -DCMAKE_PREFIX_PATH="$cmake_prefix" \
+            -DOPENMS_CONTRIB_LIBS="$OPENMS_CONTRIB" \
+            -DPYOPENMS=OFF \
+            -DWITH_GUI=OFF \
+            -DWITH_THERMO_RAW=ON \
+            -DWITH_OPENTIMS=ON \
+            -DWITH_WNETALIGN=OFF \
+            -DWITH_HDF5=OFF \
+            -DWITH_ONNX=OFF \
+            -DMT_ENABLE_OPENMP=ON \
+            -DARROW_USE_STATIC=ON \
+            -DUSE_EXTERNAL_JSON=OFF \
+            -DUSE_EXTERNAL_SQLITECPP=OFF \
+            -DUSE_EXTERNAL_SIMDE=OFF \
+            -DENABLE_TUTORIALS=OFF \
+            -DENABLE_DOCS=OFF \
+            -DENABLE_CLASS_TESTING=OFF \
+            -DENABLE_TOPP_TESTING=OFF \
+            -DENABLE_PIPELINE_TESTING=OFF \
+            -DENABLE_STYLE_TESTING=OFF \
+            -DENABLE_THERMO_RAW_TESTS=OFF \
+            -DENABLE_UPDATE_CHECK=OFF \
+            -DGIT_TRACKING=OFF \
+            -DHAS_XSERVER=OFF \
+            -DPACKAGE_TYPE=none \
+            "${openmp_args[@]}"
+
+      - name: Build and install OpenMS core
+        shell: bash
+        run: |
+          cmake --build "$OPENMS_BUILD" --target OpenMS OpenSwathAlgo
+          cmake --install "$OPENMS_BUILD" --component library --strip
+          cmake --install "$OPENMS_BUILD" --component OpenMS_headers
+          cmake --install "$OPENMS_BUILD" --component OpenSwathAlgo_headers
+          cmake --install "$OPENMS_BUILD" --component thirdparty_headers
+          cmake --install "$OPENMS_BUILD" --component cmake
+          cmake --install "$OPENMS_BUILD" --component share
+
+          # OpenMS develop currently builds this header into the library without
+          # adding it to the public-header install component.
+          cmake -E copy_if_different \
+            "$OPENMS_SOURCE/src/openms/include/OpenMS/FORMAT/BrukerTimsImagingFile.h" \
+            "$OPENMS_INSTALL/include/OpenMS/FORMAT/BrukerTimsImagingFile.h"
+
+      - name: Build and install OpenMS Viewer
+        shell: bash
+        run: |
+          test -f "$OPENMS_INSTALL/CMake/OpenMSConfig.cmake"
+          cmake_prefix="$QT_ROOT_DIR/lib/cmake;$QT_ROOT_DIR;$OPENMS_CONTRIB;$OPENMS_INSTALL"
+          viewer_args=()
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            openmp_root=$(brew --prefix libomp)
+            cmake_prefix="$cmake_prefix;$QT_EXTRA_PREFIXES;$HOMEBREW_PREFIX;$openmp_root"
+            viewer_args+=("-DOpenMP_ROOT=$openmp_root")
+            viewer_args+=("-DCMAKE_INSTALL_RPATH=@executable_path/../Frameworks")
+          else
+            viewer_args+=("-DCMAKE_INSTALL_RPATH=\$ORIGIN/../lib")
+          fi
+
+          cmake -S "$GITHUB_WORKSPACE" -B "$VIEWER_BUILD" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$VIEWER_STAGE" \
+            -DCMAKE_PREFIX_PATH="$cmake_prefix" \
+            -DOPENMS_CONTRIB_LIBS="$OPENMS_CONTRIB" \
+            -DOpenMS_DIR="$OPENMS_INSTALL/CMake" \
+            -DOPENMS_VIEWER_BUILD_TESTS=OFF \
+            -DOPENMS_VIEWER_BUILD_THERMO_SMOKE=ON \
+            "${viewer_args[@]}"
+          cmake --build "$VIEWER_BUILD" --target openms-viewer openms-viewer-thermo-smoke
+          cmake --install "$VIEWER_BUILD"
+
+      - name: Bundle .NET 8 runtime
+        shell: bash
+        run: |
+          runtime_line=$(dotnet --list-runtimes | \
+            awk '$1 == "Microsoft.NETCore.App" && $2 ~ /^8\./ { line=$0 } END { print line }')
+          if [[ -z "$runtime_line" ]]; then
+            echo "The .NET 8 runtime installed with the SDK was not found." >&2
+            exit 1
+          fi
+          runtime_version=$(awk '{ print $2 }' <<< "$runtime_line")
+          runtime_parent=$(sed -E 's/.*\[([^]]+)\]$/\1/' <<< "$runtime_line")
+          source_dotnet_root=$(cd "$runtime_parent/../.." && pwd -P)
+          runtime_source="$runtime_parent/$runtime_version"
+
+          fxr_version=$(dotnet --info | \
+            awk '/^Host:/{ in_host=1; next } in_host && $1 == "Version:" { print $2; exit }')
+          fxr_source="$source_dotnet_root/host/fxr/$fxr_version"
+          test -d "$runtime_source"
+          test -d "$fxr_source"
+
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            # Keep the runtime outside the .app until BundleUtilities has
+            # rewritten the viewer dependency graph. Otherwise it treats every
+            # executable bit in the .NET runtime as another app executable.
+            target_dotnet_root="$VIEWER_STAGE/.dotnet-runtime"
+          else
+            target_dotnet_root="$VIEWER_STAGE/dotnet"
+          fi
+          mkdir -p \
+            "$target_dotnet_root/shared/Microsoft.NETCore.App" \
+            "$target_dotnet_root/host/fxr"
+          cp -a "$runtime_source" \
+            "$target_dotnet_root/shared/Microsoft.NETCore.App/$runtime_version"
+          cp -a "$fxr_source" "$target_dotnet_root/host/fxr/$fxr_version"
+          cp "$source_dotnet_root/dotnet" "$target_dotnet_root/dotnet"
+          chmod +x "$target_dotnet_root/dotnet"
+          for notice in LICENSE.txt ThirdPartyNotices.txt; do
+            if [[ -f "$source_dotnet_root/$notice" ]]; then
+              cp "$source_dotnet_root/$notice" "$target_dotnet_root/$notice"
+            fi
+          done
+
+          DOTNET_ROOT="$target_dotnet_root" "$target_dotnet_root/dotnet" --list-runtimes
+          echo "DOTNET_RUNTIME_VERSION=$runtime_version" >> "$GITHUB_ENV"
+          echo "DOTNET_FXR_VERSION=$fxr_version" >> "$GITHUB_ENV"
+
+      - name: Add runtime data, licenses, and provenance
+        shell: bash
+        run: |
+          managed_source=$(find "$OPENMS_INSTALL" -type d \
+            -path '*/openms_thermo_bridge/managed' -print -quit)
+          if [[ -z "$managed_source" ]]; then
+            echo "The installed OpenMS Thermo managed bridge was not found." >&2
+            exit 1
+          fi
+
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            bundle_contents="$VIEWER_STAGE/OpenMS Viewer.app/Contents"
+            managed_destination="$bundle_contents/Frameworks/managed"
+            share_destination="$bundle_contents/share/OpenMS"
+          else
+            managed_destination="$VIEWER_STAGE/lib/managed"
+            share_destination="$VIEWER_STAGE/share/OpenMS"
+          fi
+          mkdir -p "$managed_destination" "$share_destination"
+          cp -a "$managed_source/." "$managed_destination/"
+          cp -a "$OPENMS_INSTALL/share/OpenMS/." "$share_destination/"
+
+          license_root="$VIEWER_STAGE/share/licenses"
+          mkdir -p "$license_root"
+          cp "$OPENMS_SOURCE/License.txt" "$license_root/OpenMS-BSD-3-Clause.txt"
+          cp "$OPENMS_CONTRIB_SOURCE/LICENSE.md" "$license_root/OpenMS-contrib.md"
+          cp -a "$OPENMS_CONTRIB_SOURCE/licensetexts" \
+            "$license_root/OpenMS-contrib-licenses"
+          thermo_license=$(find "$OPENMS_BUILD" -name 'ThermoRawFileReader-License.doc' \
+            -type f -print -quit)
+          if [[ -n "$thermo_license" ]]; then
+            cp "$thermo_license" "$license_root/"
+          fi
+          if [[ -d "$QT_ROOT_DIR/LICENSES" ]]; then
+            cp -a "$QT_ROOT_DIR/LICENSES" "$license_root/Qt"
+          fi
+
+          cat > "$VIEWER_STAGE/BUILD-INFO.txt" <<EOF
+          OpenMS Viewer portable $PACKAGE_PLATFORM build
+          Viewer commit: $VIEWER_SHA
+          OpenMS ref: develop
+          OpenMS commit: $OPENMS_SHA
+          OpenMS contrib release: $CONTRIB_TAG
+          OpenMS WITH_GUI: OFF
+          OpenMS WITH_THERMO_RAW: ON
+          OpenMS WITH_OPENTIMS: ON
+          OpenMS OpenMP: ON
+          Qt: $DEPLOYED_QT_VERSION (${{ matrix.qt_arch }})
+          .NET runtime: $DOTNET_RUNTIME_VERSION (hostfxr $DOTNET_FXR_VERSION, ${{ matrix.arch }}, app-local)
+          Architecture: ${{ matrix.arch }}
+          Built at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EOF
+
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            cat > "$VIEWER_STAGE/README-MACOS.txt" <<'EOF'
+          Open "OpenMS Viewer.app". No dependency installation is required.
+
+          This CI artifact is ad-hoc signed, not Apple-notarized. Depending on
+          Gatekeeper settings, the first launch may require Control-clicking the
+          app and choosing Open.
+          EOF
+          else
+            cat > "$VIEWER_STAGE/README-LINUX.txt" <<'EOF'
+          Run bin/openms-viewer. No dependency installation is required.
+
+          The package targets x64 Linux with a glibc baseline matching Ubuntu
+          24.04. A desktop X11 or Wayland session is still required.
+          EOF
+          fi
+
+      - name: Deploy Linux runtime dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          bin="$VIEWER_STAGE/bin"
+          lib="$VIEWER_STAGE/lib"
+          mkdir -p "$lib"
+
+          # Qt discovers these plugin subdirectories relative to the executable.
+          # They are explicit dependency roots because plugins are loaded with
+          # dlopen and therefore are not visible from the executable's ELF graph.
+          for plugin_group in \
+            iconengines imageformats platforminputcontexts platforms tls xcbglintegrations; do
+            if [[ -d "$QT_PLUGIN_DIR/$plugin_group" ]]; then
+              cp -a "$QT_PLUGIN_DIR/$plugin_group" "$bin/$plugin_group"
+            fi
+          done
+
+          mapfile -t plugin_libraries < <(
+            find "$bin" -mindepth 2 -type f \
+              \( -name '*.so' -o -name '*.so.*' \) -print
+          )
+          if (( ${#plugin_libraries[@]} == 0 )); then
+            echo "No deployed Qt plugins were found." >&2
+            exit 1
+          fi
+          plugin_list=$(IFS=';'; echo "${plugin_libraries[*]}")
+          search_directories=(
+            "$OPENMS_INSTALL/bin"
+            "$OPENMS_INSTALL/lib"
+            "$OPENMS_BUILD/bin"
+            "$OPENMS_BUILD/lib"
+            "$OPENMS_CONTRIB/bin"
+            "$OPENMS_CONTRIB/lib"
+            "$QT_ROOT_DIR/bin"
+            "$QT_ROOT_DIR/lib"
+          )
+          search_list=$(IFS=';'; echo "${search_directories[*]}")
+
+          cmake \
+            "-DEXECUTABLE=$bin/openms-viewer" \
+            "-DLIBRARIES=$plugin_list" \
+            "-DDESTINATION=$lib" \
+            "-DSEARCH_DIRECTORIES=$search_list" \
+            -P "$GITHUB_WORKSPACE/cmake/DeployRuntimeDependencies.cmake"
+
+          # Repair every staged ELF object so no build/install directory is
+          # required after the extracted folder is moved elsewhere.
+          patchelf --set-rpath '$ORIGIN/../lib' "$bin/openms-viewer"
+          while IFS= read -r library; do
+            if patchelf --print-rpath "$library" >/dev/null 2>&1; then
+              patchelf --set-rpath '$ORIGIN' "$library"
+            fi
+          done < <(find "$lib" -type f -print)
+          while IFS= read -r plugin; do
+            if patchelf --print-rpath "$plugin" >/dev/null 2>&1; then
+              patchelf --set-rpath '$ORIGIN/../../lib' "$plugin"
+            fi
+          done < <(find "$bin" -mindepth 2 -type f -print)
+
+          smoke=$(find "$VIEWER_BUILD" -type f -name 'openms-viewer-thermo-smoke' \
+            -perm -u+x -print -quit)
+          test -n "$smoke"
+          cp "$smoke" "$bin/openms-viewer-thermo-smoke"
+          patchelf --set-rpath '$ORIGIN/../lib' "$bin/openms-viewer-thermo-smoke"
+
+      - name: Deploy macOS application bundle
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app="$VIEWER_STAGE/OpenMS Viewer.app"
+          executable="$app/Contents/MacOS/OpenMS Viewer"
+          test -x "$executable"
+
+          "$QT_ROOT_DIR/bin/macdeployqt" "$app" \
+            -always-overwrite \
+            -libpath="$OPENMS_INSTALL/lib" \
+            -libpath="$OPENMS_CONTRIB/lib" \
+            -verbose=2
+
+          # Keep a headless platform plugin solely for CI and command-line
+          # smoke tests; the normal Cocoa plugin remains the desktop default.
+          mkdir -p "$app/Contents/PlugIns/platforms"
+          cp "$QT_PLUGIN_DIR/platforms/libqoffscreen.dylib" \
+            "$app/Contents/PlugIns/platforms/"
+
+          smoke=$(find "$VIEWER_BUILD" -type f -name 'openms-viewer-thermo-smoke' \
+            -perm -u+x -print -quit)
+          test -n "$smoke"
+          smoke_destination="$app/Contents/MacOS/openms-viewer-thermo-smoke"
+          cp "$smoke" "$smoke_destination"
+
+          openmp_root=$(brew --prefix libomp)
+          search_directories=(
+            "$OPENMS_INSTALL/bin"
+            "$OPENMS_INSTALL/lib"
+            "$OPENMS_BUILD/bin"
+            "$OPENMS_BUILD/lib"
+            "$OPENMS_CONTRIB/bin"
+            "$OPENMS_CONTRIB/lib"
+            "$QT_ROOT_DIR/bin"
+            "$QT_ROOT_DIR/lib"
+            "$HOMEBREW_PREFIX/lib"
+            "$(brew --prefix qtsvg)/lib"
+            "$(brew --prefix qtimageformats)/lib"
+            "$openmp_root/lib"
+          )
+          search_list=$(IFS=';'; echo "${search_directories[*]}")
+          cmake \
+            "-DBUNDLE=$app" \
+            "-DSEARCH_DIRECTORIES=$search_list" \
+            -P "$GITHUB_WORKSPACE/cmake/FixupMacBundle.cmake"
+
+          mv "$VIEWER_STAGE/.dotnet-runtime" "$app/Contents/dotnet"
+
+      - name: Verify Linux portable folder
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          bin="$VIEWER_STAGE/bin"
+          lib="$VIEWER_STAGE/lib"
+          test -x "$bin/openms-viewer"
+          test -x "$bin/openms-viewer-thermo-smoke"
+          test -f "$bin/platforms/libqxcb.so"
+          test -f "$bin/platforms/libqoffscreen.so"
+          compgen -G "$lib/libOpenMS.so*" >/dev/null
+          compgen -G "$lib/libopenms_thermo_bridge.so*" >/dev/null
+          test -f "$lib/managed/ThermoWrapperManaged.dll"
+          test -f "$lib/managed/ThermoWrapperManaged.runtimeconfig.json"
+          test -x "$VIEWER_STAGE/dotnet/dotnet"
+          test -f "$VIEWER_STAGE/dotnet/host/fxr/$DOTNET_FXR_VERSION/libhostfxr.so"
+          test -f "$VIEWER_STAGE/dotnet/shared/Microsoft.NETCore.App/$DOTNET_RUNTIME_VERSION/System.Private.CoreLib.dll"
+          test -f "$VIEWER_STAGE/share/OpenMS/CHEMISTRY/unimod.xml"
+
+          # ldd must resolve every staged application/plugin/library edge without
+          # inheriting a build directory through LD_LIBRARY_PATH.
+          while IFS= read -r binary; do
+            if file "$binary" | grep -q 'ELF'; then
+              dependencies=$(ldd "$binary" 2>&1) || {
+                echo "$dependencies" >&2
+                exit 1
+              }
+              if grep -q 'not found' <<< "$dependencies"; then
+                echo "Unresolved dependency in $binary:" >&2
+                echo "$dependencies" >&2
+                exit 1
+              fi
+            fi
+          done < <(find "$bin" "$lib" -type f -print)
+
+          mkdir -p "$RUNNER_TEMP/openms-viewer-home"
+          env -i \
+            HOME="$RUNNER_TEMP/openms-viewer-home" \
+            PATH=/usr/bin:/bin \
+            QT_QPA_PLATFORM=offscreen \
+            OMP_NUM_THREADS=2 \
+            timeout 30 "$bin/openms-viewer" --version
+
+          env -i \
+            HOME="$RUNNER_TEMP/openms-viewer-home" \
+            PATH=/usr/bin:/bin \
+            DOTNET_ROOT="$VIEWER_STAGE/dotnet" \
+            OPENMS_DATA_PATH="$VIEWER_STAGE/share/OpenMS" \
+            OMP_NUM_THREADS=2 \
+            timeout 300 "$bin/openms-viewer-thermo-smoke" "$THERMO_TEST_DATA"
+          rm "$bin/openms-viewer-thermo-smoke"
+
+      - name: Verify and sign macOS portable folder
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app="$VIEWER_STAGE/OpenMS Viewer.app"
+          contents="$app/Contents"
+          executable="$contents/MacOS/OpenMS Viewer"
+          smoke="$contents/MacOS/openms-viewer-thermo-smoke"
+          test -x "$executable"
+          test -x "$smoke"
+          test -f "$contents/PlugIns/platforms/libqcocoa.dylib"
+          test -f "$contents/PlugIns/platforms/libqoffscreen.dylib"
+          compgen -G "$contents/Frameworks/libOpenMS*.dylib" >/dev/null
+          compgen -G "$contents/Frameworks/libopenms_thermo_bridge*.dylib" >/dev/null
+          test -f "$contents/Frameworks/managed/ThermoWrapperManaged.dll"
+          test -f "$contents/Frameworks/managed/ThermoWrapperManaged.runtimeconfig.json"
+          test -x "$contents/dotnet/dotnet"
+          test -f "$contents/dotnet/host/fxr/$DOTNET_FXR_VERSION/libhostfxr.dylib"
+          test -f "$contents/dotnet/shared/Microsoft.NETCore.App/$DOTNET_RUNTIME_VERSION/System.Private.CoreLib.dll"
+          test -f "$contents/share/OpenMS/CHEMISTRY/unimod.xml"
+
+          mkdir -p "$RUNNER_TEMP/openms-viewer-home"
+          perl -e 'alarm shift; exec @ARGV' 30 \
+            env -i \
+              HOME="$RUNNER_TEMP/openms-viewer-home" \
+              PATH=/usr/bin:/bin \
+              QT_QPA_PLATFORM=offscreen \
+              OMP_NUM_THREADS=2 \
+              "$executable" --version
+
+          perl -e 'alarm shift; exec @ARGV' 300 \
+            env -i \
+              HOME="$RUNNER_TEMP/openms-viewer-home" \
+              PATH=/usr/bin:/bin \
+              DOTNET_ROOT="$contents/dotnet" \
+              OPENMS_DATA_PATH="$contents/share/OpenMS" \
+              OMP_NUM_THREADS=2 \
+              "$smoke" "$THERMO_TEST_DATA"
+          rm "$smoke"
+
+          # Ad-hoc signing makes the moved .app internally consistent after all
+          # install-name edits. Production notarization can later replace this
+          # with a Developer ID identity without changing the bundle layout.
+          while IFS= read -r item; do
+            if file "$item" | grep -q 'Mach-O'; then
+              codesign --force --sign - "$item"
+            fi
+          done < <(find "$app" -type f -print)
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          perl -e 'alarm shift; exec @ARGV' 30 \
+            env -i \
+              HOME="$RUNNER_TEMP/openms-viewer-home" \
+              PATH=/usr/bin:/bin \
+              QT_QPA_PLATFORM=offscreen \
+              "$executable" --version
+
+      - name: Create ZIP and checksum
+        shell: bash
+        run: |
+          artifact_name="OpenMSViewer-$PACKAGE_PLATFORM-${{ matrix.arch }}-openms-$OPENMS_SHORT_SHA"
+          artifact_directory="$GITHUB_WORKSPACE/artifacts"
+          zip_path="$artifact_directory/$artifact_name.zip"
+          mkdir -p "$artifact_directory"
+
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            ditto -c -k --sequesterRsrc --keepParent "$VIEWER_STAGE" "$zip_path"
+            shasum -a 256 "$zip_path" | \
+              sed "s#  .*#  $artifact_name.zip#" > "$zip_path.sha256"
+          else
+            (
+              cd "$(dirname "$VIEWER_STAGE")"
+              zip -r -9 "$zip_path" "$(basename "$VIEWER_STAGE")"
+            )
+            sha256sum "$zip_path" | \
+              sed "s#  .*#  $artifact_name.zip#" > "$zip_path.sha256"
+          fi
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+        id: package
+
+      - name: Upload portable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: |
+            artifacts/*.zip
+            artifacts/*.sha256
+          if-no-files-found: error
+          retention-days: 14

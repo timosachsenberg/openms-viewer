@@ -1,10 +1,10 @@
 #pragma once
 
-// OpenMS statically vendors sqlite3 and re-exports its C symbols from
-// libOpenMS, but does not expose <sqlite3.h> on the public include path. Rather
-// than hard-code a build-tree header location, declare the small, ABI-stable
-// slice of the sqlite3 C API that OswStore uses. The sqlite3 C ABI is a
-// long-standing stability guarantee, so these prototypes are safe to hand-declare.
+// OpenMS statically vendors sqlite3 but does not expose <sqlite3.h> on the
+// public include path. Its shared library exposes the C symbols on Unix; on
+// Windows the viewer explicitly links OpenMS's sqlite3.lib because DLL exports
+// are opt-in. Declaring the small, ABI-stable slice here avoids hard-coding a
+// build-tree include path. The sqlite3 C ABI is a public stability guarantee.
 
 extern "C"
 {

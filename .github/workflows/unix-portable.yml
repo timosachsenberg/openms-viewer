@@ -122,6 +122,24 @@ jobs:
           archives: qtbase qtsvg qtimageformats
           cache: true
 
+      - name: Provide ICU 73 for Qt host tools
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Qt 6.8 Linux binaries link ICU 73 and do not bundle it, but
+          # ubuntu-24.04 ships ICU 74 — so rcc/moc/qmake/qtpaths6 fail to load
+          # libicui18n.so.73. Install the exact upstream ICU 73.2 runtime into
+          # /usr/local/lib (also picked up by the later dependency-deploy step).
+          icu_tgz="$RUNNER_TEMP/icu4c-73_2-Ubuntu22.04-x64.tgz"
+          curl -fsSL -o "$icu_tgz" \
+            "https://github.com/unicode-org/icu/releases/download/release-73-2/icu4c-73_2-Ubuntu22.04-x64.tgz"
+          mkdir -p "$RUNNER_TEMP/icu"
+          tar -xzf "$icu_tgz" -C "$RUNNER_TEMP/icu"
+          sudo find "$RUNNER_TEMP/icu" -name 'libicu*.so.73*' -exec cp -a {} /usr/local/lib/ \;
+          sudo ldconfig
+          test -e /usr/local/lib/libicui18n.so.73
+          test -e /usr/local/lib/libicuuc.so.73
+
       - name: Record Qt installation
         shell: bash
         run: |
@@ -210,6 +228,14 @@ jobs:
       - name: Build and install OpenMS core
         shell: bash
         run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            # The contrib's static libcurl pulls in -lssh2, which macOS resolves
+            # from no default linker path (Linux finds it in the system). Provide
+            # it from Homebrew and add it to the link-time search path (clang
+            # honours LIBRARY_PATH for -l lookups).
+            brew list libssh2 >/dev/null 2>&1 || brew install libssh2
+            export LIBRARY_PATH="$(brew --prefix libssh2)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+          fi
           cmake --build "$OPENMS_BUILD" --target OpenMS OpenSwathAlgo
           cmake --install "$OPENMS_BUILD" --component library --strip
           cmake --install "$OPENMS_BUILD" --component OpenMS_headers

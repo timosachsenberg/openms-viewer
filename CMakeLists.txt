@@ -184,6 +184,11 @@ set_target_properties(openms-viewer PROPERTIES
   MACOSX_BUNDLE_GUI_IDENTIFIER "org.openms.viewer"
   MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
 )
+if(APPLE)
+  # Use a native, user-facing name for the installed application bundle while
+  # keeping the stable CMake target name used by builds and CI.
+  set_target_properties(openms-viewer PROPERTIES OUTPUT_NAME "OpenMS Viewer")
+endif()
 
 # Optional integration probe for portable packages. It deliberately links only
 # OpenMS and is not installed, so CI can copy the executable into an isolated

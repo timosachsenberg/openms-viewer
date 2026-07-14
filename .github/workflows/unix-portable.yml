@@ -18,6 +18,13 @@ concurrency:
 env:
   QT_VERSION: 6.8.3
   DOTNET_SDK_VERSION: 8.0.x
+  # Pinned OpenMS dependency versions for reproducible packaging. Bump these
+  # together when moving to a newer OpenMS: the viewer must build against the
+  # exact OpenMS + contrib it will run on (OpenMS has no stable cross-minor ABI).
+  # OPENMS_REF was OpenMS/OpenMS develop @ 2026-07-14; OPENMS_CONTRIB_TAG was the
+  # latest OpenMS/contrib release at that time.
+  OPENMS_REF: 32f7075860bf715e7bfc3a5e98fb0da984cbf2fc
+  OPENMS_CONTRIB_TAG: 2026-03-25-183345
   OPENMS_SOURCE: ${{ github.workspace }}/_deps/OpenMS
   OPENMS_CONTRIB: ${{ github.workspace }}/_deps/contrib
   OPENMS_CONTRIB_SOURCE: ${{ github.workspace }}/_deps/contrib-source
@@ -61,11 +68,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check out OpenMS develop
+      - name: Check out OpenMS (pinned)
         uses: actions/checkout@v6
         with:
           repository: OpenMS/OpenMS
-          ref: develop
+          ref: ${{ env.OPENMS_REF }}
           path: _deps/OpenMS
           persist-credentials: false
 
@@ -115,6 +122,24 @@ jobs:
           archives: qtbase qtsvg qtimageformats
           cache: true
 
+      - name: Provide ICU 73 for Qt host tools
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Qt 6.8 Linux binaries link ICU 73 and do not bundle it, but
+          # ubuntu-24.04 ships ICU 74 — so rcc/moc/qmake/qtpaths6 fail to load
+          # libicui18n.so.73. Install the exact upstream ICU 73.2 runtime into
+          # /usr/local/lib (also picked up by the later dependency-deploy step).
+          icu_tgz="$RUNNER_TEMP/icu4c-73_2-Ubuntu22.04-x64.tgz"
+          curl -fsSL -o "$icu_tgz" \
+            "https://github.com/unicode-org/icu/releases/download/release-73-2/icu4c-73_2-Ubuntu22.04-x64.tgz"
+          mkdir -p "$RUNNER_TEMP/icu"
+          tar -xzf "$icu_tgz" -C "$RUNNER_TEMP/icu"
+          sudo find "$RUNNER_TEMP/icu" -name 'libicu*.so.73*' -exec cp -a {} /usr/local/lib/ \;
+          sudo ldconfig
+          test -e /usr/local/lib/libicui18n.so.73
+          test -e /usr/local/lib/libicuuc.so.73
+
       - name: Record Qt installation
         shell: bash
         run: |
@@ -137,7 +162,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CONTRIB_ASSET: ${{ matrix.contrib_asset }}
         run: |
-          contrib_tag=$(gh release view --repo OpenMS/contrib --json tagName --jq .tagName)
+          contrib_tag="$OPENMS_CONTRIB_TAG"
           echo "CONTRIB_TAG=$contrib_tag" >> "$GITHUB_ENV"
           mkdir -p "$OPENMS_CONTRIB"
           gh release download "$contrib_tag" \
@@ -203,6 +228,16 @@ jobs:
       - name: Build and install OpenMS core
         shell: bash
         run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            # The contrib's static libcurl pulls in several optional transitive
+            # libraries (ssh2, idn2, nghttp2, brotli, zstd, rtmp) that macOS finds
+            # on no default linker path (Linux resolves them from the system).
+            # Homebrew's curl formula depends on all of them, so installing it
+            # stages the whole set under $(brew --prefix)/lib; expose that at link
+            # time (clang honours LIBRARY_PATH for -l lookups).
+            brew install curl
+            export LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+          fi
           cmake --build "$OPENMS_BUILD" --target OpenMS OpenSwathAlgo
           cmake --install "$OPENMS_BUILD" --component library --strip
           cmake --install "$OPENMS_BUILD" --component OpenMS_headers
@@ -220,7 +255,7 @@ jobs:
       - name: Build and install OpenMS Viewer
         shell: bash
         run: |
-          test -f "$OPENMS_INSTALL/CMake/OpenMSConfig.cmake"
+          test -f "$OPENMS_INSTALL/lib/cmake/OpenMS/OpenMSConfig.cmake"
           cmake_prefix="$QT_ROOT_DIR/lib/cmake;$QT_ROOT_DIR;$OPENMS_CONTRIB;$OPENMS_INSTALL"
           viewer_args=()
           if [[ "$RUNNER_OS" == "macOS" ]]; then
@@ -228,6 +263,11 @@ jobs:
             cmake_prefix="$cmake_prefix;$QT_EXTRA_PREFIXES;$HOMEBREW_PREFIX;$openmp_root"
             viewer_args+=("-DOpenMP_ROOT=$openmp_root")
             viewer_args+=("-DCMAKE_INSTALL_RPATH=@executable_path/../Frameworks")
+            # Homebrew ships Qt as separate kegs (qtbase, qtsvg, qtimageformats).
+            # find_package(Qt6 COMPONENTS Svg) only discovers modules outside
+            # qtbase's prefix via QT_ADDITIONAL_PACKAGES_PREFIX_PATH, not plain
+            # CMAKE_PREFIX_PATH. (Linux's single-prefix aqt install needs no such hint.)
+            viewer_args+=("-DQT_ADDITIONAL_PACKAGES_PREFIX_PATH=$QT_EXTRA_PREFIXES")
           else
             viewer_args+=("-DCMAKE_INSTALL_RPATH=\$ORIGIN/../lib")
           fi
@@ -237,10 +277,18 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$VIEWER_STAGE" \
             -DCMAKE_PREFIX_PATH="$cmake_prefix" \
             -DOPENMS_CONTRIB_LIBS="$OPENMS_CONTRIB" \
-            -DOpenMS_DIR="$OPENMS_INSTALL/CMake" \
+            -DOpenMS_DIR="$OPENMS_INSTALL/lib/cmake/OpenMS" \
             -DOPENMS_VIEWER_BUILD_TESTS=OFF \
             -DOPENMS_VIEWER_BUILD_THERMO_SMOKE=ON \
+            -DOPENMS_VIEWER_PORTABLE=ON \
             "${viewer_args[@]}"
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            # OpenMS's exported target propagates the contrib libcurl transitive
+            # deps (-lssh2, -lidn2, …) as interface link libraries, so linking the
+            # viewer and the Thermo smoke probe needs the same Homebrew lib path
+            # used for the OpenMS core build. The libraries were installed there.
+            export LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+          fi
           cmake --build "$VIEWER_BUILD" --target openms-viewer openms-viewer-thermo-smoke
           cmake --install "$VIEWER_BUILD"
 
@@ -302,7 +350,12 @@ jobs:
 
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             bundle_contents="$VIEWER_STAGE/OpenMS Viewer.app/Contents"
-            managed_destination="$bundle_contents/Frameworks/managed"
+            # The .NET managed assemblies are CLR-loaded PE data, not Mach-O code.
+            # codesign treats everything under Frameworks/ as nested code and
+            # rejects them, so stage them under Resources/ (sealed as resources);
+            # a Frameworks/managed symlink added after macdeployqt keeps the
+            # OpenMS Thermo bridge's default_managed_directory() resolving them.
+            managed_destination="$bundle_contents/Resources/managed"
             share_destination="$bundle_contents/share/OpenMS"
           else
             managed_destination="$VIEWER_STAGE/lib/managed"
@@ -330,7 +383,7 @@ jobs:
           cat > "$VIEWER_STAGE/BUILD-INFO.txt" <<EOF
           OpenMS Viewer portable $PACKAGE_PLATFORM build
           Viewer commit: $VIEWER_SHA
-          OpenMS ref: develop
+          OpenMS ref: $OPENMS_REF (pinned)
           OpenMS commit: $OPENMS_SHA
           OpenMS contrib release: $CONTRIB_TAG
           OpenMS WITH_GUI: OFF
@@ -407,24 +460,36 @@ jobs:
             -P "$GITHUB_WORKSPACE/cmake/DeployRuntimeDependencies.cmake"
 
           # Repair every staged ELF object so no build/install directory is
-          # required after the extracted folder is moved elsewhere.
-          patchelf --set-rpath '$ORIGIN/../lib' "$bin/openms-viewer"
+          # required after the extracted folder is moved elsewhere. Use
+          # --force-rpath (DT_RPATH, searched BEFORE LD_LIBRARY_PATH) rather than
+          # the default DT_RUNPATH, so a second OpenMS on LD_LIBRARY_PATH cannot
+          # shadow the bundled one.
+          patchelf --force-rpath --set-rpath '$ORIGIN/../lib' "$bin/openms-viewer"
           while IFS= read -r library; do
             if patchelf --print-rpath "$library" >/dev/null 2>&1; then
-              patchelf --set-rpath '$ORIGIN' "$library"
+              patchelf --force-rpath --set-rpath '$ORIGIN' "$library"
             fi
           done < <(find "$lib" -type f -print)
           while IFS= read -r plugin; do
             if patchelf --print-rpath "$plugin" >/dev/null 2>&1; then
-              patchelf --set-rpath '$ORIGIN/../../lib' "$plugin"
+              patchelf --force-rpath --set-rpath '$ORIGIN/../../lib' "$plugin"
             fi
           done < <(find "$bin" -mindepth 2 -type f -print)
+
+          # Confirm we produced DT_RPATH, not DT_RUNPATH (patchelf --print-rpath
+          # cannot tell them apart).
+          readelf -d "$bin/openms-viewer" | grep -q 'RPATH' \
+            || { echo "openms-viewer is missing DT_RPATH" >&2; exit 1; }
+          if readelf -d "$bin/openms-viewer" | grep -q 'RUNPATH'; then
+            echo "openms-viewer has DT_RUNPATH; expected DT_RPATH" >&2
+            exit 1
+          fi
 
           smoke=$(find "$VIEWER_BUILD" -type f -name 'openms-viewer-thermo-smoke' \
             -perm -u+x -print -quit)
           test -n "$smoke"
           cp "$smoke" "$bin/openms-viewer-thermo-smoke"
-          patchelf --set-rpath '$ORIGIN/../lib' "$bin/openms-viewer-thermo-smoke"
+          patchelf --force-rpath --set-rpath '$ORIGIN/../lib' "$bin/openms-viewer-thermo-smoke"
 
       - name: Deploy macOS application bundle
         if: runner.os == 'macOS'
@@ -473,6 +538,12 @@ jobs:
             "-DSEARCH_DIRECTORIES=$search_list" \
             -P "$GITHUB_WORKSPACE/cmake/FixupMacBundle.cmake"
 
+          # The .NET managed assemblies were staged under Resources/ so codesign
+          # seals them as resources instead of rejecting them as unsigned code in
+          # Frameworks/. Symlink them back under Frameworks (created by macdeployqt)
+          # so the Thermo bridge's module_dir/managed lookup still resolves.
+          ln -s ../Resources/managed "$app/Contents/Frameworks/managed"
+
           mv "$VIEWER_STAGE/.dotnet-runtime" "$app/Contents/dotnet"
 
       - name: Verify Linux portable folder
@@ -511,11 +582,27 @@ jobs:
           done < <(find "$bin" "$lib" -type f -print)
 
           mkdir -p "$RUNNER_TEMP/openms-viewer-home"
+          # Clean environment: the portable build must locate its own bundled
+          # share/OpenMS (this exercises the self-location + fail-closed logic).
           env -i \
             HOME="$RUNNER_TEMP/openms-viewer-home" \
             PATH=/usr/bin:/bin \
             QT_QPA_PLATFORM=offscreen \
             OMP_NUM_THREADS=2 \
+            timeout 30 "$bin/openms-viewer" --version
+
+          # Adversarial: a *valid* competing OpenMS share pointed to by a stray
+          # OPENMS_DATA_PATH must be overridden by the bundle. If the app honoured
+          # the env var, its resolved-path check would fail and it would exit non-zero.
+          decoy="$RUNNER_TEMP/decoy-openms-share"
+          mkdir -p "$decoy/CHEMISTRY"
+          cp "$VIEWER_STAGE/share/OpenMS/CHEMISTRY/unimod.xml" "$decoy/CHEMISTRY/unimod.xml"
+          env -i \
+            HOME="$RUNNER_TEMP/openms-viewer-home" \
+            PATH=/usr/bin:/bin \
+            QT_QPA_PLATFORM=offscreen \
+            OMP_NUM_THREADS=2 \
+            OPENMS_DATA_PATH="$decoy" \
             timeout 30 "$bin/openms-viewer" --version
 
           env -i \
@@ -575,8 +662,14 @@ jobs:
               codesign --force --sign - "$item"
             fi
           done < <(find "$app" -type f -print)
-          codesign --force --deep --sign - "$app"
-          codesign --verify --deep --strict --verbose=2 "$app"
+          # Sign/verify WITHOUT --deep: the loop above already signed every native
+          # Mach-O object bottom-up. --deep would instead recurse into
+          # Frameworks/managed and reject the .NET managed assemblies there — those
+          # are CLR-loaded data (PE, not Mach-O), not code macOS should sign. The
+          # app already launched and read real Thermo data in the smoke tests
+          # above, proving dynamic-loader consistency.
+          codesign --force --sign - "$app"
+          codesign --verify --verbose=2 "$app"
           perl -e 'alarm shift; exec @ARGV' 30 \
             env -i \
               HOME="$RUNNER_TEMP/openms-viewer-home" \

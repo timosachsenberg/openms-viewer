@@ -14,6 +14,13 @@ env:
   QT_VERSION: 6.8.3
   DOTNET_SDK_VERSION: 8.0.x
   CURL_VERSION: 8.12.1
+  # Pinned OpenMS dependency versions for reproducible packaging. Bump these
+  # together when moving to a newer OpenMS: the viewer must build against the
+  # exact OpenMS + contrib it will run on (OpenMS has no stable cross-minor ABI).
+  # OPENMS_REF was OpenMS/OpenMS develop @ 2026-07-14; OPENMS_CONTRIB_TAG was the
+  # latest OpenMS/contrib release at that time.
+  OPENMS_REF: 32f7075860bf715e7bfc3a5e98fb0da984cbf2fc
+  OPENMS_CONTRIB_TAG: 2026-03-25-183345
   OPENMS_SOURCE: ${{ github.workspace }}/_deps/OpenMS
   OPENMS_CONTRIB: ${{ github.workspace }}/_deps/contrib
   OPENMS_CONTRIB_SOURCE: ${{ github.workspace }}/_deps/contrib-source
@@ -39,11 +46,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check out OpenMS develop
+      - name: Check out OpenMS (pinned)
         uses: actions/checkout@v6
         with:
           repository: OpenMS/OpenMS
-          ref: develop
+          ref: ${{ env.OPENMS_REF }}
           path: _deps/OpenMS
           persist-credentials: false
 
@@ -81,7 +88,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          contrib_tag=$(gh release view --repo OpenMS/contrib --json tagName --jq .tagName)
+          contrib_tag="$OPENMS_CONTRIB_TAG"
           echo "CONTRIB_TAG=$contrib_tag" >> "$GITHUB_ENV"
           mkdir -p "$OPENMS_CONTRIB"
           cd "$OPENMS_CONTRIB"
@@ -165,16 +172,17 @@ jobs:
       - name: Build and install OpenMS Viewer
         shell: bash
         run: |
-          test -f "$OPENMS_INSTALL/CMake/OpenMSConfig.cmake"
+          test -f "$OPENMS_INSTALL/lib/cmake/OpenMS/OpenMSConfig.cmake"
           cmake -S "$GITHUB_WORKSPACE" -B "$VIEWER_BUILD" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$VIEWER_STAGE" \
             -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake;$QT_ROOT_DIR;$OPENMS_CONTRIB;$OPENMS_INSTALL" \
             -DOPENMS_CONTRIB_LIBS="$OPENMS_CONTRIB" \
-            -DOpenMS_DIR="$OPENMS_INSTALL/CMake" \
+            -DOpenMS_DIR="$OPENMS_INSTALL/lib/cmake/OpenMS" \
             -DOPENMS_VIEWER_SQLITE3_LIBRARY="$OPENMS_BUILD/lib/sqlite3.lib" \
             -DOPENMS_VIEWER_BUILD_TESTS=OFF \
-            -DOPENMS_VIEWER_BUILD_THERMO_SMOKE=ON
+            -DOPENMS_VIEWER_BUILD_THERMO_SMOKE=ON \
+            -DOPENMS_VIEWER_PORTABLE=ON
           cmake --build "$VIEWER_BUILD" --target openms-viewer openms-viewer-thermo-smoke
           cmake --install "$VIEWER_BUILD"
 
@@ -344,7 +352,7 @@ jobs:
           $buildInfo = @"
           OpenMS Viewer portable Windows build
           Viewer commit: $env:VIEWER_SHA
-          OpenMS ref: develop
+          OpenMS ref: $env:OPENMS_REF (pinned)
           OpenMS commit: $env:OPENMS_SHA
           OpenMS contrib release: $env:CONTRIB_TAG
           OpenMS WITH_GUI: OFF

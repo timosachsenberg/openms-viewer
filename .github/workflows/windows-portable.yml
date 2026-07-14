@@ -158,12 +158,13 @@ jobs:
       - name: Build and install OpenMS Viewer
         shell: bash
         run: |
+          test -f "$OPENMS_INSTALL/CMake/OpenMSConfig.cmake"
           cmake -S "$GITHUB_WORKSPACE" -B "$VIEWER_BUILD" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$VIEWER_STAGE" \
-            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake;$QT_ROOT_DIR;$OPENMS_CONTRIB" \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake;$QT_ROOT_DIR;$OPENMS_CONTRIB;$OPENMS_INSTALL" \
             -DOPENMS_CONTRIB_LIBS="$OPENMS_CONTRIB" \
-            -DOpenMS_DIR="$OPENMS_INSTALL/lib/cmake/OpenMS" \
+            -DOpenMS_DIR="$OPENMS_INSTALL/CMake" \
             -DOPENMS_VIEWER_BUILD_TESTS=OFF \
             -DOPENMS_VIEWER_BUILD_THERMO_SMOKE=ON
           cmake --build "$VIEWER_BUILD" --target openms-viewer openms-viewer-thermo-smoke

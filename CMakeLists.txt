@@ -133,6 +133,10 @@ add_library(openms_viewer_ui STATIC
   src/widgets/FeatureTableWidget.h
   src/widgets/FeatureEditDialog.cpp
   src/widgets/FeatureEditDialog.h
+  src/widgets/HelpDialog.cpp
+  src/widgets/HelpDialog.h
+  src/widgets/TableClipboard.cpp
+  src/widgets/TableClipboard.h
   src/widgets/FaimsPanelWidget.cpp
   src/widgets/FaimsPanelWidget.h
   src/widgets/IdentificationTableWidget.cpp

@@ -350,7 +350,12 @@ jobs:
 
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             bundle_contents="$VIEWER_STAGE/OpenMS Viewer.app/Contents"
-            managed_destination="$bundle_contents/Frameworks/managed"
+            # The .NET managed assemblies are CLR-loaded PE data, not Mach-O code.
+            # codesign treats everything under Frameworks/ as nested code and
+            # rejects them, so stage them under Resources/ (sealed as resources);
+            # a Frameworks/managed symlink added after macdeployqt keeps the
+            # OpenMS Thermo bridge's default_managed_directory() resolving them.
+            managed_destination="$bundle_contents/Resources/managed"
             share_destination="$bundle_contents/share/OpenMS"
           else
             managed_destination="$VIEWER_STAGE/lib/managed"
@@ -532,6 +537,12 @@ jobs:
             "-DBUNDLE=$app" \
             "-DSEARCH_DIRECTORIES=$search_list" \
             -P "$GITHUB_WORKSPACE/cmake/FixupMacBundle.cmake"
+
+          # The .NET managed assemblies were staged under Resources/ so codesign
+          # seals them as resources instead of rejecting them as unsigned code in
+          # Frameworks/. Symlink them back under Frameworks (created by macdeployqt)
+          # so the Thermo bridge's module_dir/managed lookup still resolves.
+          ln -s ../Resources/managed "$app/Contents/Frameworks/managed"
 
           mv "$VIEWER_STAGE/.dotnet-runtime" "$app/Contents/dotnet"
 

@@ -282,6 +282,13 @@ jobs:
             -DOPENMS_VIEWER_BUILD_THERMO_SMOKE=ON \
             -DOPENMS_VIEWER_PORTABLE=ON \
             "${viewer_args[@]}"
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            # OpenMS's exported target propagates the contrib libcurl transitive
+            # deps (-lssh2, -lidn2, …) as interface link libraries, so linking the
+            # viewer and the Thermo smoke probe needs the same Homebrew lib path
+            # used for the OpenMS core build. The libraries were installed there.
+            export LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+          fi
           cmake --build "$VIEWER_BUILD" --target openms-viewer openms-viewer-thermo-smoke
           cmake --install "$VIEWER_BUILD"
 

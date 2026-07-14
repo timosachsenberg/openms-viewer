@@ -651,13 +651,13 @@ jobs:
               codesign --force --sign - "$item"
             fi
           done < <(find "$app" -type f -print)
-          codesign --force --deep --sign - "$app"
-          # Verify the app's signature, but not with --deep --strict: the .NET
-          # managed assemblies under Frameworks/managed are CLR-loaded data (PE,
-          # not Mach-O), which codesign --deep --strict wrongly rejects as unsigned
-          # code subcomponents. Every native Mach-O object was signed in the loop
-          # above, and the app already launched and read real Thermo data in the
-          # smoke tests above — proving dynamic-loader consistency.
+          # Sign/verify WITHOUT --deep: the loop above already signed every native
+          # Mach-O object bottom-up. --deep would instead recurse into
+          # Frameworks/managed and reject the .NET managed assemblies there — those
+          # are CLR-loaded data (PE, not Mach-O), not code macOS should sign. The
+          # app already launched and read real Thermo data in the smoke tests
+          # above, proving dynamic-loader consistency.
+          codesign --force --sign - "$app"
           codesign --verify --verbose=2 "$app"
           perl -e 'alarm shift; exec @ARGV' 30 \
             env -i \

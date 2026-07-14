@@ -88,6 +88,28 @@ target_link_libraries(openms_viewer_core
     Qt6::Core
     Qt6::Gui
 )
+
+# OpenMS vendors SQLite and its shared library exposes the C symbols on Unix.
+# Windows DLL exports are explicit, however, so downstream code using the
+# sqlite3 C API must also link the static library produced by the OpenMS build.
+# Portable-package CI builds OpenMS from source and passes that exact artifact.
+set(OPENMS_VIEWER_SQLITE3_LIBRARY "" CACHE FILEPATH
+    "sqlite3 library required by standalone Windows builds")
+if(WIN32)
+  if(TARGET sqlite3)
+    target_link_libraries(openms_viewer_core PUBLIC sqlite3)
+  else()
+    if(NOT OPENMS_VIEWER_SQLITE3_LIBRARY)
+      message(FATAL_ERROR
+        "OPENMS_VIEWER_SQLITE3_LIBRARY must name the sqlite3 library used to build OpenMS")
+    endif()
+    if(NOT EXISTS "${OPENMS_VIEWER_SQLITE3_LIBRARY}")
+      message(FATAL_ERROR
+        "OPENMS_VIEWER_SQLITE3_LIBRARY does not exist: ${OPENMS_VIEWER_SQLITE3_LIBRARY}")
+    endif()
+    target_link_libraries(openms_viewer_core PUBLIC "${OPENMS_VIEWER_SQLITE3_LIBRARY}")
+  endif()
+endif()
 target_compile_features(openms_viewer_core PUBLIC cxx_std_23)
 
 add_library(openms_viewer_ui STATIC

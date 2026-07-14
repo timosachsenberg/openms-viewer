@@ -172,6 +172,7 @@ jobs:
             -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake;$QT_ROOT_DIR;$OPENMS_CONTRIB;$OPENMS_INSTALL" \
             -DOPENMS_CONTRIB_LIBS="$OPENMS_CONTRIB" \
             -DOpenMS_DIR="$OPENMS_INSTALL/CMake" \
+            -DOPENMS_VIEWER_SQLITE3_LIBRARY="$OPENMS_BUILD/lib/sqlite3.lib" \
             -DOPENMS_VIEWER_BUILD_TESTS=OFF \
             -DOPENMS_VIEWER_BUILD_THERMO_SMOKE=ON
           cmake --build "$VIEWER_BUILD" --target openms-viewer openms-viewer-thermo-smoke

@@ -115,65 +115,88 @@ namespace
   {
 #ifdef OPENMS_VIEWER_PORTABLE
     const QDir applicationDirectory(QApplication::applicationDirPath());
-    const QString bundleRoot =
-      QDir::cleanPath(applicationDirectory.filePath(QStringLiteral("..")));
+    const QString canonicalRoot = QFileInfo(
+      QDir::cleanPath(applicationDirectory.filePath(QStringLiteral("..")))).canonicalFilePath();
     const QString bundledShare =
       QDir::cleanPath(applicationDirectory.filePath(QStringLiteral("../share/OpenMS")));
     const bool useExternal =
       qEnvironmentVariableIntValue("OPENMS_VIEWER_USE_EXTERNAL_DATA") == 1;
 
+    // A canonical path is the bundle root or lives inside it. The trailing
+    // separator stops a sibling like "<root>-other" from matching; reusing an
+    // existing separator keeps a filesystem-root bundle ("/", "C:/") working.
+    const auto withinBundle = [&canonicalRoot](const QString& canonicalPath)
+    {
+      if (canonicalRoot.isEmpty() || canonicalPath.isEmpty()) return false;
+      if (canonicalPath == canonicalRoot) return true;
+      const QString prefix = canonicalRoot.endsWith(QLatin1Char('/'))
+                               ? canonicalRoot : canonicalRoot + QLatin1Char('/');
+      return canonicalPath.startsWith(prefix);
+    };
+
+    // Confirm the libOpenMS mapped into this process is our bundled one BEFORE
+    // calling into it: a mismatched cross-minor ABI could crash on the first
+    // call. Fail closed if the location cannot be positively confirmed (an
+    // undeterminable or out-of-bundle path is treated as a hijack).
+    const QString library = loadedOpenMSLibraryPath();
+    const QString canonicalLibrary =
+      library.isEmpty() ? QString() : QFileInfo(library).canonicalFilePath();
+    if (!withinBundle(canonicalLibrary))
+      return QApplication::translate("main",
+        "Could not confirm the bundled OpenMS library is the one loaded (loaded from\n%1"
+        ").\nThis portable build requires a library under\n%2")
+        .arg(QDir::toNativeSeparators(canonicalLibrary.isEmpty()
+               ? QStringLiteral("an undeterminable location") : canonicalLibrary),
+             QDir::toNativeSeparators(canonicalRoot.isEmpty()
+               ? QStringLiteral("(unresolved)") : canonicalRoot));
+
     if (useExternal)
     {
-      // Deliberate expert opt-out: require an explicit, non-empty external tree.
+      // Deliberate expert opt-out: require an explicit external tree AND confirm
+      // OpenMS actually resolved to it — an invalid path would otherwise fall
+      // through to the compiled-in data silently.
       if (qEnvironmentVariableIsEmpty("OPENMS_DATA_PATH"))
         return QApplication::translate("main",
           "OPENMS_VIEWER_USE_EXTERNAL_DATA is set but OPENMS_DATA_PATH is empty. Point "
           "OPENMS_DATA_PATH at a matching OpenMS share directory, or unset the override.");
-    }
-    else
-    {
-      if (!QFileInfo::exists(QDir(bundledShare).filePath(QStringLiteral("CHEMISTRY/unimod.xml"))))
+      const QString requested =
+        QFileInfo(QString::fromLocal8Bit(qgetenv("OPENMS_DATA_PATH"))).canonicalFilePath();
+      const QString resolved = QFileInfo(
+        QString::fromStdString(OpenMS::File::getOpenMSDataPath())).canonicalFilePath();
+      if (resolved.isEmpty() || resolved != requested)
         return QApplication::translate("main",
-          "This portable package is incomplete: its bundled OpenMS data directory was not "
-          "found at\n%1").arg(QDir::toNativeSeparators(bundledShare));
-      // Bundled data must win over any inherited OPENMS_DATA_PATH and the
-      // compiled-in fallback, so a second OpenMS install can never feed us a
-      // mismatched data tree.
-      qputenv("OPENMS_DATA_PATH", QDir::toNativeSeparators(bundledShare).toUtf8());
+          "OPENMS_DATA_PATH points at an external tree that OpenMS did not accept; it "
+          "resolved to\n%1\ninstead.")
+          .arg(QDir::toNativeSeparators(resolved.isEmpty()
+                 ? QStringLiteral("(unresolved)") : resolved));
+      return {};
     }
+
+    // Bundled mode: the data tree must exist, must resolve inside the package (a
+    // share symlink to another install must not be accepted), and must win over
+    // any inherited OPENMS_DATA_PATH and the compiled-in fallback.
+    if (!QFileInfo::exists(QDir(bundledShare).filePath(QStringLiteral("CHEMISTRY/unimod.xml"))))
+      return QApplication::translate("main",
+        "This portable package is incomplete: its bundled OpenMS data directory was not "
+        "found at\n%1").arg(QDir::toNativeSeparators(bundledShare));
+    const QString expected = QFileInfo(bundledShare).canonicalFilePath();
+    if (!withinBundle(expected))
+      return QApplication::translate("main",
+        "The bundled OpenMS data directory resolves outside the package to\n%1")
+        .arg(QDir::toNativeSeparators(expected));
+    qputenv("OPENMS_DATA_PATH", QDir::toNativeSeparators(bundledShare).toUtf8());
 
     // Resolve now (OpenMS caches the result in a function-static) and confirm the
-    // bundle won. The unimod.xml probe above is only a marker; this is the real
-    // check that OpenMS did not fall through to another install.
+    // bundle won — the unimod.xml probe above is only a marker.
     const QString resolved = QFileInfo(
       QString::fromStdString(OpenMS::File::getOpenMSDataPath())).canonicalFilePath();
-    if (!useExternal)
-    {
-      const QString expected = QFileInfo(bundledShare).canonicalFilePath();
-      if (resolved.isEmpty() || resolved != expected)
-        return QApplication::translate("main",
-          "OpenMS resolved its shared-data directory to\n%1\nbut this portable build "
-          "requires its own bundled data at\n%2")
-          .arg(QDir::toNativeSeparators(resolved.isEmpty()
-                 ? QStringLiteral("(unresolved)") : resolved),
-               QDir::toNativeSeparators(expected));
-    }
-
-    // Confirm the libOpenMS mapped into this process is the bundled one, not a
-    // second install reached through LD_LIBRARY_PATH / PATH / dyld.
-    const QString library = loadedOpenMSLibraryPath();
-    if (!library.isEmpty())
-    {
-      const QString canonicalLibrary = QFileInfo(library).canonicalFilePath();
-      const QString canonicalRoot = QFileInfo(bundleRoot).canonicalFilePath();
-      if (!canonicalRoot.isEmpty() && !canonicalLibrary.isEmpty()
-          && canonicalLibrary != canonicalRoot
-          && !canonicalLibrary.startsWith(canonicalRoot + QLatin1Char('/')))
-        return QApplication::translate("main",
-          "A different OpenMS library was loaded from\n%1\ninstead of this portable "
-          "package under\n%2").arg(QDir::toNativeSeparators(canonicalLibrary),
-                                   QDir::toNativeSeparators(canonicalRoot));
-    }
+    if (resolved.isEmpty() || resolved != expected)
+      return QApplication::translate("main",
+        "OpenMS resolved its shared-data directory to\n%1\nbut this portable build "
+        "requires its own bundled data at\n%2")
+        .arg(QDir::toNativeSeparators(resolved.isEmpty()
+               ? QStringLiteral("(unresolved)") : resolved),
+             QDir::toNativeSeparators(expected));
 #endif  // OPENMS_VIEWER_PORTABLE
     return {};
   }
@@ -200,7 +223,13 @@ int main(int argc, char* argv[])
     // fails fast instead of blocking on a button nobody can click.
     qCritical().noquote() << QStringLiteral("OpenMS Viewer cannot start: %1").arg(runtimeError);
     const QString platform = QGuiApplication::platformName();
-    if (platform != QLatin1String("offscreen") && platform != QLatin1String("minimal"))
+    // Suppress the modal on headless platforms and whenever GUI message boxes are
+    // disabled (Windows CI/service runs set QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES),
+    // so a misconfigured package fails fast instead of blocking on an unclickable dialog.
+    const bool headless = platform == QLatin1String("offscreen")
+                          || platform == QLatin1String("minimal")
+                          || qEnvironmentVariableIsSet("QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES");
+    if (!headless)
       QMessageBox::critical(nullptr, QApplication::translate("main", "OpenMS Viewer"),
                             QApplication::translate("main", "Cannot start OpenMS Viewer.\n\n%1")
                               .arg(runtimeError));

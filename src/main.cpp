@@ -7,10 +7,21 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
+#include <QMessageBox>
 #include <QThread>
 #include <QThreadPool>
 
 #include <algorithm>
+
+#ifdef OPENMS_VIEWER_PORTABLE
+#include <OpenMS/CONCEPT/VersionInfo.h>
+#include <OpenMS/SYSTEM/File.h>
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+#endif
 
 namespace
 {
@@ -65,6 +76,107 @@ namespace
            .arg(qEnvironmentVariableIsSet("OMP_NUM_THREADS")
                   ? QStringLiteral(" (OMP_NUM_THREADS override)") : QString());
   }
+
+#ifdef OPENMS_VIEWER_PORTABLE
+  // Absolute path of the libOpenMS image actually mapped into this process,
+  // identified from the address of an OpenMS symbol. Empty if it cannot be
+  // determined. Used to detect a second OpenMS install shadowing the bundle.
+  QString loadedOpenMSLibraryPath()
+  {
+    auto* const symbol = reinterpret_cast<const void*>(&OpenMS::VersionInfo::getVersion);
+#if defined(_WIN32)
+    HMODULE module = nullptr;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                             | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(symbol), &module)
+        && module != nullptr)
+    {
+      wchar_t buffer[MAX_PATH];
+      const DWORD length = GetModuleFileNameW(module, buffer, MAX_PATH);
+      if (length > 0 && length < MAX_PATH) return QString::fromWCharArray(buffer, int(length));
+    }
+    return {};
+#else
+    Dl_info info{};
+    if (dladdr(symbol, &info) != 0 && info.dli_fname != nullptr)
+      return QString::fromUtf8(info.dli_fname);
+    return {};
+#endif
+  }
+#endif  // OPENMS_VIEWER_PORTABLE
+
+  // In a portable package the bundled share/OpenMS data tree and libOpenMS are
+  // version-locked to each other. Force OpenMS onto OUR data (never an inherited
+  // OPENMS_DATA_PATH or a system /usr/local/share/OpenMS), then verify that both
+  // the resolved data path and the loaded library live inside the extracted
+  // folder. Returns a human-readable error (fatal) or an empty string on success.
+  // A no-op in developer builds, where normal OpenMS resolution applies.
+  QString configureBundledOpenMSRuntime()
+  {
+#ifdef OPENMS_VIEWER_PORTABLE
+    const QDir applicationDirectory(QApplication::applicationDirPath());
+    const QString bundleRoot =
+      QDir::cleanPath(applicationDirectory.filePath(QStringLiteral("..")));
+    const QString bundledShare =
+      QDir::cleanPath(applicationDirectory.filePath(QStringLiteral("../share/OpenMS")));
+    const bool useExternal =
+      qEnvironmentVariableIntValue("OPENMS_VIEWER_USE_EXTERNAL_DATA") == 1;
+
+    if (useExternal)
+    {
+      // Deliberate expert opt-out: require an explicit, non-empty external tree.
+      if (qEnvironmentVariableIsEmpty("OPENMS_DATA_PATH"))
+        return QApplication::translate("main",
+          "OPENMS_VIEWER_USE_EXTERNAL_DATA is set but OPENMS_DATA_PATH is empty. Point "
+          "OPENMS_DATA_PATH at a matching OpenMS share directory, or unset the override.");
+    }
+    else
+    {
+      if (!QFileInfo::exists(QDir(bundledShare).filePath(QStringLiteral("CHEMISTRY/unimod.xml"))))
+        return QApplication::translate("main",
+          "This portable package is incomplete: its bundled OpenMS data directory was not "
+          "found at\n%1").arg(QDir::toNativeSeparators(bundledShare));
+      // Bundled data must win over any inherited OPENMS_DATA_PATH and the
+      // compiled-in fallback, so a second OpenMS install can never feed us a
+      // mismatched data tree.
+      qputenv("OPENMS_DATA_PATH", QDir::toNativeSeparators(bundledShare).toUtf8());
+    }
+
+    // Resolve now (OpenMS caches the result in a function-static) and confirm the
+    // bundle won. The unimod.xml probe above is only a marker; this is the real
+    // check that OpenMS did not fall through to another install.
+    const QString resolved = QFileInfo(
+      QString::fromStdString(OpenMS::File::getOpenMSDataPath())).canonicalFilePath();
+    if (!useExternal)
+    {
+      const QString expected = QFileInfo(bundledShare).canonicalFilePath();
+      if (resolved.isEmpty() || resolved != expected)
+        return QApplication::translate("main",
+          "OpenMS resolved its shared-data directory to\n%1\nbut this portable build "
+          "requires its own bundled data at\n%2")
+          .arg(QDir::toNativeSeparators(resolved.isEmpty()
+                 ? QStringLiteral("(unresolved)") : resolved),
+               QDir::toNativeSeparators(expected));
+    }
+
+    // Confirm the libOpenMS mapped into this process is the bundled one, not a
+    // second install reached through LD_LIBRARY_PATH / PATH / dyld.
+    const QString library = loadedOpenMSLibraryPath();
+    if (!library.isEmpty())
+    {
+      const QString canonicalLibrary = QFileInfo(library).canonicalFilePath();
+      const QString canonicalRoot = QFileInfo(bundleRoot).canonicalFilePath();
+      if (!canonicalRoot.isEmpty() && !canonicalLibrary.isEmpty()
+          && canonicalLibrary != canonicalRoot
+          && !canonicalLibrary.startsWith(canonicalRoot + QLatin1Char('/')))
+        return QApplication::translate("main",
+          "A different OpenMS library was loaded from\n%1\ninstead of this portable "
+          "package under\n%2").arg(QDir::toNativeSeparators(canonicalLibrary),
+                                   QDir::toNativeSeparators(canonicalRoot));
+    }
+#endif  // OPENMS_VIEWER_PORTABLE
+    return {};
+  }
 }
 
 int main(int argc, char* argv[])
@@ -77,6 +189,24 @@ int main(int argc, char* argv[])
   QApplication::setApplicationVersion(QStringLiteral("0.1.0"));
   QApplication::setOrganizationName(QStringLiteral("OpenMS"));
   QApplication::setStyle(QStringLiteral("Fusion"));
+
+  // Portable builds must run against their own bundled OpenMS data + library.
+  // Enforce this before any OpenMS data access (and before --version parsing,
+  // which would otherwise let a misconfigured package report success).
+  if (const QString runtimeError = configureBundledOpenMSRuntime(); !runtimeError.isEmpty())
+  {
+    // stderr for headless/CI diagnosis (Windows hides it, hence also the dialog);
+    // skip the modal dialog under headless platforms so a misconfigured package
+    // fails fast instead of blocking on a button nobody can click.
+    qCritical().noquote() << QStringLiteral("OpenMS Viewer cannot start: %1").arg(runtimeError);
+    const QString platform = QGuiApplication::platformName();
+    if (platform != QLatin1String("offscreen") && platform != QLatin1String("minimal"))
+      QMessageBox::critical(nullptr, QApplication::translate("main", "OpenMS Viewer"),
+                            QApplication::translate("main", "Cannot start OpenMS Viewer.\n\n%1")
+                              .arg(runtimeError));
+    return 1;
+  }
+
   configureWorkerThreads();
 
   QCommandLineParser parser;

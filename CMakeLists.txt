@@ -177,6 +177,18 @@ target_link_libraries(openms_viewer_ui
 
 add_executable(openms-viewer src/main.cpp)
 target_link_libraries(openms-viewer PRIVATE openms_viewer_ui)
+
+# Portable packages carry their own version-locked OpenMS libOpenMS + share tree.
+# In that mode the app forces its bundled data, fails closed if the bundle is
+# incomplete, and verifies the loaded libOpenMS is its own (see src/main.cpp).
+option(OPENMS_VIEWER_PORTABLE
+  "Build a self-contained portable package: force the bundled OpenMS data tree and fail closed if it or the bundled libOpenMS is missing"
+  OFF)
+if(OPENMS_VIEWER_PORTABLE)
+  target_compile_definitions(openms-viewer PRIVATE OPENMS_VIEWER_PORTABLE)
+  # dladdr (used to locate the loaded libOpenMS) lives in libdl on Linux.
+  target_link_libraries(openms-viewer PRIVATE ${CMAKE_DL_LIBS})
+endif()
 set_target_properties(openms-viewer PROPERTIES
   WIN32_EXECUTABLE TRUE
   MACOSX_BUNDLE TRUE

@@ -18,6 +18,13 @@ concurrency:
 env:
   QT_VERSION: 6.8.3
   DOTNET_SDK_VERSION: 8.0.x
+  # Pinned OpenMS dependency versions for reproducible packaging. Bump these
+  # together when moving to a newer OpenMS: the viewer must build against the
+  # exact OpenMS + contrib it will run on (OpenMS has no stable cross-minor ABI).
+  # OPENMS_REF was OpenMS/OpenMS develop @ 2026-07-14; OPENMS_CONTRIB_TAG was the
+  # latest OpenMS/contrib release at that time.
+  OPENMS_REF: 32f7075860bf715e7bfc3a5e98fb0da984cbf2fc
+  OPENMS_CONTRIB_TAG: 2026-03-25-183345
   OPENMS_SOURCE: ${{ github.workspace }}/_deps/OpenMS
   OPENMS_CONTRIB: ${{ github.workspace }}/_deps/contrib
   OPENMS_CONTRIB_SOURCE: ${{ github.workspace }}/_deps/contrib-source
@@ -61,11 +68,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check out OpenMS develop
+      - name: Check out OpenMS (pinned)
         uses: actions/checkout@v6
         with:
           repository: OpenMS/OpenMS
-          ref: develop
+          ref: ${{ env.OPENMS_REF }}
           path: _deps/OpenMS
           persist-credentials: false
 
@@ -137,7 +144,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CONTRIB_ASSET: ${{ matrix.contrib_asset }}
         run: |
-          contrib_tag=$(gh release view --repo OpenMS/contrib --json tagName --jq .tagName)
+          contrib_tag="$OPENMS_CONTRIB_TAG"
           echo "CONTRIB_TAG=$contrib_tag" >> "$GITHUB_ENV"
           mkdir -p "$OPENMS_CONTRIB"
           gh release download "$contrib_tag" \
@@ -240,6 +247,7 @@ jobs:
             -DOpenMS_DIR="$OPENMS_INSTALL/CMake" \
             -DOPENMS_VIEWER_BUILD_TESTS=OFF \
             -DOPENMS_VIEWER_BUILD_THERMO_SMOKE=ON \
+            -DOPENMS_VIEWER_PORTABLE=ON \
             "${viewer_args[@]}"
           cmake --build "$VIEWER_BUILD" --target openms-viewer openms-viewer-thermo-smoke
           cmake --install "$VIEWER_BUILD"
@@ -330,7 +338,7 @@ jobs:
           cat > "$VIEWER_STAGE/BUILD-INFO.txt" <<EOF
           OpenMS Viewer portable $PACKAGE_PLATFORM build
           Viewer commit: $VIEWER_SHA
-          OpenMS ref: develop
+          OpenMS ref: $OPENMS_REF (pinned)
           OpenMS commit: $OPENMS_SHA
           OpenMS contrib release: $CONTRIB_TAG
           OpenMS WITH_GUI: OFF
@@ -407,24 +415,36 @@ jobs:
             -P "$GITHUB_WORKSPACE/cmake/DeployRuntimeDependencies.cmake"
 
           # Repair every staged ELF object so no build/install directory is
-          # required after the extracted folder is moved elsewhere.
-          patchelf --set-rpath '$ORIGIN/../lib' "$bin/openms-viewer"
+          # required after the extracted folder is moved elsewhere. Use
+          # --force-rpath (DT_RPATH, searched BEFORE LD_LIBRARY_PATH) rather than
+          # the default DT_RUNPATH, so a second OpenMS on LD_LIBRARY_PATH cannot
+          # shadow the bundled one.
+          patchelf --force-rpath --set-rpath '$ORIGIN/../lib' "$bin/openms-viewer"
           while IFS= read -r library; do
             if patchelf --print-rpath "$library" >/dev/null 2>&1; then
-              patchelf --set-rpath '$ORIGIN' "$library"
+              patchelf --force-rpath --set-rpath '$ORIGIN' "$library"
             fi
           done < <(find "$lib" -type f -print)
           while IFS= read -r plugin; do
             if patchelf --print-rpath "$plugin" >/dev/null 2>&1; then
-              patchelf --set-rpath '$ORIGIN/../../lib' "$plugin"
+              patchelf --force-rpath --set-rpath '$ORIGIN/../../lib' "$plugin"
             fi
           done < <(find "$bin" -mindepth 2 -type f -print)
+
+          # Confirm we produced DT_RPATH, not DT_RUNPATH (patchelf --print-rpath
+          # cannot tell them apart).
+          readelf -d "$bin/openms-viewer" | grep -q 'RPATH' \
+            || { echo "openms-viewer is missing DT_RPATH" >&2; exit 1; }
+          if readelf -d "$bin/openms-viewer" | grep -q 'RUNPATH'; then
+            echo "openms-viewer has DT_RUNPATH; expected DT_RPATH" >&2
+            exit 1
+          fi
 
           smoke=$(find "$VIEWER_BUILD" -type f -name 'openms-viewer-thermo-smoke' \
             -perm -u+x -print -quit)
           test -n "$smoke"
           cp "$smoke" "$bin/openms-viewer-thermo-smoke"
-          patchelf --set-rpath '$ORIGIN/../lib' "$bin/openms-viewer-thermo-smoke"
+          patchelf --force-rpath --set-rpath '$ORIGIN/../lib' "$bin/openms-viewer-thermo-smoke"
 
       - name: Deploy macOS application bundle
         if: runner.os == 'macOS'
@@ -511,11 +531,27 @@ jobs:
           done < <(find "$bin" "$lib" -type f -print)
 
           mkdir -p "$RUNNER_TEMP/openms-viewer-home"
+          # Clean environment: the portable build must locate its own bundled
+          # share/OpenMS (this exercises the self-location + fail-closed logic).
           env -i \
             HOME="$RUNNER_TEMP/openms-viewer-home" \
             PATH=/usr/bin:/bin \
             QT_QPA_PLATFORM=offscreen \
             OMP_NUM_THREADS=2 \
+            timeout 30 "$bin/openms-viewer" --version
+
+          # Adversarial: a *valid* competing OpenMS share pointed to by a stray
+          # OPENMS_DATA_PATH must be overridden by the bundle. If the app honoured
+          # the env var, its resolved-path check would fail and it would exit non-zero.
+          decoy="$RUNNER_TEMP/decoy-openms-share"
+          mkdir -p "$decoy/CHEMISTRY"
+          cp "$VIEWER_STAGE/share/OpenMS/CHEMISTRY/unimod.xml" "$decoy/CHEMISTRY/unimod.xml"
+          env -i \
+            HOME="$RUNNER_TEMP/openms-viewer-home" \
+            PATH=/usr/bin:/bin \
+            QT_QPA_PLATFORM=offscreen \
+            OMP_NUM_THREADS=2 \
+            OPENMS_DATA_PATH="$decoy" \
             timeout 30 "$bin/openms-viewer" --version
 
           env -i \

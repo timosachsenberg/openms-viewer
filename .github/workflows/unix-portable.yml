@@ -263,6 +263,11 @@ jobs:
             cmake_prefix="$cmake_prefix;$QT_EXTRA_PREFIXES;$HOMEBREW_PREFIX;$openmp_root"
             viewer_args+=("-DOpenMP_ROOT=$openmp_root")
             viewer_args+=("-DCMAKE_INSTALL_RPATH=@executable_path/../Frameworks")
+            # Homebrew ships Qt as separate kegs (qtbase, qtsvg, qtimageformats).
+            # find_package(Qt6 COMPONENTS Svg) only discovers modules outside
+            # qtbase's prefix via QT_ADDITIONAL_PACKAGES_PREFIX_PATH, not plain
+            # CMAKE_PREFIX_PATH. (Linux's single-prefix aqt install needs no such hint.)
+            viewer_args+=("-DQT_ADDITIONAL_PACKAGES_PREFIX_PATH=$QT_EXTRA_PREFIXES")
           else
             viewer_args+=("-DCMAKE_INSTALL_RPATH=\$ORIGIN/../lib")
           fi

@@ -275,6 +275,10 @@ jobs:
             -DOPENMS_VIEWER_BUILD_TESTS=ON \
             -DOPENMS_VIEWER_BUILD_THERMO_SMOKE=OFF
           cmake --build "$test_build" --target openms_viewer_tests
+          # The unpackaged test binary needs libOpenMS and its contrib deps
+          # (e.g. libzip) on the runtime linker path; the portable package
+          # bundles these instead.
+          LD_LIBRARY_PATH="$OPENMS_INSTALL/lib:$OPENMS_CONTRIB/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
           OPENMS_DATA_PATH="$OPENMS_INSTALL/share/OpenMS" \
           QT_QPA_PLATFORM=offscreen \
             ctest --test-dir "$test_build" --output-on-failure

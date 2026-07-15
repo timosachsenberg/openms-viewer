@@ -27,7 +27,7 @@
 #include <OpenMS/CHEMISTRY/TheoreticalSpectrumGenerator.h>
 #include <OpenMS/DATASTRUCTURES/Param.h>
 #include <OpenMS/FORMAT/ImzMLFile.h>
-#include <OpenMS/FORMAT/SqliteConnector.h>
+#include "model/SqliteWriteDb.h"
 #include <OpenMS/FORMAT/SqMassFile.h>
 #include <OpenMS/KERNEL/MSExperiment.h>
 #include <OpenMS/KERNEL/MSSpectrum.h>
@@ -242,7 +242,7 @@ static void consensusView()
 
 static void buildOsw(const QString& path)
 {
-  OpenMS::SqliteConnector conn(path.toStdString());
+  OpenMSViewer::SqliteWriteDb conn(path.toStdString());
   const char* schema[] = {
     "CREATE TABLE RUN (ID INT, FILENAME TEXT);",
     "INSERT INTO RUN VALUES (7,'sample_run.mzML');",

@@ -21,6 +21,12 @@ extern "C"
   int sqlite3_step(sqlite3_stmt* stmt);
   int sqlite3_finalize(sqlite3_stmt* stmt);
 
+  // Write side, used only to build sqlite fixtures in tests/tools (see
+  // SqliteWriteDb.h); production code opens read-only.
+  int sqlite3_exec(sqlite3* db, const char* sql,
+                   int (*callback)(void*, int, char**, char**), void* arg, char** errmsg);
+  void sqlite3_free(void* ptr);
+
   int sqlite3_bind_text(sqlite3_stmt* stmt, int index, const char* text, int nByte,
                         void (*destructor)(void*));
   int sqlite3_bind_int64(sqlite3_stmt* stmt, int index, sqlite3_int64 value);
@@ -37,4 +43,6 @@ extern "C"
 #define SQLITE_ROW 100
 #define SQLITE_NULL 5
 #define SQLITE_OPEN_READONLY 0x00000001
+#define SQLITE_OPEN_READWRITE 0x00000002
+#define SQLITE_OPEN_CREATE 0x00000004
 #define SQLITE_TRANSIENT ((void (*)(void*)) -1)

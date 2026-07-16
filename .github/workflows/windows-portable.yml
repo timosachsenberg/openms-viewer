@@ -17,9 +17,10 @@ env:
   # Pinned OpenMS dependency versions for reproducible packaging. Bump these
   # together when moving to a newer OpenMS: the viewer must build against the
   # exact OpenMS + contrib it will run on (OpenMS has no stable cross-minor ABI).
-  # OPENMS_REF was OpenMS/OpenMS develop @ 2026-07-14; OPENMS_CONTRIB_TAG was the
-  # latest OpenMS/contrib release at that time.
-  OPENMS_REF: 32f7075860bf715e7bfc3a5e98fb0da984cbf2fc
+  # OPENMS_REF is the merge commit for OpenMS#9752, which provides the
+  # core-only target and install graph consumed below. OPENMS_CONTRIB_TAG was
+  # the latest OpenMS/contrib release when the packaging profile was created.
+  OPENMS_REF: ad6025add791453143191e0253f8cc86b5eb7409
   OPENMS_CONTRIB_TAG: 2026-03-25-183345
   OPENMS_SOURCE: ${{ github.workspace }}/_deps/OpenMS
   OPENMS_CONTRIB: ${{ github.workspace }}/_deps/contrib
@@ -128,8 +129,11 @@ jobs:
           cmake -S "$OPENMS_SOURCE" -B "$OPENMS_BUILD" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$OPENMS_INSTALL" \
+            -DINSTALL_CMAKE_DIR="$OPENMS_INSTALL/lib/cmake/OpenMS" \
             -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake;$QT_ROOT_DIR" \
             -DOPENMS_CONTRIB_LIBS="$OPENMS_CONTRIB" \
+            -DBUILD_TOPP_TOOLS=OFF \
+            -DINSTALL_OPENMS_EXAMPLES=OFF \
             -DPYOPENMS=OFF \
             -DWITH_GUI=OFF \
             -DWITH_THERMO_RAW=ON \
@@ -139,7 +143,6 @@ jobs:
             -DWITH_ONNX=OFF \
             -DMT_ENABLE_OPENMP=ON \
             -DARROW_USE_STATIC=ON \
-            -DENABLE_TUTORIALS=OFF \
             -DENABLE_DOCS=OFF \
             -DENABLE_CLASS_TESTING=OFF \
             -DENABLE_TOPP_TESTING=OFF \
@@ -154,20 +157,11 @@ jobs:
       - name: Build and install OpenMS core
         shell: bash
         run: |
-          cmake --build "$OPENMS_BUILD" --target OpenMS OpenSwathAlgo
-          cmake --install "$OPENMS_BUILD" --component library --strip
-          cmake --install "$OPENMS_BUILD" --component OpenMS_headers
-          cmake --install "$OPENMS_BUILD" --component OpenSwathAlgo_headers
-          cmake --install "$OPENMS_BUILD" --component thirdparty_headers
-          cmake --install "$OPENMS_BUILD" --component cmake
-          cmake --install "$OPENMS_BUILD" --component share
-
-          # OpenMS develop builds BrukerTimsImagingFile into OpenMS.dll, but
-          # currently omits its public header from the OpenMS_headers install
-          # component. Keep the standalone SDK complete for the viewer build.
-          cmake -E copy_if_different \
-            "$OPENMS_SOURCE/src/openms/include/OpenMS/FORMAT/BrukerTimsImagingFile.h" \
-            "$OPENMS_INSTALL/include/OpenMS/FORMAT/BrukerTimsImagingFile.h"
+          cmake --build "$OPENMS_BUILD" --target OpenMS
+          cmake --install "$OPENMS_BUILD" \
+            --prefix "$OPENMS_INSTALL" \
+            --config Release \
+            --strip
 
       - name: Build and install OpenMS Viewer
         shell: bash
@@ -179,7 +173,7 @@ jobs:
             -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake;$QT_ROOT_DIR;$OPENMS_CONTRIB;$OPENMS_INSTALL" \
             -DOPENMS_CONTRIB_LIBS="$OPENMS_CONTRIB" \
             -DOpenMS_DIR="$OPENMS_INSTALL/lib/cmake/OpenMS" \
-            -DOPENMS_VIEWER_SQLITE3_LIBRARY="$OPENMS_BUILD/lib/sqlite3.lib" \
+            -DOPENMS_VIEWER_SQLITE3_LIBRARY="$OPENMS_INSTALL/lib/sqlite3.lib" \
             -DOPENMS_VIEWER_BUILD_TESTS=OFF \
             -DOPENMS_VIEWER_BUILD_THERMO_SMOKE=ON \
             -DOPENMS_VIEWER_PORTABLE=ON
@@ -196,8 +190,6 @@ jobs:
             $bin,
             (Join-Path $env:OPENMS_INSTALL "bin"),
             (Join-Path $env:OPENMS_INSTALL "lib"),
-            (Join-Path $env:OPENMS_BUILD "bin"),
-            (Join-Path $env:OPENMS_BUILD "lib"),
             (Join-Path $env:OPENMS_CONTRIB "bin"),
             (Join-Path $env:OPENMS_CONTRIB "lib"),
             (Join-Path $env:QT_ROOT_DIR "bin")
@@ -334,13 +326,13 @@ jobs:
 
           $licenseRoot = Join-Path $env:VIEWER_STAGE "share/licenses"
           New-Item -ItemType Directory -Path $licenseRoot -Force | Out-Null
-          Copy-Item (Join-Path $env:OPENMS_SOURCE "License.txt") `
+          Copy-Item (Join-Path $env:OPENMS_INSTALL "share/OpenMS/LICENSES/OpenMS-BSD-3-Clause.txt") `
             (Join-Path $licenseRoot "OpenMS-BSD-3-Clause.txt")
           Copy-Item (Join-Path $env:OPENMS_CONTRIB_SOURCE "LICENSE.md") `
             (Join-Path $licenseRoot "OpenMS-contrib.md")
           Copy-Item (Join-Path $env:OPENMS_CONTRIB_SOURCE "licensetexts") `
             (Join-Path $licenseRoot "OpenMS-contrib-licenses") -Recurse
-          $thermoLicense = Join-Path $env:OPENMS_BUILD "ThermoRawFileReader-License.doc"
+          $thermoLicense = Join-Path $env:OPENMS_INSTALL "share/OpenMS/LICENSES/ThermoRawFileReader-License.doc"
           if (Test-Path $thermoLicense) {
             Copy-Item $thermoLicense $licenseRoot
           }
@@ -356,6 +348,7 @@ jobs:
           OpenMS commit: $env:OPENMS_SHA
           OpenMS contrib release: $env:CONTRIB_TAG
           OpenMS WITH_GUI: OFF
+          OpenMS BUILD_TOPP_TOOLS: OFF
           OpenMS WITH_THERMO_RAW: ON
           OpenMS WITH_OPENTIMS: ON
           OpenMS OpenMP: ON

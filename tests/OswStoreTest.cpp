@@ -1,12 +1,12 @@
 #include "model/OswStore.h"
 
-#include <OpenMS/FORMAT/SqliteConnector.h>
+#include "model/SqliteWriteDb.h"
 
 #include <QTemporaryDir>
 #include <QTest>
 
-// Builds a minimal OpenSWATH .osw with OpenMS's SqliteConnector (write side,
-// test-only), then reads it back through the read-only OswStore.
+// Builds a minimal OpenSWATH .osw with the test-only SqliteWriteDb helper, then
+// reads it back through the read-only OswStore.
 class OswStoreTest final : public QObject
 {
   Q_OBJECT
@@ -14,7 +14,7 @@ class OswStoreTest final : public QObject
 private:
   static void buildOsw(const QString& path)
   {
-    OpenMS::SqliteConnector conn(path.toStdString());  // READWRITE_OR_CREATE
+    OpenMSViewer::SqliteWriteDb conn(path.toStdString());  // READWRITE_OR_CREATE
     const char* schema[] = {
       "CREATE TABLE RUN (ID INT, FILENAME TEXT);",
       "INSERT INTO RUN VALUES (1,'run1.mzML');",
@@ -100,7 +100,7 @@ private slots:
     QVERIFY(dir.isValid());
     const QString path = dir.filePath(QStringLiteral("plain.sqlite"));
     {
-      OpenMS::SqliteConnector conn(path.toStdString());
+      OpenMSViewer::SqliteWriteDb conn(path.toStdString());
       conn.executeStatement("CREATE TABLE UNRELATED (ID INT);");
     }
     QString error;

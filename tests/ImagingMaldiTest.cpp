@@ -1,6 +1,6 @@
 #include "model/ImagingDocument.h"
 
-#include <OpenMS/FORMAT/SqliteConnector.h>
+#include "model/SqliteWriteDb.h"
 #include <OpenMS/config.h>
 
 #include <QDir>
@@ -24,7 +24,7 @@ namespace
     const QString d = QDir(parent).filePath(name + QStringLiteral(".d"));
     QDir().mkpath(d);
     const std::string tdf = QDir(d).filePath(QStringLiteral("analysis.tdf")).toStdString();
-    OpenMS::SqliteConnector conn(tdf, OpenMS::SqliteConnector::SqlOpenMode::READWRITE_OR_CREATE);
+    OpenMSViewer::SqliteWriteDb conn(tdf);
     conn.executeStatement("CREATE TABLE GlobalMetadata (Key TEXT PRIMARY KEY, Value TEXT);");
     if (!appType.isEmpty())
       conn.executeStatement(("INSERT INTO GlobalMetadata (Key, Value) VALUES ('MaldiApplicationType', '"

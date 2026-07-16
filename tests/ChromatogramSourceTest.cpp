@@ -2,7 +2,7 @@
 #include "model/OswDocument.h"
 #include "model/OswStore.h"
 
-#include <OpenMS/FORMAT/SqliteConnector.h>
+#include "model/SqliteWriteDb.h"
 #include <OpenMS/FORMAT/SqMassFile.h>
 #include <OpenMS/KERNEL/MSChromatogram.h>
 #include <OpenMS/KERNEL/MSExperiment.h>
@@ -24,7 +24,7 @@ private:
   // b4=1001) — the mapping + annotation that the sqMass file itself lacks.
   static void buildOsw(const QString& path)
   {
-    OpenMS::SqliteConnector conn(path.toStdString());
+    OpenMSViewer::SqliteWriteDb conn(path.toStdString());
     const char* schema[] = {
       "CREATE TABLE RUN (ID INT, FILENAME TEXT);",
       "INSERT INTO RUN VALUES (7,'run7.mzML');",
@@ -158,7 +158,7 @@ private slots:
     const QString sqMassPath = dir.filePath(QStringLiteral("dup.sqMass"));
     buildOsw(oswPath);
     {
-      OpenMS::SqliteConnector conn(oswPath.toStdString());
+      OpenMSViewer::SqliteWriteDb conn(oswPath.toStdString());
       conn.executeStatement("INSERT INTO TRANSITION_PRECURSOR_MAPPING VALUES (1000,100);");
     }
     buildSqMass(sqMassPath);

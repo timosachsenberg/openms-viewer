@@ -1,7 +1,7 @@
 #include "model/OswStore.h"
 #include "widgets/OswPanel.h"
 
-#include <OpenMS/FORMAT/SqliteConnector.h>
+#include "model/SqliteWriteDb.h"
 
 #include <QAbstractItemModel>
 #include <QCheckBox>
@@ -18,7 +18,7 @@ class OswPanelTest final : public QObject
 private:
   static void buildOsw(const QString& path)
   {
-    OpenMS::SqliteConnector conn(path.toStdString());
+    OpenMSViewer::SqliteWriteDb conn(path.toStdString());
     const char* schema[] = {
       "CREATE TABLE RUN (ID INT, FILENAME TEXT);",
       "INSERT INTO RUN VALUES (1,'run.mzML');",

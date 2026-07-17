@@ -363,6 +363,74 @@ private slots:
     QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(welcome));
   }
 
+  // A rebuild during a drag — a background load finishing is enough — replaces
+  // the tree the user is aiming into. The gesture must be abandoned rather than
+  // resolved against rows that were never the ones the indicator promised.
+  void rebuildDuringDragAbandonsTheGesture()
+  {
+    QSettings().clear();
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("ux-rebuild.mzML"));
+    OpenMS::MzMLFile().store(path.toStdString(), OpenMSViewer::TestData::experiment());
+
+    OpenMSViewer::MainWindow window;
+    window.resize(1400, 900);
+    window.show();
+    auto* peakMap = window.findChild<OpenMSViewer::PeakMapWidget*>();
+    QVERIFY(peakMap != nullptr);
+    window.loadFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(peakMap->hasExperiment(), 5000);
+
+    auto* stack = window.findChild<OpenMSViewer::RowStackWidget*>(QStringLiteral("rowStack"));
+    auto* log = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("log"));
+    QVERIFY(stack && log);
+    QWidget* header = window.findChild<QWidget*>(QStringLiteral("spectrumHeader"));
+    QWidget* ticFrame = window.findChild<QWidget*>(QStringLiteral("ticFrame"));
+    QVERIFY(header && ticFrame);
+    const OpenMSViewer::LayoutModel before = stack->model();
+
+    // Press and drag until a drop target is live.
+    const QPoint from = header->mapToGlobal(header->rect().center());
+    const QPoint onto = ticFrame->mapToGlobal(
+      QPoint(ticFrame->width() - ticFrame->width() / 10, ticFrame->height() / 2));
+    const auto send = [header](QEvent::Type type, const QPoint& global,
+                               Qt::MouseButton button, Qt::MouseButtons buttons)
+    {
+      QMouseEvent event(type, QPointF(header->mapFromGlobal(global)), QPointF(global),
+                        button, buttons, Qt::NoModifier);
+      QApplication::sendEvent(header, &event);
+    };
+    send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+    send(QEvent::MouseMove, from + QPoint(QApplication::startDragDistance() * 2 + 4, 0),
+         Qt::NoButton, Qt::LeftButton);
+    send(QEvent::MouseMove, onto, Qt::NoButton, Qt::LeftButton);
+
+    auto* indicator = window.findChild<QWidget*>(QStringLiteral("rowStackDropIndicator"));
+    QVERIFY(indicator != nullptr);
+    QVERIFY(indicator->isVisible());  // a target really was live
+
+    // Something else reshapes the layout mid-drag.
+    log->toggleViewAction()->trigger();
+    QTest::qWait(30);
+    QVERIFY(!indicator->isVisible());  // the promise is withdrawn, not left hanging
+    QVERIFY(stack->model().invariantHolds());
+    QCOMPARE(stack->model().locate(QStringLiteral("spectrum")).value().row,
+             before.locate(QStringLiteral("spectrum")).value().row);
+
+    // The release still arrives in a real session — Qt routes it by
+    // qt_button_down, which holds the header, and reparenting the frame around
+    // it leaves that alone — so it must find the gesture already gone and do
+    // nothing, rather than apply a drop against rows that moved after the
+    // indicator was last drawn.
+    send(QEvent::MouseButtonRelease, onto, Qt::LeftButton, Qt::NoButton);
+    QTest::qWait(30);
+    QVERIFY(!indicator->isVisible());
+    QCOMPARE(stack->model().locate(QStringLiteral("spectrum")).value().row,
+             before.locate(QStringLiteral("spectrum")).value().row);
+    QVERIFY(stack->model().invariantHolds());
+  }
+
   void panelCloseButtonHidesAndDragReordersRows()
   {
     QSettings().clear();

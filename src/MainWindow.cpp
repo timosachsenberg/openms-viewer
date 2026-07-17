@@ -1387,6 +1387,13 @@ namespace OpenMSViewer
     {
       panelVisibilityPreference_[logHandle_->id()] = true;
       setPanelAvailable(logHandle_, true);
+      // The log is a panel in the row stack now, and the stack is not the page
+      // on show while the welcome screen is up — which is exactly when a load
+      // has just failed. Asking for the log has to bring the stack forward, or
+      // the button does nothing and the panel turns up unbidden on the next
+      // successful load. (As a dock the log was a peer of the central widget
+      // and showed regardless of the page.)
+      showDataPage();
       logHandle_->raise();
     }
   }
@@ -1464,6 +1471,7 @@ namespace OpenMSViewer
     if (saveFeaturesAsAction_) saveFeaturesAsAction_->setEnabled(false);
     if (saveIdentificationsAction_) saveIdentificationsAction_->setEnabled(false);
     if (saveConsensusAction_) saveConsensusAction_->setEnabled(false);
+    setPanelAvailable(peakMapHandle_, false);
     setPanelAvailable(ticHandle_, false);
     setPanelAvailable(spectrumHandle_, false);
     setPanelAvailable(featuresHandle_, false);
@@ -1684,6 +1692,7 @@ namespace OpenMSViewer
     }
     else if (imagingStore_)
     {
+      setPanelAvailable(peakMapHandle_, false);
       setPanelAvailable(spectrumHandle_, true);
       setPanelAvailable(imagingHandle_, true);
       imagingHandle_->raise();
@@ -1691,6 +1700,7 @@ namespace OpenMSViewer
     else
     {
       const bool hasSpectra = !document_.spectra().empty();
+      setPanelAvailable(peakMapHandle_, hasSpectra);
       setPanelAvailable(ticHandle_, hasSpectra);
       setPanelAvailable(spectrumHandle_, hasSpectra);
       setPanelAvailable(spectraHandle_, hasSpectra);
@@ -2662,6 +2672,7 @@ namespace OpenMSViewer
     chromatograms_->clear();
     ionMobility_->clear();
     faims_->clear();
+    setPanelAvailable(peakMapHandle_, false);  // imaging has no peak map
     setPanelAvailable(ticHandle_, false);
     setPanelAvailable(spectraHandle_, false);
     setPanelAvailable(chromatogramsHandle_, false);
@@ -2731,6 +2742,10 @@ namespace OpenMSViewer
     spectrum_->setExperiment(experiment);
     spectra_->setData(document_.spectra(), document_.identifications());
     const bool hasSpectra = !document_.spectra().empty();
+    // The peak map is a row like any other now, so it has to earn its height:
+    // as the old central widget it could sit there empty for an imaging or
+    // OSW-only session, but a blank row just costs space.
+    setPanelAvailable(peakMapHandle_, hasSpectra);
     setPanelAvailable(ticHandle_, hasSpectra);
     setPanelAvailable(spectrumHandle_, hasSpectra);
     setPanelAvailable(spectraHandle_, hasSpectra);

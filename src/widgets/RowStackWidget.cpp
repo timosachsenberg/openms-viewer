@@ -10,6 +10,7 @@
 #include <QMouseEvent>
 #include <QPalette>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QStringList>
@@ -19,6 +20,7 @@
 
 #include <algorithm>
 #include <numeric>
+#include <optional>
 #include <utility>
 
 namespace OpenMSViewer
@@ -83,6 +85,12 @@ namespace OpenMSViewer
     void headerPressed(const QPoint& globalPos);
     void headerMoved(const QPoint& globalPos);
     void headerReleased(const QPoint& globalPos);
+    /// Give up a press that can no longer become a drop, so the header stops
+    /// looking like a live drag before the button comes up. The release still
+    /// arrives — Qt routes it by qt_button_down, which holds the header, and
+    /// reparenting the frame around it does not disturb that — but by then the
+    /// stack has already abandoned the gesture and the release does nothing.
+    void abandonPress();
 
   signals:
     void dragBegan(PanelFrame* frame, const QPoint& globalPos);
@@ -257,6 +265,13 @@ namespace OpenMSViewer
     return QWidget::eventFilter(watched, event);
   }
 
+  void PanelFrame::abandonPress()
+  {
+    if (!pressed_) return;
+    stopWatching();
+    header_->setCursor(Qt::OpenHandCursor);
+  }
+
   void PanelFrame::stopWatching()
   {
     pressed_ = false;
@@ -300,6 +315,14 @@ namespace OpenMSViewer
     // than compressing plots past legibility.
     scroll_->setWidgetResizable(true);
     layout->addWidget(scroll_);
+    // Qt routes the wheel by what is under the cursor, not by the implicit mouse
+    // grab, so the stack can scroll mid-drag — and scrolling sends no mouse move.
+    // Without this the rows slide under a frozen indicator and the drop resolves
+    // against rows that were never the ones promised.
+    connect(scroll_->verticalScrollBar(), &QScrollBar::valueChanged, this, [this]
+    {
+      if (dragging_) updateDrag(QCursor::pos());
+    });
 
     indicator_ = new QWidget(this);
     indicator_->setObjectName(QStringLiteral("rowStackDropIndicator"));
@@ -552,10 +575,31 @@ namespace OpenMSViewer
                  : QRect(rowRect.left(), rowRect.bottom() + 1 - band, rowRect.width(), band);
       }
       case LayoutModel::DropKind::LeftOfAnchor:
-        return QRect(frameRect.topLeft(), QSize(frameRect.width() / 2, frameRect.height()));
       case LayoutModel::DropKind::RightOfAnchor:
-        return QRect(QPoint(frameRect.left() + frameRect.width() / 2, frameRect.top()),
-                     QSize(frameRect.width() - frameRect.width() / 2, frameRect.height()));
+      {
+        // A side drop by a panel already in the anchor's row reorders the two
+        // rather than joining them, so the dragged panel lands in that side's
+        // whole slot — the anchor's, if they swap; its own, if the drop leaves
+        // the order alone. Promise the slot it actually lands in: half of the
+        // anchor's half-width would be a sliver it never occupies, and for a
+        // drop that changes nothing it would advertise a move.
+        const std::optional<LayoutModel::Position> anchorAt = model_.locate(target.anchor);
+        const std::optional<LayoutModel::Position> draggedAt =
+          dragFrame_ ? model_.locate(dragFrame_->id()) : std::nullopt;
+        if (anchorAt && draggedAt && anchorAt->row == draggedAt->row)
+        {
+          const std::vector<PanelId>& panels = model_.rows()[anchorAt->row].panels;
+          const std::size_t slot = target.kind == LayoutModel::DropKind::LeftOfAnchor ? 0 : 1;
+          if (slot >= panels.size()) return {};
+          const PanelHandle* occupant = panel(panels[slot]);
+          return occupant && occupant->frame_ ? globalRect(occupant->frame_) : QRect();
+        }
+        // Joining a one-panel row: the anchor gives up the half it is dropped on.
+        return target.kind == LayoutModel::DropKind::LeftOfAnchor
+                 ? QRect(frameRect.topLeft(), QSize(frameRect.width() / 2, frameRect.height()))
+                 : QRect(QPoint(frameRect.left() + frameRect.width() / 2, frameRect.top()),
+                         QSize(frameRect.width() - frameRect.width() / 2, frameRect.height()));
+      }
     }
     return {};
   }
@@ -564,6 +608,26 @@ namespace OpenMSViewer
   {
     if (rebuilding_) return;
     rebuilding_ = true;
+
+    // A rebuild replaces the tree the user is dragging into, so whatever the
+    // indicator is promising stops being true. Rebuilds are not rare during a
+    // drag either — a background load finishing takes a panel's data away or
+    // gives it back, which reshapes the layout under the cursor. Drop the drag
+    // rather than resolve it against a tree that no longer matches the promise.
+    //
+    // The frames are told too, so the header they own stops showing a drag the
+    // stack has already given up on rather than waiting for a button-up that may
+    // be seconds away. (The release itself still arrives: Qt routes it by
+    // qt_button_down, which holds the header, and reparenting the frame around
+    // it leaves that alone.)
+    cancelDrag();
+    for (PanelHandle* handle : std::as_const(order_)) handle->frame_->abandonPress();
+
+    // Reparenting also moves focus off whatever held it — the spectrum search
+    // box, say — and a rebuild is not the user's doing: a background load
+    // finishing is enough to trigger one mid-sentence.
+    QWidget* focused = QApplication::focusWidget();
+    if (focused && !isAncestorOf(focused)) focused = nullptr;
 
     // Deliberately does NOT remember sizes here. Only splitterMoved does — a
     // divider the user dragged is the only thing that expresses an arrangement.
@@ -637,6 +701,8 @@ namespace OpenMSViewer
     for (int i = 0; i < rowsSplitter_->count(); ++i)
       if (auto* rowSplitter = qobject_cast<QSplitter*>(rowsSplitter_->widget(i)))
         applyRemembered(rowSplitter, signatureOf(rowSplitter));
+
+    if (focused && focused->isVisible()) focused->setFocus(Qt::OtherFocusReason);
 
     syncToggleActions();
     rebuilding_ = false;

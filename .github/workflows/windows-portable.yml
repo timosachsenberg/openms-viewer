@@ -2,6 +2,14 @@ name: Windows portable package
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/windows-portable.yml
+      - cmake/DeployRuntimeDependencies.cmake
+      # The packaged app compiles + smoke-runs here, so exercise it when the
+      # portable runtime code or build config changes, not just the workflow.
+      - src/**
+      - CMakeLists.txt
 
 permissions:
   contents: read

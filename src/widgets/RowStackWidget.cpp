@@ -578,21 +578,21 @@ namespace OpenMSViewer
       case LayoutModel::DropKind::RightOfAnchor:
       {
         // A side drop by a panel already in the anchor's row reorders the two
-        // rather than joining them, so the dragged panel lands in that side's
-        // whole slot — the anchor's, if they swap; its own, if the drop leaves
-        // the order alone. Promise the slot it actually lands in: half of the
-        // anchor's half-width would be a sliver it never occupies, and for a
-        // drop that changes nothing it would advertise a move.
+        // rather than joining them, so highlight the row: it is the one thing
+        // that is certainly true. Half of the anchor's half-width would be a
+        // sliver the panel never occupies, and naming the destination slot would
+        // promise that slot's *current* width — which the drop need not keep,
+        // since the reordered row has a signature of its own and restores
+        // whatever widths were remembered for it.
         const std::optional<LayoutModel::Position> anchorAt = model_.locate(target.anchor);
         const std::optional<LayoutModel::Position> draggedAt =
           dragFrame_ ? model_.locate(dragFrame_->id()) : std::nullopt;
         if (anchorAt && draggedAt && anchorAt->row == draggedAt->row)
         {
-          const std::vector<PanelId>& panels = model_.rows()[anchorAt->row].panels;
-          const std::size_t slot = target.kind == LayoutModel::DropKind::LeftOfAnchor ? 0 : 1;
-          if (slot >= panels.size()) return {};
-          const PanelHandle* occupant = panel(panels[slot]);
-          return occupant && occupant->frame_ ? globalRect(occupant->frame_) : QRect();
+          const QWidget* rowWidget = handle->frame_;
+          while (rowWidget && rowWidget->parentWidget() != rowsSplitter_)
+            rowWidget = rowWidget->parentWidget();
+          return rowWidget ? globalRect(rowWidget) : QRect();
         }
         // Joining a one-panel row: the anchor gives up the half it is dropped on.
         return target.kind == LayoutModel::DropKind::LeftOfAnchor
@@ -685,6 +685,10 @@ namespace OpenMSViewer
       rowSplitter->setObjectName(signatureOf(rowSplitter) + QStringLiteral("Row"));
     }
 
+    // setWidget zeroes the scrollbars, so an overflowing stack would jump back
+    // to the top on every rebuild — including the one that applies a drop, which
+    // would scroll the result out of view just as the user let go.
+    const int scrollTop = scroll_->verticalScrollBar()->value();
     scroll_->setWidget(rowsSplitter_);
 
     // Detaching hid the frames explicitly, so the splitters leave them hidden.
@@ -703,6 +707,8 @@ namespace OpenMSViewer
         applyRemembered(rowSplitter, signatureOf(rowSplitter));
 
     if (focused && focused->isVisible()) focused->setFocus(Qt::OtherFocusReason);
+    // After the new tree has a size, so the range the value is clamped to exists.
+    scroll_->verticalScrollBar()->setValue(scrollTop);
 
     syncToggleActions();
     rebuilding_ = false;

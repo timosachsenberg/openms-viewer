@@ -15,6 +15,7 @@
 #include "widgets/WelcomeWidget.h"
 
 #include <OpenMS/FORMAT/FeatureXMLFile.h>
+#include <OpenMS/FORMAT/IdXMLFile.h>
 #include <OpenMS/FORMAT/MzMLFile.h>
 
 #include <algorithm>
@@ -361,6 +362,61 @@ private slots:
     QVERIFY(closeData != nullptr);
     closeData->trigger();
     QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(welcome));
+  }
+
+  // Panels live in the row stack, which is a page of the central QStackedWidget
+  // and is not the one on view while the welcome screen is up. Anything that
+  // puts a panel on screen has to bring the stack forward with it, or it loads,
+  // reports success, and shows the user nothing. As docks these panels were
+  // peers of the central widget and this could not arise.
+  void loadingIdentificationsAloneLeavesTheWelcomePage()
+  {
+    QSettings().clear();
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString ids = directory.filePath(QStringLiteral("ux-ids.idXML"));
+    const auto [proteins, peptides] = OpenMSViewer::TestData::identifications();
+    OpenMS::IdXMLFile().store(ids.toStdString(), proteins, peptides);
+
+    OpenMSViewer::MainWindow window;
+    window.resize(1280, 820);
+    window.show();
+    auto* stack = window.findChild<QStackedWidget*>(QStringLiteral("centralStack"));
+    auto* rows = window.findChild<OpenMSViewer::RowStackWidget*>(QStringLiteral("rowStack"));
+    auto* welcome = window.findChild<OpenMSViewer::WelcomeWidget*>();
+    QVERIFY(stack && rows && welcome);
+    QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(welcome));
+
+    window.loadFile(ids);
+    auto* identifications =
+      window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("identifications"));
+    QVERIFY(identifications != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(identifications->toggleViewAction()->isEnabled(), 5000);
+
+    // The data page, not the welcome screen the load started on.
+    QTRY_COMPARE(stack->currentWidget(), static_cast<QWidget*>(rows));
+  }
+
+  // Opening a panel from the View menu must also put it on screen, for the same
+  // reason — the error dialog's "Open application log" button is not the only
+  // way in.
+  void openingAPanelFromTheViewMenuShowsTheStack()
+  {
+    QSettings().clear();
+    OpenMSViewer::MainWindow window;
+    window.resize(1280, 820);
+    window.show();
+    auto* stack = window.findChild<QStackedWidget*>(QStringLiteral("centralStack"));
+    auto* rows = window.findChild<OpenMSViewer::RowStackWidget*>(QStringLiteral("rowStack"));
+    auto* welcome = window.findChild<OpenMSViewer::WelcomeWidget*>();
+    auto* log = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("log"));
+    QVERIFY(stack && rows && welcome && log);
+    QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(welcome));
+
+    QVERIFY(log->toggleViewAction()->isEnabled());  // the log needs no document
+    log->toggleViewAction()->trigger();
+    QVERIFY(log->isShown());
+    QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(rows));
   }
 
   // A rebuild during a drag — a background load finishing is enough — replaces

@@ -1545,6 +1545,16 @@ namespace OpenMSViewer
       if (settings.contains(key)) preferred = settings.value(key).toBool();
       else if (hasSavedState) preferred = desiredLayout_.contains(panel->id());
       panelVisibilityPreference_[panel->id()] = preferred;
+
+      // Asking for a panel has to put it on screen. The stack is not the current
+      // page while the welcome screen is up, so without this the View menu is
+      // inert there and the panel turns up unbidden on the next load instead.
+      // triggered() fires only for a real user action, never for the programmatic
+      // setChecked that syncs the action to the layout.
+      connect(panel->toggleViewAction(), &QAction::triggered, this, [this](bool shown)
+      {
+        if (shown) showDataPage();
+      });
     }
     // Preferences are now known, so the layout the row stack shows can be
     // reconciled against them; captureDesiredLayout keeps them in step from here.
@@ -2624,6 +2634,12 @@ namespace OpenMSViewer
     const QString sourcePath = result.sourcePath;
     document_.adoptIdentifications(std::move(result));
     rememberRecentFile(sourcePath);
+    // Every other loader does this. It did not matter while the panels were
+    // docks — they were peers of the central widget and showed whichever page
+    // was current — but they live in the row stack now, and the stack is not the
+    // page on view until this runs. Opening an idXML on its own would otherwise
+    // load, report success, and leave the welcome screen up.
+    showDataPage();
     updateRunContext();
     const std::size_t linked = static_cast<std::size_t>(std::count_if(
       document_.identifications().begin(), document_.identifications().end(),

@@ -9,7 +9,7 @@
 #include <OpenMS/KERNEL/Peak1D.h>
 
 #include <QComboBox>
-#include <QDockWidget>
+#include "widgets/RowStackWidget.h"
 #include <QDoubleSpinBox>
 #include <QSettings>
 #include <QFile>
@@ -197,13 +197,13 @@ private slots:
     window.show();
     window.loadFile(path);
     auto* panel = window.findChild<OpenMSViewer::ImagingPanelWidget*>();
-    auto* dock = window.findChild<QDockWidget*>(QStringLiteral("imagingDock"));
+    auto* dock = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("imaging"));
     auto* spectrum = window.findChild<OpenMSViewer::SpectrumWidget*>();
     QVERIFY(panel != nullptr);
     QVERIFY(dock != nullptr);
     QVERIFY(spectrum != nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(panel->hasData(), 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(dock->isVisible(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(dock->isShown(), 3000);
     QCOMPARE(panel->summary().pixels.size(), std::size_t{4});
     QCOMPARE(spectrum->spectrumIndex(), std::size_t{0});
     dock->raise();

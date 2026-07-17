@@ -9,11 +9,13 @@
 #include "widgets/FeatureTableWidget.h"
 #include "widgets/LoadingOverlayWidget.h"
 #include "widgets/PeakMapWidget.h"
+#include "widgets/RowStackWidget.h"
 #include "widgets/ToastOverlay.h"
 #include "widgets/TransitionGroupPlot.h"
 #include "widgets/WelcomeWidget.h"
 
 #include <OpenMS/FORMAT/FeatureXMLFile.h>
+#include <OpenMS/FORMAT/IdXMLFile.h>
 #include <OpenMS/FORMAT/MzMLFile.h>
 
 #include <algorithm>
@@ -24,7 +26,6 @@
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
-#include <QDockWidget>
 #include <QLabel>
 #include <QListWidget>
 #include <QMenu>
@@ -39,6 +40,28 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
+
+namespace
+{
+  // Drive a panel-header drag the way the widget sees it: press, a move past the
+  // start-drag threshold, a move onto the target, release. Nothing floats and no
+  // top-level window moves, so plain synthetic events are the whole story.
+  void dragHeader(QWidget* header, const QPoint& fromGlobal, const QPoint& ontoGlobal)
+  {
+    const auto send = [header](QEvent::Type type, const QPoint& global,
+                               Qt::MouseButton button, Qt::MouseButtons buttons)
+    {
+      const QPoint local = header->mapFromGlobal(global);
+      QMouseEvent event(type, QPointF(local), QPointF(global), button, buttons, Qt::NoModifier);
+      QApplication::sendEvent(header, &event);
+    };
+    send(QEvent::MouseButtonPress, fromGlobal, Qt::LeftButton, Qt::LeftButton);
+    const QPoint nudge = fromGlobal + QPoint(QApplication::startDragDistance() * 2 + 4, 0);
+    send(QEvent::MouseMove, nudge, Qt::NoButton, Qt::LeftButton);
+    send(QEvent::MouseMove, ontoGlobal, Qt::NoButton, Qt::LeftButton);
+    send(QEvent::MouseButtonRelease, ontoGlobal, Qt::LeftButton, Qt::NoButton);
+  }
+}
 
 class UxWorkflowTest final : public QObject
 {
@@ -101,46 +124,103 @@ private slots:
     window.resize(1200, 800);
     window.show();
     window.loadFiles({mzml, feat});
-    auto* featuresDock = window.findChild<QDockWidget*>(QStringLiteral("featuresDock"));
-    auto* spectrumDock = window.findChild<QDockWidget*>(QStringLiteral("spectrumDock"));
+    auto* featuresPanel = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("features"));
+    auto* spectrumPanel = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("spectrum"));
+    auto* ticPanel = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("tic"));
     auto* imaging = window.findChild<QAction*>(QStringLiteral("layoutImaging"));
     auto* overview = window.findChild<QAction*>(QStringLiteral("layoutOverview"));
-    QVERIFY(featuresDock && spectrumDock && imaging && overview);
-    QTRY_VERIFY_WITH_TIMEOUT(featuresDock->toggleViewAction()->isEnabled(), 5000);  // features loaded
+    QVERIFY(featuresPanel && spectrumPanel && ticPanel && imaging && overview);
+    QTRY_VERIFY_WITH_TIMEOUT(featuresPanel->toggleViewAction()->isEnabled(), 5000);  // features loaded
+    QTRY_VERIFY_WITH_TIMEOUT(ticPanel->isShown(), 5000);
 
-    // The Imaging preset declutters: it hides the (available) features table and
-    // keeps the spectrum visible.
+    // The Imaging preset declutters: it hides the (available) TIC and features
+    // table and keeps the spectrum shown.
     imaging->trigger();
-    QVERIFY(!featuresDock->isVisible());
-    QVERIFY(spectrumDock->isVisible());
+    QVERIFY(!ticPanel->isShown());
+    QVERIFY(!featuresPanel->isShown());
+    QVERIFY(spectrumPanel->isShown());
 
-    // Overview brings the features table back.
+    // Overview brings the default panels back. The features table is not among
+    // them — with no tabs, a loaded featureXML shows up in Data & layers and as a
+    // peak-map overlay, and its table is one View-menu click away.
     overview->trigger();
-    QVERIFY(featuresDock->isVisible());
+    QVERIFY(ticPanel->isShown());
+    QVERIFY(spectrumPanel->isShown());
+    QVERIFY(!featuresPanel->isShown());
+
+    // Opening it explicitly places it, and it stays put across a preset re-apply
+    // only if the user keeps it — Overview is a reset, so it clears it again.
+    featuresPanel->toggleViewAction()->trigger();
+    QVERIFY(featuresPanel->isShown());
+    overview->trigger();
+    QVERIFY(!featuresPanel->isShown());
   }
 
-  void dockPanelMoveActionsRedockVertically()
+  // Dragging a panel header onto the side of another panel joins that panel's row.
+  // The row then holds two panels and refuses a third — the invariant, driven
+  // through the real widget rather than asserted on the model.
+  void dragPanelHeaderFormsTwoPanelRowAndRefusesAThird()
   {
+    QSettings().clear();
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("ux-drag.mzML"));
+    OpenMS::MzMLFile().store(path.toStdString(), OpenMSViewer::TestData::experiment());
+
     OpenMSViewer::MainWindow window;
-    auto* spectrumDock = window.findChild<QDockWidget*>(QStringLiteral("spectrumDock"));
-    auto* moveLeft = window.findChild<QAction*>(QStringLiteral("spectrumDockMoveLeft"));
-    auto* moveRight = window.findChild<QAction*>(QStringLiteral("spectrumDockMoveRight"));
-    QVERIFY(spectrumDock && moveLeft && moveRight);
+    window.resize(1400, 900);
+    window.show();
+    // A document is needed for the stack to be the visible page at all: with none
+    // loaded the welcome page covers it, and a panel nobody can see is no target.
+    auto* peakMap = window.findChild<OpenMSViewer::PeakMapWidget*>();
+    QVERIFY(peakMap != nullptr);
+    window.loadFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(peakMap->hasExperiment(), 5000);
 
-    // The spectrum (bottom by default) can be re-docked into a vertical side column.
-    moveLeft->trigger();
-    QCOMPARE(window.dockWidgetArea(spectrumDock), Qt::LeftDockWidgetArea);
+    auto* stack = window.findChild<OpenMSViewer::RowStackWidget*>(QStringLiteral("rowStack"));
+    QVERIFY(stack != nullptr);
+    auto* tic = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("tic"));
+    auto* spectrum = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("spectrum"));
+    auto* log = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("log"));
+    QVERIFY(tic && spectrum && log);
 
-    // A table joins the same column and STACKS (splits) rather than tabbing.
-    auto* featuresDock = window.findChild<QDockWidget*>(QStringLiteral("featuresDock"));
-    auto* featuresLeft = window.findChild<QAction*>(QStringLiteral("featuresDockMoveLeft"));
-    QVERIFY(featuresDock && featuresLeft);
-    featuresLeft->trigger();
-    QCOMPARE(window.dockWidgetArea(featuresDock), Qt::LeftDockWidgetArea);
-    QVERIFY(!window.tabifiedDockWidgets(featuresDock).contains(spectrumDock));
+    // Start from a known arrangement rather than whatever the default happens to be.
+    OpenMSViewer::LayoutModel start;
+    start.appendRow(tic->id());
+    start.appendRow(spectrum->id());
+    start.appendRow(log->id());
+    stack->setLayoutModel(start);
+    QTest::qWait(50);
+    QCOMPARE(stack->model().rowCount(), 3);
 
-    moveRight->trigger();
-    QCOMPARE(window.dockWidgetArea(spectrumDock), Qt::RightDockWidgetArea);
+    QWidget* header = window.findChild<QWidget*>(QStringLiteral("spectrumHeader"));
+    QWidget* ticFrame = window.findChild<QWidget*>(QStringLiteral("ticFrame"));
+    QVERIFY(header && ticFrame);
+
+    // Drop into the right 30% of the TIC's frame → join its row on the right.
+    const QPoint from = header->mapToGlobal(header->rect().center());
+    const QPoint onto = ticFrame->mapToGlobal(
+      QPoint(ticFrame->width() - ticFrame->width() / 10, ticFrame->height() / 2));
+    dragHeader(header, from, onto);
+
+    QTRY_COMPARE(stack->model().rowCount(), 2);
+    const auto row0 = stack->model().rows()[0].panels;
+    QCOMPARE(row0.size(), std::size_t{2});
+    QCOMPARE(row0[0], tic->id());
+    QCOMPARE(row0[1], spectrum->id());
+    QVERIFY(stack->model().invariantHolds());
+
+    // That row is now full, so it offers no side target to a third panel: the
+    // drag must leave the layout untouched rather than widen the row.
+    QVERIFY(!stack->model().canDrop(log->id(),
+      {OpenMSViewer::LayoutModel::DropKind::RightOfAnchor, tic->id()}));
+    QWidget* logHeader = window.findChild<QWidget*>(QStringLiteral("logHeader"));
+    QVERIFY(logHeader != nullptr);
+    dragHeader(logHeader, logHeader->mapToGlobal(logHeader->rect().center()), onto);
+    QTest::qWait(50);
+    QCOMPARE(stack->model().rowCount(), 2);
+    QCOMPARE(stack->model().rows()[0].panels.size(), std::size_t{2});
+    QVERIFY(stack->model().invariantHolds());
   }
 
   void welcomeNavigationRecentFilesAndDockPreference()
@@ -178,7 +258,7 @@ private slots:
     auto* rasterWidth = window.findChild<QSpinBox*>(QStringLiteral("peakMapRasterWidth"));
     auto* runContext = window.findChild<QLabel*>(QStringLiteral("runContext"));
     auto* loading = window.findChild<OpenMSViewer::LoadingOverlayWidget*>();
-    auto* ticDock = window.findChild<QDockWidget*>(QStringLiteral("ticDock"));
+    auto* ticDock = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("tic"));
     QVERIFY(stack && welcome && peakMap && interactionModes && zoomMode && panMode
             && measureMode && resetView && displayOptions && editMode && colorMap
             && intensityScale && level && scan && rasterWidth && runContext && loading
@@ -238,7 +318,11 @@ private slots:
                               QSize(peakMap->width() - 90, peakMap->height() - 72), 3000);
     QVERIFY(peakMap->rasterImage().width() <= 768);
     QVERIFY(peakMap->rasterImage().height() <= 384);
-    QCOMPARE(stack->currentWidget(), peakMapPanel);
+    // The data page is the row stack; the peak map is a panel inside it rather
+    // than a privileged central widget.
+    QCOMPARE(stack->currentWidget(),
+             window.findChild<OpenMSViewer::RowStackWidget*>(QStringLiteral("rowStack")));
+    QVERIFY(peakMapPanel->isVisible());
     QCOMPARE(scan->maximum(), 3);
     QCOMPARE(scan->text(), QStringLiteral("Scan 1"));
     QVERIFY(interactionModes->isVisible());
@@ -254,53 +338,23 @@ private slots:
     QCOMPARE(recent->item(0)->data(Qt::UserRole).toString(), path);
 
     QVERIFY(ticDock->toggleViewAction()->isEnabled());
-    if (!ticDock->isVisible()) ticDock->toggleViewAction()->trigger();
-    QTRY_VERIFY(ticDock->isVisible());
+    if (!ticDock->isShown()) ticDock->toggleViewAction()->trigger();
+    QTRY_VERIFY(ticDock->isShown());
 
-    const auto requiredFeatures = QDockWidget::DockWidgetClosable
-      | QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable;
-    QCOMPARE(ticDock->features() & requiredFeatures, requiredFeatures);
-    QVERIFY(ticDock->titleBarWidget() != nullptr);
-    auto* dockButton = ticDock->titleBarWidget()->findChild<QToolButton*>(
-      QStringLiteral("ticDockDockButton"));
-    QVERIFY(dockButton != nullptr);
-
-    ticDock->setFloating(true);
-    QTRY_VERIFY(ticDock->isFloating());
-    QCOMPARE(ticDock->titleBarWidget()->cursor().shape(), Qt::SizeAllCursor);
-    const QPoint originalPosition = ticDock->pos();
-    QWidget* titleBar = ticDock->titleBarWidget();
-    const QPoint titleCenter = titleBar->rect().center();
-    const QPoint globalCenter = titleBar->mapToGlobal(titleCenter);
-    QMouseEvent press(QEvent::MouseButtonPress, QPointF(titleCenter), QPointF(globalCenter),
-                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(titleBar, &press);
-    const QPoint delta(35, 25);
-    QMouseEvent move(QEvent::MouseMove, QPointF(titleCenter + delta),
-                     QPointF(globalCenter + delta), Qt::NoButton, Qt::LeftButton,
-                     Qt::NoModifier);
-    QApplication::sendEvent(titleBar, &move);
-    QMouseEvent release(QEvent::MouseButtonRelease, QPointF(titleCenter + delta),
-                        QPointF(globalCenter + delta), Qt::LeftButton, Qt::NoButton,
-                        Qt::NoModifier);
-    QApplication::sendEvent(titleBar, &release);
-    QTRY_VERIFY(ticDock->pos() != originalPosition);
-
-    QTest::mouseClick(dockButton, Qt::LeftButton);
-    QTRY_VERIFY(!ticDock->isFloating());
-    QCOMPARE(ticDock->titleBarWidget()->cursor().shape(), Qt::ArrowCursor);
+    // Closing the panel is the only way out of the layout: there is no floating
+    // state to fall into, so a panel is in the stack or hidden and nothing else.
     ticDock->toggleViewAction()->trigger();
-    QTRY_VERIFY(!ticDock->isVisible());
+    QTRY_VERIFY(!ticDock->isShown());
 
     window.loadFile(path);
     QTest::qWait(300);
     QVERIFY(peakMap->hasExperiment());
-    QVERIFY(!ticDock->isVisible());
+    QVERIFY(!ticDock->isShown());
 
     QAction* resetLayout = window.findChild<QAction*>(QStringLiteral("layoutOverview"));
     QVERIFY(resetLayout != nullptr);
     resetLayout->trigger();
-    QTRY_VERIFY(ticDock->isVisible());
+    QTRY_VERIFY(ticDock->isShown());
 
     QAction* closeData = nullptr;
     for (QAction* action : window.findChildren<QAction*>())
@@ -310,12 +364,135 @@ private slots:
     QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(welcome));
   }
 
-  void spectrumDockClosesAndDockedDragUndocks()
+  // Panels live in the row stack, which is a page of the central QStackedWidget
+  // and is not the one on view while the welcome screen is up. Anything that
+  // puts a panel on screen has to bring the stack forward with it, or it loads,
+  // reports success, and shows the user nothing. As docks these panels were
+  // peers of the central widget and this could not arise.
+  void loadingIdentificationsAloneLeavesTheWelcomePage()
   {
     QSettings().clear();
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
-    const QString path = directory.filePath(QStringLiteral("ux-dock.mzML"));
+    const QString ids = directory.filePath(QStringLiteral("ux-ids.idXML"));
+    const auto [proteins, peptides] = OpenMSViewer::TestData::identifications();
+    OpenMS::IdXMLFile().store(ids.toStdString(), proteins, peptides);
+
+    OpenMSViewer::MainWindow window;
+    window.resize(1280, 820);
+    window.show();
+    auto* stack = window.findChild<QStackedWidget*>(QStringLiteral("centralStack"));
+    auto* rows = window.findChild<OpenMSViewer::RowStackWidget*>(QStringLiteral("rowStack"));
+    auto* welcome = window.findChild<OpenMSViewer::WelcomeWidget*>();
+    QVERIFY(stack && rows && welcome);
+    QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(welcome));
+
+    window.loadFile(ids);
+    auto* identifications =
+      window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("identifications"));
+    QVERIFY(identifications != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(identifications->toggleViewAction()->isEnabled(), 5000);
+
+    // The data page, not the welcome screen the load started on.
+    QTRY_COMPARE(stack->currentWidget(), static_cast<QWidget*>(rows));
+  }
+
+  // Opening a panel from the View menu must also put it on screen, for the same
+  // reason — the error dialog's "Open application log" button is not the only
+  // way in.
+  void openingAPanelFromTheViewMenuShowsTheStack()
+  {
+    QSettings().clear();
+    OpenMSViewer::MainWindow window;
+    window.resize(1280, 820);
+    window.show();
+    auto* stack = window.findChild<QStackedWidget*>(QStringLiteral("centralStack"));
+    auto* rows = window.findChild<OpenMSViewer::RowStackWidget*>(QStringLiteral("rowStack"));
+    auto* welcome = window.findChild<OpenMSViewer::WelcomeWidget*>();
+    auto* log = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("log"));
+    QVERIFY(stack && rows && welcome && log);
+    QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(welcome));
+
+    QVERIFY(log->toggleViewAction()->isEnabled());  // the log needs no document
+    log->toggleViewAction()->trigger();
+    QVERIFY(log->isShown());
+    QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(rows));
+  }
+
+  // A rebuild during a drag — a background load finishing is enough — replaces
+  // the tree the user is aiming into. The gesture must be abandoned rather than
+  // resolved against rows that were never the ones the indicator promised.
+  void rebuildDuringDragAbandonsTheGesture()
+  {
+    QSettings().clear();
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("ux-rebuild.mzML"));
+    OpenMS::MzMLFile().store(path.toStdString(), OpenMSViewer::TestData::experiment());
+
+    OpenMSViewer::MainWindow window;
+    window.resize(1400, 900);
+    window.show();
+    auto* peakMap = window.findChild<OpenMSViewer::PeakMapWidget*>();
+    QVERIFY(peakMap != nullptr);
+    window.loadFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(peakMap->hasExperiment(), 5000);
+
+    auto* stack = window.findChild<OpenMSViewer::RowStackWidget*>(QStringLiteral("rowStack"));
+    auto* log = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("log"));
+    QVERIFY(stack && log);
+    QWidget* header = window.findChild<QWidget*>(QStringLiteral("spectrumHeader"));
+    QWidget* ticFrame = window.findChild<QWidget*>(QStringLiteral("ticFrame"));
+    QVERIFY(header && ticFrame);
+    const OpenMSViewer::LayoutModel before = stack->model();
+
+    // Press and drag until a drop target is live.
+    const QPoint from = header->mapToGlobal(header->rect().center());
+    const QPoint onto = ticFrame->mapToGlobal(
+      QPoint(ticFrame->width() - ticFrame->width() / 10, ticFrame->height() / 2));
+    const auto send = [header](QEvent::Type type, const QPoint& global,
+                               Qt::MouseButton button, Qt::MouseButtons buttons)
+    {
+      QMouseEvent event(type, QPointF(header->mapFromGlobal(global)), QPointF(global),
+                        button, buttons, Qt::NoModifier);
+      QApplication::sendEvent(header, &event);
+    };
+    send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+    send(QEvent::MouseMove, from + QPoint(QApplication::startDragDistance() * 2 + 4, 0),
+         Qt::NoButton, Qt::LeftButton);
+    send(QEvent::MouseMove, onto, Qt::NoButton, Qt::LeftButton);
+
+    auto* indicator = window.findChild<QWidget*>(QStringLiteral("rowStackDropIndicator"));
+    QVERIFY(indicator != nullptr);
+    QVERIFY(indicator->isVisible());  // a target really was live
+
+    // Something else reshapes the layout mid-drag.
+    log->toggleViewAction()->trigger();
+    QTest::qWait(30);
+    QVERIFY(!indicator->isVisible());  // the promise is withdrawn, not left hanging
+    QVERIFY(stack->model().invariantHolds());
+    QCOMPARE(stack->model().locate(QStringLiteral("spectrum")).value().row,
+             before.locate(QStringLiteral("spectrum")).value().row);
+
+    // The release still arrives in a real session — Qt routes it by
+    // qt_button_down, which holds the header, and reparenting the frame around
+    // it leaves that alone — so it must find the gesture already gone and do
+    // nothing, rather than apply a drop against rows that moved after the
+    // indicator was last drawn.
+    send(QEvent::MouseButtonRelease, onto, Qt::LeftButton, Qt::NoButton);
+    QTest::qWait(30);
+    QVERIFY(!indicator->isVisible());
+    QCOMPARE(stack->model().locate(QStringLiteral("spectrum")).value().row,
+             before.locate(QStringLiteral("spectrum")).value().row);
+    QVERIFY(stack->model().invariantHolds());
+  }
+
+  void panelCloseButtonHidesAndDragReordersRows()
+  {
+    QSettings().clear();
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("ux-panel.mzML"));
     OpenMS::MzMLFile().store(path.toStdString(), OpenMSViewer::TestData::experiment());
 
     OpenMSViewer::MainWindow window;
@@ -326,64 +503,54 @@ private slots:
     window.loadFile(path);
     QTRY_VERIFY_WITH_TIMEOUT(peakMap->hasExperiment(), 5000);
 
-    auto* spectrumDock = window.findChild<QDockWidget*>(QStringLiteral("spectrumDock"));
-    QVERIFY(spectrumDock != nullptr);
-    if (!spectrumDock->isVisible()) spectrumDock->toggleViewAction()->trigger();
-    QTRY_VERIFY(spectrumDock->isVisible());
-    QVERIFY(!spectrumDock->isFloating());
+    auto* stack = window.findChild<OpenMSViewer::RowStackWidget*>(QStringLiteral("rowStack"));
+    auto* spectrum = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("spectrum"));
+    QVERIFY(stack && spectrum);
+    if (!spectrum->isShown()) spectrum->toggleViewAction()->trigger();
+    QTRY_VERIFY(spectrum->isShown());
 
-    // The title-bar close button must actually hide the panel.
-    auto* closeButton = spectrumDock->titleBarWidget()->findChild<QToolButton*>(
-      QStringLiteral("spectrumDockCloseButton"));
+    // The header's close button hides the panel — it does not float or destroy it.
+    auto* closeButton = window.findChild<QToolButton*>(QStringLiteral("spectrumCloseButton"));
     QVERIFY(closeButton != nullptr);
     QTest::mouseClick(closeButton, Qt::LeftButton);
-    QTRY_VERIFY(!spectrumDock->isVisible());
+    QTRY_VERIFY(!spectrum->isShown());
+    QVERIFY(spectrum->widget() != nullptr);  // hidden, never destroyed
 
-    // Bring it back, still docked, and drag its title bar: it must tear off.
-    spectrumDock->toggleViewAction()->trigger();
-    QTRY_VERIFY(spectrumDock->isVisible());
-    QVERIFY(!spectrumDock->isFloating());
+    // Reopening puts it back as a new bottom row, so the click always has a visible effect.
+    spectrum->toggleViewAction()->trigger();
+    QTRY_VERIFY(spectrum->isShown());
+    const auto rows = stack->model().rows();
+    QCOMPARE(rows.back().panels.back(), spectrum->id());
 
-    QWidget* titleBar = spectrumDock->titleBarWidget();
-    const QPoint start = titleBar->rect().center();
-    const QPoint globalStart = titleBar->mapToGlobal(start);
-    QMouseEvent press(QEvent::MouseButtonPress, QPointF(start), QPointF(globalStart),
-                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(titleBar, &press);
-    const QPoint delta(60, 50);
-    QMouseEvent move(QEvent::MouseMove, QPointF(start + delta), QPointF(globalStart + delta),
-                     Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(titleBar, &move);
-    QMouseEvent release(QEvent::MouseButtonRelease, QPointF(start + delta),
-                        QPointF(globalStart + delta), Qt::LeftButton, Qt::NoButton,
-                        Qt::NoModifier);
-    QApplication::sendEvent(titleBar, &release);
-    QTRY_VERIFY(spectrumDock->isFloating());
+    // Dragging its header above the TIC reorders the stack. Nothing floats.
+    auto* tic = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("tic"));
+    QVERIFY(tic != nullptr);
+    if (!tic->isShown()) tic->toggleViewAction()->trigger();
+    QTRY_VERIFY(tic->isShown());
+    QTest::qWait(50);
 
-    // The title-bar context menu offers an always-reachable dock/close path.
-    auto* floatMenuAction = spectrumDock->titleBarWidget()->findChild<QAction*>(
-      QStringLiteral("spectrumDockFloatMenuAction"));
-    auto* closeMenuAction = spectrumDock->titleBarWidget()->findChild<QAction*>(
-      QStringLiteral("spectrumDockCloseMenuAction"));
-    QVERIFY(floatMenuAction != nullptr);
-    QVERIFY(closeMenuAction != nullptr);
-    QCOMPARE(floatMenuAction->text(), QStringLiteral("Dock panel"));
-    floatMenuAction->trigger();
-    QTRY_VERIFY(!spectrumDock->isFloating());
-    QCOMPARE(floatMenuAction->text(), QStringLiteral("Float panel"));
-    closeMenuAction->trigger();
-    QTRY_VERIFY(!spectrumDock->isVisible());
+    QWidget* header = window.findChild<QWidget*>(QStringLiteral("spectrumHeader"));
+    QWidget* ticFrame = window.findChild<QWidget*>(QStringLiteral("ticFrame"));
+    QVERIFY(header && ticFrame);
+    dragHeader(header, header->mapToGlobal(header->rect().center()),
+               ticFrame->mapToGlobal(QPoint(ticFrame->width() / 2, ticFrame->height() / 10)));
+
+    QTRY_VERIFY(stack->model().locate(spectrum->id()).has_value());
+    const auto spectrumAt = stack->model().locate(spectrum->id()).value();
+    const auto ticAt = stack->model().locate(tic->id()).value();
+    QVERIFY(spectrumAt.row < ticAt.row);  // dropped above the TIC
+    QVERIFY(stack->model().invariantHolds());
   }
 
-  void restoredFloatingPanelComesBackDocked()
+  void savedLayoutRoundTripsAndInvalidOneFallsBackToDefault()
   {
     QSettings().clear();
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
-    const QString path = directory.filePath(QStringLiteral("ux-float.mzML"));
+    const QString path = directory.filePath(QStringLiteral("ux-layout.mzML"));
     OpenMS::MzMLFile().store(path.toStdString(), OpenMSViewer::TestData::experiment());
 
-    // Session 1: float the Spectrum panel and persist that layout.
+    // Session 1: arrange a two-panel row and let closeEvent persist it.
     {
       OpenMSViewer::MainWindow w;
       w.resize(1280, 820);
@@ -391,26 +558,59 @@ private slots:
       auto* pm = w.findChild<OpenMSViewer::PeakMapWidget*>();
       w.loadFile(path);
       QTRY_VERIFY_WITH_TIMEOUT(pm->hasExperiment(), 5000);
-      auto* spec = w.findChild<QDockWidget*>(QStringLiteral("spectrumDock"));
-      QVERIFY(spec != nullptr);
-      spec->setFloating(true);
-      QTRY_VERIFY(spec->isFloating());
-      QSettings s;
-      s.setValue(QStringLiteral("main/geometry"), w.saveGeometry());
-      s.setValue(QStringLiteral("main/state"), w.saveState());
+      auto* stack = w.findChild<OpenMSViewer::RowStackWidget*>(QStringLiteral("rowStack"));
+      QVERIFY(stack != nullptr);
+      OpenMSViewer::LayoutModel arranged;
+      arranged.appendRow(QStringLiteral("peakMap"));
+      QVERIFY(arranged.applyDrop(QStringLiteral("tic"),
+        {OpenMSViewer::LayoutModel::DropKind::RightOfAnchor, QStringLiteral("peakMap")}));
+      arranged.appendRow(QStringLiteral("spectrum"));
+      stack->setLayoutModel(arranged);
+      w.close();
     }
 
-    // Session 2: a floating top-level dock is unresponsive on some platforms
-    // (WSLg/Wayland), so startup must re-dock it rather than restore it floating.
+    // Session 2: the two-panel row comes back once its data is loaded again. The
+    // arrangement is remembered even though the TIC is hidden at startup for
+    // want of a document — persisting only what is on screen would forget it.
     {
       OpenMSViewer::MainWindow w2;
       w2.resize(1280, 820);
       w2.show();
-      auto* spec = w2.findChild<QDockWidget*>(QStringLiteral("spectrumDock"));
-      QVERIFY(spec != nullptr);
-      QVERIFY(!spec->isFloating());
-      for (QDockWidget* d : w2.findChildren<QDockWidget*>())
-        QVERIFY(!d->isFloating());
+      auto* stack = w2.findChild<OpenMSViewer::RowStackWidget*>(QStringLiteral("rowStack"));
+      QVERIFY(stack != nullptr);
+      QVERIFY(!stack->model().contains(QStringLiteral("tic")));  // no data yet
+
+      auto* pm = w2.findChild<OpenMSViewer::PeakMapWidget*>();
+      w2.loadFile(path);
+      QTRY_VERIFY_WITH_TIMEOUT(pm->hasExperiment(), 5000);
+      QTRY_VERIFY(stack->model().contains(QStringLiteral("tic")));
+
+      const auto tic = stack->model().locate(QStringLiteral("tic")).value();
+      const auto peak = stack->model().locate(QStringLiteral("peakMap")).value();
+      QCOMPARE(tic.row, peak.row);  // rejoined the peak map's row, not appended below
+      QCOMPARE(stack->model().rows()[tic.row].panels[0], QStringLiteral("peakMap"));
+      QCOMPARE(stack->model().rows()[tic.row].panels[1], QStringLiteral("tic"));
+      QVERIFY(stack->model().invariantHolds());
+    }
+
+    // Session 3: a persisted layout the invariant forbids (three panels in a row)
+    // is rejected outright rather than repaired, so startup falls back to the
+    // default instead of restoring a state the model cannot represent.
+    {
+      QSettings s;
+      s.setValue(QStringLiteral("layout/rowStack"),
+                 QByteArray(R"({"layout":{"version":1,)"
+                            R"("rows":[["peakMap","tic","spectrum"]]},"sizes":{}})"));
+    }
+    {
+      OpenMSViewer::MainWindow w3;
+      w3.resize(1280, 820);
+      w3.show();
+      auto* stack = w3.findChild<OpenMSViewer::RowStackWidget*>(QStringLiteral("rowStack"));
+      QVERIFY(stack != nullptr);
+      QVERIFY(stack->model().invariantHolds());
+      for (const auto& row : stack->model().rows())
+        QVERIFY(row.panels.size() <= std::size_t{OpenMSViewer::LayoutModel::MaxPanelsPerRow});
     }
     // Do not leak persisted window state into later suites' MainWindow instances.
     QSettings().clear();

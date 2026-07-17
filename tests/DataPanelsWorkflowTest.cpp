@@ -15,7 +15,7 @@
 #include <QCheckBox>
 #include <QAction>
 #include <QComboBox>
-#include <QDockWidget>
+#include "widgets/RowStackWidget.h"
 #include <QItemSelectionModel>
 #include <QLineEdit>
 #include <QLabel>
@@ -194,7 +194,7 @@ private slots:
     window.show();
     window.loadFile(mzmlPath);
     auto* spectra = window.findChild<OpenMSViewer::SpectrumTableWidget*>();
-    auto* spectraDock = window.findChild<QDockWidget*>(QStringLiteral("spectraDock"));
+    auto* spectraDock = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("spectra"));
     auto* spectrum = window.findChild<OpenMSViewer::SpectrumWidget*>();
     auto* peakMap = window.findChild<OpenMSViewer::PeakMapWidget*>();
     auto* tic = window.findChild<OpenMSViewer::TicWidget*>();

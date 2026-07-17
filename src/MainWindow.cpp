@@ -43,9 +43,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
-#include <QContextMenuEvent>
 #include <QDialog>
-#include <QDockWidget>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QDoubleSpinBox>
@@ -58,6 +56,8 @@
 #include <QTableView>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeySequence>
 #include <QLabel>
 #include <QListWidget>
@@ -66,12 +66,10 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
-#include <QMouseEvent>
 #include <QPalette>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QResource>
-#include <QScreen>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -85,7 +83,6 @@
 #include <QUndoStack>
 #include <QUrl>
 #include <QVBoxLayout>
-#include <QWindow>
 #include <QWidgetAction>
 
 #include <algorithm>
@@ -173,220 +170,6 @@ namespace OpenMSViewer
       OpenMS::Feature feature_;
     };
 
-    // On WSLg a floating QDockWidget cannot receive the mouse grab it needs to be
-    // moved or docked back (microsoft/wslg#1153); it becomes an input-dead window.
-    // There we keep panels non-floating and rely on the native title bar, whose
-    // in-window drag uses an X11 grab that still works under XWayland/xcb. The
-    // offscreen test platform is exempt so the custom-header tests keep exercising
-    // the normal desktop path.
-    [[nodiscard]] bool restrictDockFloating()
-    {
-      const bool wsl = qEnvironmentVariableIsSet("WSL_INTEROP")
-                       || qEnvironmentVariableIsSet("WSL_DISTRO_NAME");
-      const bool offscreen = QGuiApplication::platformName().contains(
-        QStringLiteral("offscreen"), Qt::CaseInsensitive);
-      return wsl && !offscreen;
-    }
-
-    class FloatingDockTitleBar final : public QWidget
-    {
-    public:
-      explicit FloatingDockTitleBar(QDockWidget* dock) : QWidget(dock), dock_(dock)
-      {
-        setObjectName(dock->objectName() + QStringLiteral("FloatingTitleBar"));
-        setAccessibleName(tr("Movable title bar for %1").arg(dock->windowTitle()));
-        setCursor(Qt::SizeAllCursor);
-        setFixedHeight(32);
-        auto* layout = new QHBoxLayout(this);
-        layout->setContentsMargins(8, 2, 3, 2);
-        layout->setSpacing(4);
-        title_ = new QLabel(QStringLiteral("⠿  %1").arg(dock->windowTitle()), this);
-        title_->setAttribute(Qt::WA_TransparentForMouseEvents);
-        layout->addWidget(title_, 1);
-
-        dockButton_ = new QToolButton(this);
-        dockButton_->setObjectName(dock->objectName() + QStringLiteral("DockButton"));
-        dockButton_->setAutoRaise(true);
-        connect(dockButton_, &QToolButton::clicked, dock,
-                [dock] { dock->setFloating(!dock->isFloating()); });
-        layout->addWidget(dockButton_);
-
-        auto* closeButton = new QToolButton(this);
-        closeButton->setObjectName(dock->objectName() + QStringLiteral("CloseButton"));
-        closeButton->setAutoRaise(true);
-        closeButton->setIcon(style()->standardIcon(QStyle::SP_TitleBarCloseButton));
-        closeButton->setToolTip(tr("Close panel"));
-        connect(closeButton, &QToolButton::clicked, dock,
-                [dock] { dock->toggleViewAction()->trigger(); });
-        layout->addWidget(closeButton);
-
-        // A right-click menu keeps float/close reachable even where the small
-        // buttons are awkward to hit (e.g. against a split or window edge).
-        contextMenu_ = new QMenu(this);
-        floatMenuAction_ = contextMenu_->addAction(QString());
-        floatMenuAction_->setObjectName(dock->objectName()
-                                        + QStringLiteral("FloatMenuAction"));
-        connect(floatMenuAction_, &QAction::triggered, dock,
-                [dock] { dock->setFloating(!dock->isFloating()); });
-        auto* closeMenuAction = contextMenu_->addAction(tr("Close panel"));
-        closeMenuAction->setObjectName(dock->objectName()
-                                       + QStringLiteral("CloseMenuAction"));
-        connect(closeMenuAction, &QAction::triggered, dock,
-                [dock] { dock->toggleViewAction()->trigger(); });
-
-        // Explicit re-docking, since this custom header's drag floats the panel
-        // rather than invoking Qt's native drag-to-dock.
-        auto* dockToMenu = contextMenu_->addMenu(tr("Dock to"));
-        const auto addMove = [this, dockToMenu](const QString& text, Qt::DockWidgetArea area)
-        {
-          dockToMenu->addAction(text, this, [this, area]
-          {
-            if (auto* main = qobject_cast<QMainWindow*>(dock_->parentWidget()))
-            {
-              dock_->setFloating(false);
-              main->addDockWidget(area, dock_);
-              dock_->setVisible(true);
-              dock_->raise();
-            }
-          });
-        };
-        addMove(tr("Left (vertical)"), Qt::LeftDockWidgetArea);
-        addMove(tr("Right (vertical)"), Qt::RightDockWidgetArea);
-        addMove(tr("Top"), Qt::TopDockWidgetArea);
-        addMove(tr("Bottom"), Qt::BottomDockWidgetArea);
-
-        connect(dock, &QDockWidget::windowTitleChanged, this, [this](const QString& title)
-        {
-          title_->setText(QStringLiteral("⠿  %1").arg(title));
-          setAccessibleName(tr("Movable title bar for %1").arg(title));
-        });
-        connect(dock, &QDockWidget::topLevelChanged, this,
-                [this](bool floating) { setFloatingState(floating); });
-        setFloatingState(dock->isFloating());
-      }
-
-    protected:
-      void mousePressEvent(QMouseEvent* event) override
-      {
-        if (event->button() != Qt::LeftButton)
-        {
-          QWidget::mousePressEvent(event);
-          return;
-        }
-        dragging_ = true;
-        systemMove_ = false;
-        undockPending_ = false;
-        pressGlobalPos_ = event->globalPosition().toPoint();
-        // A docked panel is torn off into a floating window once the drag passes
-        // the start-drag threshold; a floating panel starts moving immediately.
-        if (dock_->isFloating())
-          beginFloatingDrag(pressGlobalPos_);
-        else
-          undockPending_ = true;
-        event->accept();
-      }
-
-      void mouseMoveEvent(QMouseEvent* event) override
-      {
-        if (!(event->buttons() & Qt::LeftButton) || !dragging_)
-        {
-          QWidget::mouseMoveEvent(event);
-          return;
-        }
-        const QPoint globalPos = event->globalPosition().toPoint();
-        if (undockPending_)
-        {
-          if ((globalPos - pressGlobalPos_).manhattanLength()
-              < QApplication::startDragDistance())
-          {
-            event->accept();
-            return;
-          }
-          undockPending_ = false;
-          dock_->setFloating(true);
-          dock_->raise();
-          // Keep the grabbed point under the cursor without depending on the
-          // freshly-floated window's frame geometry, which may not be settled yet.
-          dragOffset_ = event->position().toPoint();
-          QWindow* handle = dock_->windowHandle();
-          const bool offscreen = QGuiApplication::platformName().contains(
-            QStringLiteral("offscreen"), Qt::CaseInsensitive);
-          systemMove_ = !offscreen && handle && handle->isExposed()
-            && handle->startSystemMove();
-        }
-        if (dock_->isFloating() && !systemMove_)
-        {
-          const QString platform = QGuiApplication::platformName();
-          const bool offscreen = platform.contains(QStringLiteral("offscreen"),
-                                                    Qt::CaseInsensitive);
-          const bool wayland = platform.contains(QStringLiteral("wayland"),
-                                                  Qt::CaseInsensitive);
-          QWindow* handle = dock_->windowHandle();
-          if (!wayland && (offscreen || (handle && handle->isExposed())))
-            dock_->move(globalPos - dragOffset_);
-        }
-        event->accept();
-      }
-
-      void mouseReleaseEvent(QMouseEvent* event) override
-      {
-        systemMove_ = false;
-        dragging_ = false;
-        undockPending_ = false;
-        QWidget::mouseReleaseEvent(event);
-      }
-
-      void mouseDoubleClickEvent(QMouseEvent* event) override
-      {
-        if (event->button() == Qt::LeftButton)
-        {
-          dock_->setFloating(!dock_->isFloating());
-          event->accept();
-          return;
-        }
-        QWidget::mouseDoubleClickEvent(event);
-      }
-
-      void contextMenuEvent(QContextMenuEvent* event) override
-      {
-        contextMenu_->popup(event->globalPos());
-        event->accept();
-      }
-
-    private:
-      void beginFloatingDrag(const QPoint& globalPos)
-      {
-        dragOffset_ = globalPos - dock_->frameGeometry().topLeft();
-        dock_->raise();
-        QWindow* handle = dock_->windowHandle();
-        const bool offscreen = QGuiApplication::platformName().contains(
-          QStringLiteral("offscreen"), Qt::CaseInsensitive);
-        systemMove_ = !offscreen && handle && handle->isExposed()
-          && handle->startSystemMove();
-      }
-
-      void setFloatingState(bool floating)
-      {
-        setCursor(floating ? Qt::SizeAllCursor : Qt::ArrowCursor);
-        dockButton_->setIcon(style()->standardIcon(
-          floating ? QStyle::SP_TitleBarNormalButton : QStyle::SP_TitleBarMaxButton));
-        dockButton_->setToolTip(floating ? tr("Dock panel back into the main window")
-                                        : tr("Float panel in a movable window"));
-        floatMenuAction_->setText(floating ? tr("Dock panel")
-                                           : tr("Float panel"));
-      }
-
-      QDockWidget* dock_{nullptr};
-      QLabel* title_{nullptr};
-      QToolButton* dockButton_{nullptr};
-      QMenu* contextMenu_{nullptr};
-      QAction* floatMenuAction_{nullptr};
-      QPoint dragOffset_;
-      QPoint pressGlobalPos_;
-      bool systemMove_{false};
-      bool dragging_{false};
-      bool undockPending_{false};
-    };
   }
 
   MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
@@ -396,8 +179,6 @@ namespace OpenMSViewer
     setWindowTitle(tr("OpenMS Viewer"));
     resize(1420, 920);
     setAcceptDrops(true);
-    setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowNestedDocks
-                   | QMainWindow::AllowTabbedDocks | QMainWindow::GroupedDragging);
 
     createPanels();
     featureUndoStack_ = new QUndoStack(this);
@@ -439,7 +220,7 @@ namespace OpenMSViewer
           showConsensusAction_->setChecked(visible);
           break;
         case DataLayersWidget::Layer::OpenSwath:
-          if (oswDock_->toggleViewAction()->isEnabled()) oswDock_->setVisible(visible);
+          if (oswHandle_->toggleViewAction()->isEnabled()) oswHandle_->setShown(visible);
           break;
         case DataLayersWidget::Layer::Primary:
         case DataLayersWidget::Layer::Count:
@@ -453,7 +234,7 @@ namespace OpenMSViewer
                             showIdentificationsAction_, showIdentificationSequencesAction_,
                             showConsensusAction_})
       connect(action, &QAction::toggled, this, [this] { updateDataLayers(); });
-    connect(oswDock_, &QDockWidget::visibilityChanged, this,
+    connect(oswHandle_, &PanelHandle::shownChanged, this,
             [this] { updateDataLayers(); });
     connect(loadingOverlay_, &LoadingOverlayWidget::cancelRequested,
             this, &MainWindow::cancelCurrentOperation);
@@ -609,17 +390,32 @@ namespace OpenMSViewer
     QSettings settings;
     if (settings.contains(QStringLiteral("main/geometry")))
       restoreGeometry(settings.value(QStringLiteral("main/geometry")).toByteArray());
-    const bool hasSavedState = settings.contains(QStringLiteral("main/state"));
-    if (!hasSavedState
-        || !restoreState(settings.value(QStringLiteral("main/state")).toByteArray()))
-      arrangeDocksDefault();  // fresh launch or corrupt/incompatible saved layout:
-                              // tables full-width in the bottom, not the side
-    // A floating panel becomes a separate top-level window that, on some
-    // platforms (notably WSLg/Wayland), never receives mouse input — leaving it
-    // impossible to move, dock, or close. Never start in that state: re-dock any
-    // panel the restored layout left floating.
-    for (QDockWidget* dock : findChildren<QDockWidget*>())
-      if (dock->isFloating()) dock->setFloating(false);
+    // main/state still carries the toolbar arrangement, which is QMainWindow's
+    // to keep and has nothing to do with panels. Its dock half is now inert:
+    // there are no QDockWidgets left for restoreState to place, so a blob from a
+    // pre-row-stack session restores that user's toolbars and silently drops the
+    // rest. The panel layout is restored separately, below.
+    if (settings.contains(QStringLiteral("main/state")))
+      restoreState(settings.value(QStringLiteral("main/state")).toByteArray());
+    const QJsonObject savedLayout =
+      QJsonDocument::fromJson(settings.value(QStringLiteral("layout/rowStack"))
+                                .toByteArray()).object();
+    bool hasSavedState = false;
+    if (!savedLayout.isEmpty())
+    {
+      const auto desired = LayoutModel::fromJson(
+        savedLayout.value(QStringLiteral("desired")).toObject(), rowStack_->knownPanels());
+      applyingLayout_ = true;  // restoring is not a user rearrangement
+      hasSavedState = desired.has_value() && rowStack_->restoreState(savedLayout);
+      applyingLayout_ = false;
+      if (hasSavedState) desiredLayout_ = *desired;
+    }
+    if (!hasSavedState)
+      applyDefaultLayout();  // fresh launch, or a saved layout the invariant rejects
+    connect(rowStack_, &RowStackWidget::layoutChanged, this, [this]
+    {
+      if (!applyingLayout_) captureDesiredLayout();
+    });
     // Theme mode: prefer the new tri-state key, fall back to the legacy boolean,
     // default to following the OS on a fresh install.
     QString themeMode;
@@ -645,7 +441,7 @@ namespace OpenMSViewer
     recentFiles_ = settings.value(QStringLiteral("files/recent")).toStringList();
     lastPrimaryPath_ = settings.value(QStringLiteral("files/lastPrimary")).toString();
     rebuildRecentFiles();
-    initializeDockPreferences(hasSavedState);
+    initializePanelPreferences(hasSavedState);
     showWelcomePage();
     updateRunContext();
     updateSpectrumControls();
@@ -658,7 +454,7 @@ namespace OpenMSViewer
     // QUndoStack::clear() emits during its destructor, so detach UI callbacks before
     // the QMainWindow child-destruction phase begins.
     if (featureUndoStack_) disconnect(featureUndoStack_, nullptr, this, nullptr);
-    if (oswDock_) disconnect(oswDock_, nullptr, this, nullptr);
+    if (oswHandle_) disconnect(oswHandle_, nullptr, this, nullptr);
     if (mzMLCancellation_) mzMLCancellation_->store(true);
     if (loadWatcher_.isRunning()) loadWatcher_.waitForFinished();
     if (featureLoadWatcher_.isRunning()) featureLoadWatcher_.waitForFinished();
@@ -674,10 +470,12 @@ namespace OpenMSViewer
     centralStack_ = new QStackedWidget(this);
     centralStack_->setObjectName(QStringLiteral("centralStack"));
     welcome_ = new WelcomeWidget(centralStack_);
+    rowStack_ = new RowStackWidget(centralStack_);
+    rowStack_->setObjectName(QStringLiteral("rowStack"));
 
     // The peak map lives inside a panel with its own control bar (populated in
     // createToolBars, once the actions exist).
-    peakMapPanel_ = new QWidget(centralStack_);
+    peakMapPanel_ = new QWidget;
     peakMapPanel_->setObjectName(QStringLiteral("peakMapPanel"));
     auto* peakMapLayout = new QVBoxLayout(peakMapPanel_);
     peakMapLayout->setContentsMargins(0, 0, 0, 0);
@@ -693,26 +491,36 @@ namespace OpenMSViewer
     peakMapScroll_->setAlignment(Qt::AlignCenter);
     peakMapScroll_->setFrameShape(QFrame::NoFrame);
     peakMapScroll_->setSizeAdjustPolicy(QAbstractScrollArea::AdjustIgnored);
+    // A scroll area reports a tiny minimum, which would let a row divider squeeze
+    // the peak map to a sliver now that it is a row rather than the central
+    // widget. Restate the canvas's own minimum so the stack scrolls instead.
+    peakMapScroll_->setMinimumHeight(300);
     peakMap_ = new PeakMapWidget;
     peakMapScroll_->setWidget(peakMap_);
     peakMapLayout->addWidget(peakMapControlBar_);
     peakMapLayout->addWidget(peakMapScroll_, 1);
 
     centralStack_->addWidget(welcome_);
-    centralStack_->addWidget(peakMapPanel_);
+    centralStack_->addWidget(rowStack_);
     setCentralWidget(centralStack_);
     loadingOverlay_ = new LoadingOverlayWidget(centralStack_);
     toasts_ = new ToastOverlay(centralStack_);
 
-    tic_ = new TicWidget(this);
-    ticDock_ = new QDockWidget(tr("Total ion chromatogram"), this);
-    ticDock_->setObjectName(QStringLiteral("ticDock"));
-    ticDock_->setWidget(tic_);
-    configureDock(ticDock_);
-    addDockWidget(Qt::BottomDockWidgetArea, ticDock_);
+    // Every view is an equal citizen in the row stack: the peak map has no
+    // privileged central slot, so "dock Data & layers beside the peak map" is a
+    // two-panel row rather than a full-height column stealing width from every
+    // row at once. Minimum sizes come from the widgets themselves; the old
+    // per-dock minimum widths were props for the tabbed row and would have made
+    // some two-panel rows impossible on a 1366px screen.
+    peakMapHandle_ = rowStack_->addPanel(QStringLiteral("peakMap"),
+                                         tr("Peak map"), peakMapPanel_);
+
+    tic_ = new TicWidget;
+    ticHandle_ = rowStack_->addPanel(QStringLiteral("tic"),
+                                     tr("Total ion chromatogram"), tic_);
 
     // The spectrum plot lives inside a panel with its own control bar.
-    spectrumPanel_ = new QWidget(this);
+    spectrumPanel_ = new QWidget;
     spectrumPanel_->setObjectName(QStringLiteral("spectrumPanel"));
     auto* spectrumLayout = new QVBoxLayout(spectrumPanel_);
     spectrumLayout->setContentsMargins(0, 0, 0, 0);
@@ -725,118 +533,56 @@ namespace OpenMSViewer
     spectrum_ = new SpectrumWidget(spectrumPanel_);
     spectrumLayout->addWidget(spectrumControlBar_);
     spectrumLayout->addWidget(spectrum_, 1);
-    spectrumDock_ = new QDockWidget(tr("Spectrum"), this);
-    spectrumDock_->setObjectName(QStringLiteral("spectrumDock"));
-    spectrumDock_->setWidget(spectrumPanel_);
-    configureDock(spectrumDock_);
-    addDockWidget(Qt::BottomDockWidgetArea, spectrumDock_);
-    splitDockWidget(ticDock_, spectrumDock_, Qt::Horizontal);
+    spectrumHandle_ = rowStack_->addPanel(QStringLiteral("spectrum"),
+                                          tr("Spectrum"), spectrumPanel_);
 
-    chromatograms_ = new ChromatogramPanelWidget(this);
-    chromatogramsDock_ = new QDockWidget(tr("Chromatograms"), this);
-    chromatogramsDock_->setObjectName(QStringLiteral("chromatogramsDock"));
-    chromatogramsDock_->setWidget(chromatograms_);
-    configureDock(chromatogramsDock_);
-    chromatogramsDock_->setMinimumWidth(620);
-    addDockWidget(Qt::BottomDockWidgetArea, chromatogramsDock_);
-    tabifyDockWidget(ticDock_, chromatogramsDock_);
+    chromatograms_ = new ChromatogramPanelWidget;
+    chromatogramsHandle_ = rowStack_->addPanel(QStringLiteral("chromatograms"),
+                                               tr("Chromatograms"), chromatograms_);
 
-    ionMobility_ = new IonMobilityPanelWidget(this);
-    ionMobilityDock_ = new QDockWidget(tr("Ion mobility frame"), this);
-    ionMobilityDock_->setObjectName(QStringLiteral("ionMobilityDock"));
-    ionMobilityDock_->setWidget(ionMobility_);
-    configureDock(ionMobilityDock_);
-    ionMobilityDock_->setMinimumWidth(680);
-    addDockWidget(Qt::BottomDockWidgetArea, ionMobilityDock_);
-    tabifyDockWidget(chromatogramsDock_, ionMobilityDock_);
+    ionMobility_ = new IonMobilityPanelWidget;
+    ionMobilityHandle_ = rowStack_->addPanel(QStringLiteral("ionMobility"),
+                                             tr("Ion mobility frame"), ionMobility_);
 
-    imaging_ = new ImagingPanelWidget(this);
-    imagingDock_ = new QDockWidget(tr("Mass-spectrometry imaging"), this);
-    imagingDock_->setObjectName(QStringLiteral("imagingDock"));
-    imagingDock_->setWidget(imaging_);
-    configureDock(imagingDock_);
-    imagingDock_->setMinimumWidth(680);
-    addDockWidget(Qt::BottomDockWidgetArea, imagingDock_);
-    tabifyDockWidget(ionMobilityDock_, imagingDock_);
+    imaging_ = new ImagingPanelWidget;
+    imagingHandle_ = rowStack_->addPanel(QStringLiteral("imaging"),
+                                         tr("Mass-spectrometry imaging"), imaging_);
 
-    osw_ = new OswPanel(this);
-    oswDock_ = new QDockWidget(tr("OpenSWATH results"), this);
-    oswDock_->setObjectName(QStringLiteral("oswDock"));
-    oswDock_->setWidget(osw_);
-    configureDock(oswDock_);
-    oswDock_->setMinimumWidth(720);
-    addDockWidget(Qt::BottomDockWidgetArea, oswDock_);
-    tabifyDockWidget(imagingDock_, oswDock_);
+    osw_ = new OswPanel;
+    oswHandle_ = rowStack_->addPanel(QStringLiteral("osw"),
+                                     tr("OpenSWATH results"), osw_);
 
-    consensus_ = new ConsensusPanel(this);
-    consensusDock_ = new QDockWidget(tr("Consensus map"), this);
-    consensusDock_->setObjectName(QStringLiteral("consensusDock"));
-    consensusDock_->setWidget(consensus_);
-    configureDock(consensusDock_);
-    consensusDock_->setMinimumWidth(700);
-    addDockWidget(Qt::BottomDockWidgetArea, consensusDock_);
-    tabifyDockWidget(oswDock_, consensusDock_);
+    consensus_ = new ConsensusPanel;
+    consensusHandle_ = rowStack_->addPanel(QStringLiteral("consensus"),
+                                           tr("Consensus map"), consensus_);
 
-    dataLayers_ = new DataLayersWidget(this);
-    dataLayersDock_ = new QDockWidget(tr("Data & layers"), this);
-    dataLayersDock_->setObjectName(QStringLiteral("dataLayersDock"));
-    dataLayersDock_->setWidget(dataLayers_);
-    configureDock(dataLayersDock_);
-    dataLayersDock_->setMinimumWidth(380);
-    addDockWidget(Qt::RightDockWidgetArea, dataLayersDock_);
+    dataLayers_ = new DataLayersWidget;
+    dataLayersHandle_ = rowStack_->addPanel(QStringLiteral("dataLayers"),
+                                            tr("Data & layers"), dataLayers_);
 
-    metadata_ = new MetadataBrowserWidget(this);
-    metadataDock_ = new QDockWidget(tr("Metadata"), this);
-    metadataDock_->setObjectName(QStringLiteral("metadataDock"));
-    metadataDock_->setWidget(metadata_);
-    configureDock(metadataDock_);
-    metadataDock_->setMinimumWidth(360);
-    addDockWidget(Qt::RightDockWidgetArea, metadataDock_);
+    metadata_ = new MetadataBrowserWidget;
+    metadataHandle_ = rowStack_->addPanel(QStringLiteral("metadata"),
+                                          tr("Metadata"), metadata_);
 
-    log_ = new LogWidget(this);
-    logDock_ = new QDockWidget(tr("Application log"), this);
-    logDock_->setObjectName(QStringLiteral("logDock"));
-    logDock_->setWidget(log_);
-    configureDock(logDock_);
-    logDock_->setMinimumWidth(620);
-    addDockWidget(Qt::BottomDockWidgetArea, logDock_);
-    tabifyDockWidget(imagingDock_, logDock_);
+    log_ = new LogWidget;
+    logHandle_ = rowStack_->addPanel(QStringLiteral("log"),
+                                     tr("Application log"), log_);
 
-    features_ = new FeatureTableWidget(this);
-    featuresDock_ = new QDockWidget(tr("Features"), this);
-    featuresDock_->setObjectName(QStringLiteral("featuresDock"));
-    featuresDock_->setWidget(features_);
-    configureDock(featuresDock_);
-    featuresDock_->setMinimumWidth(480);
-    addDockWidget(Qt::RightDockWidgetArea, featuresDock_);
+    features_ = new FeatureTableWidget;
+    featuresHandle_ = rowStack_->addPanel(QStringLiteral("features"),
+                                          tr("Features"), features_);
 
-    identifications_ = new IdentificationTableWidget(this);
-    identificationsDock_ = new QDockWidget(tr("Identifications"), this);
-    identificationsDock_->setObjectName(QStringLiteral("identificationsDock"));
-    identificationsDock_->setWidget(identifications_);
-    configureDock(identificationsDock_);
-    identificationsDock_->setMinimumWidth(560);
-    addDockWidget(Qt::RightDockWidgetArea, identificationsDock_);
-    tabifyDockWidget(featuresDock_, identificationsDock_);
+    identifications_ = new IdentificationTableWidget;
+    identificationsHandle_ = rowStack_->addPanel(QStringLiteral("identifications"),
+                                                 tr("Identifications"), identifications_);
 
-    spectra_ = new SpectrumTableWidget(this);
-    spectraDock_ = new QDockWidget(tr("Spectra"), this);
-    spectraDock_->setObjectName(QStringLiteral("spectraDock"));
-    spectraDock_->setWidget(spectra_);
-    configureDock(spectraDock_);
-    spectraDock_->setMinimumWidth(580);
-    addDockWidget(Qt::RightDockWidgetArea, spectraDock_);
-    tabifyDockWidget(featuresDock_, spectraDock_);
+    spectra_ = new SpectrumTableWidget;
+    spectraHandle_ = rowStack_->addPanel(QStringLiteral("spectra"),
+                                         tr("Spectra"), spectra_);
 
-    faims_ = new FaimsPanelWidget(this);
-    faimsDock_ = new QDockWidget(tr("FAIMS compensation voltages"), this);
-    faimsDock_->setObjectName(QStringLiteral("faimsDock"));
-    faimsDock_->setWidget(faims_);
-    configureDock(faimsDock_);
-    faimsDock_->setMinimumWidth(520);
-    addDockWidget(Qt::RightDockWidgetArea, faimsDock_);
-    tabifyDockWidget(spectraDock_, faimsDock_);
-    tabifyDockWidget(faimsDock_, metadataDock_);  // join the right-side tab group
+    faims_ = new FaimsPanelWidget;
+    faimsHandle_ = rowStack_->addPanel(QStringLiteral("faims"),
+                                       tr("FAIMS compensation voltages"), faims_);
   }
 
   void MainWindow::createActions()
@@ -965,7 +711,7 @@ namespace OpenMSViewer
             peakMap_, &PeakMapWidget::setShowMinimap);
 
     // Single RT-unit control shared by every RT panel (always reachable, unlike a
-    // per-panel checkbox that hides with the chromatogram dock), so units can't diverge.
+    // per-panel checkbox that hides with the chromatogram panel), so units can't diverge.
     rtInMinutesAction_ = new QAction(tr("RT in minutes"), this);
     rtInMinutesAction_->setCheckable(true);
     connect(rtInMinutesAction_, &QAction::toggled, tic_, &TicWidget::setRtInMinutes);
@@ -1236,49 +982,25 @@ namespace OpenMSViewer
     addPreset(tr("Imaging"), LayoutPreset::Imaging, QStringLiteral("layoutImaging"));
     addPreset(tr("DIA / OpenSWATH"), LayoutPreset::Dia, QStringLiteral("layoutDia"));
 
-    // Explicit re-docking. Drag-to-dock is blocked by the custom header (desktop)
-    // and by WSLg, so offer every panel a Left/Right (vertical column), Top, or
-    // Bottom placement from the menu.
-    auto* dockMenu = viewMenu->addMenu(tr("Dock panel"));
-    const std::pair<QDockWidget*, QString> layoutPanels[] = {
-      {spectrumDock_, tr("Spectrum")}, {ticDock_, tr("Total ion chromatogram")},
-      {featuresDock_, tr("Features")}, {identificationsDock_, tr("Identifications")},
-      {spectraDock_, tr("Spectra")}, {chromatogramsDock_, tr("Chromatograms")},
-      {dataLayersDock_, tr("Data & layers")},
-      {ionMobilityDock_, tr("Ion mobility")}, {faimsDock_, tr("FAIMS")},
-      {imagingDock_, tr("Imaging")}, {oswDock_, tr("OpenSWATH")},
-      {consensusDock_, tr("Consensus")}, {metadataDock_, tr("Metadata")},
-      {logDock_, tr("Log")}};
-    for (const auto& panel : layoutPanels)
-    {
-      QDockWidget* dock = panel.first;
-      auto* sub = dockMenu->addMenu(panel.second);
-      const auto add = [&](const QString& text, const QString& suffix, Qt::DockWidgetArea area)
-      {
-        QAction* action = sub->addAction(text, this, [this, dock, area] { moveDock(dock, area); });
-        action->setObjectName(dock->objectName() + suffix);
-      };
-      add(tr("Dock left (vertical)"), QStringLiteral("MoveLeft"), Qt::LeftDockWidgetArea);
-      add(tr("Dock right (vertical)"), QStringLiteral("MoveRight"), Qt::RightDockWidgetArea);
-      add(tr("Dock top"), QStringLiteral("MoveTop"), Qt::TopDockWidgetArea);
-      add(tr("Dock bottom"), QStringLiteral("MoveBottom"), Qt::BottomDockWidgetArea);
-    }
-
+    // No "Dock panel" submenu: it existed only because the old custom dock header
+    // swallowed Qt's drag-to-dock. Dragging a panel header now moves it, so the
+    // menu has nothing to compensate for.
     viewMenu->addSeparator();
-    viewMenu->addAction(ticDock_->toggleViewAction());
-    viewMenu->addAction(spectrumDock_->toggleViewAction());
-    viewMenu->addAction(featuresDock_->toggleViewAction());
-    viewMenu->addAction(identificationsDock_->toggleViewAction());
-    viewMenu->addAction(spectraDock_->toggleViewAction());
-    viewMenu->addAction(chromatogramsDock_->toggleViewAction());
-    viewMenu->addAction(dataLayersDock_->toggleViewAction());
-    viewMenu->addAction(ionMobilityDock_->toggleViewAction());
-    viewMenu->addAction(faimsDock_->toggleViewAction());
-    viewMenu->addAction(imagingDock_->toggleViewAction());
-    viewMenu->addAction(oswDock_->toggleViewAction());
-    viewMenu->addAction(consensusDock_->toggleViewAction());
-    viewMenu->addAction(metadataDock_->toggleViewAction());
-    viewMenu->addAction(logDock_->toggleViewAction());
+    viewMenu->addAction(peakMapHandle_->toggleViewAction());
+    viewMenu->addAction(ticHandle_->toggleViewAction());
+    viewMenu->addAction(spectrumHandle_->toggleViewAction());
+    viewMenu->addAction(featuresHandle_->toggleViewAction());
+    viewMenu->addAction(identificationsHandle_->toggleViewAction());
+    viewMenu->addAction(spectraHandle_->toggleViewAction());
+    viewMenu->addAction(chromatogramsHandle_->toggleViewAction());
+    viewMenu->addAction(dataLayersHandle_->toggleViewAction());
+    viewMenu->addAction(ionMobilityHandle_->toggleViewAction());
+    viewMenu->addAction(faimsHandle_->toggleViewAction());
+    viewMenu->addAction(imagingHandle_->toggleViewAction());
+    viewMenu->addAction(oswHandle_->toggleViewAction());
+    viewMenu->addAction(consensusHandle_->toggleViewAction());
+    viewMenu->addAction(metadataHandle_->toggleViewAction());
+    viewMenu->addAction(logHandle_->toggleViewAction());
 
     auto* helpMenu = menuBar()->addMenu(tr("&Help"));
     helpMenu->addAction(tr("Getting started…"), this, [this]
@@ -1663,9 +1385,16 @@ namespace OpenMSViewer
     message.exec();
     if (message.clickedButton() == openLog)
     {
-      dockVisibilityPreference_[logDock_->objectName()] = true;
-      setDockAvailable(logDock_, true);
-      logDock_->raise();
+      panelVisibilityPreference_[logHandle_->id()] = true;
+      setPanelAvailable(logHandle_, true);
+      // The log is a panel in the row stack now, and the stack is not the page
+      // on show while the welcome screen is up — which is exactly when a load
+      // has just failed. Asking for the log has to bring the stack forward, or
+      // the button does nothing and the panel turns up unbidden on the next
+      // successful load. (As a dock the log was a peer of the central widget
+      // and showed regardless of the page.)
+      showDataPage();
+      logHandle_->raise();
     }
   }
 
@@ -1742,23 +1471,24 @@ namespace OpenMSViewer
     if (saveFeaturesAsAction_) saveFeaturesAsAction_->setEnabled(false);
     if (saveIdentificationsAction_) saveIdentificationsAction_->setEnabled(false);
     if (saveConsensusAction_) saveConsensusAction_->setEnabled(false);
-    setDockAvailable(ticDock_, false);
-    setDockAvailable(spectrumDock_, false);
-    setDockAvailable(featuresDock_, false);
-    setDockAvailable(identificationsDock_, false);
-    setDockAvailable(spectraDock_, false);
-    setDockAvailable(chromatogramsDock_, false);
-    setDockAvailable(dataLayersDock_, false);
-    setDockAvailable(ionMobilityDock_, false);
-    setDockAvailable(faimsDock_, false);
-    setDockAvailable(imagingDock_, false);
-    setDockAvailable(metadataDock_, false);
+    setPanelAvailable(peakMapHandle_, false);
+    setPanelAvailable(ticHandle_, false);
+    setPanelAvailable(spectrumHandle_, false);
+    setPanelAvailable(featuresHandle_, false);
+    setPanelAvailable(identificationsHandle_, false);
+    setPanelAvailable(spectraHandle_, false);
+    setPanelAvailable(chromatogramsHandle_, false);
+    setPanelAvailable(dataLayersHandle_, false);
+    setPanelAvailable(ionMobilityHandle_, false);
+    setPanelAvailable(faimsHandle_, false);
+    setPanelAvailable(imagingHandle_, false);
+    setPanelAvailable(metadataHandle_, false);
     if (metadata_) metadata_->clear();
-    setDockAvailable(oswDock_, false);
+    setPanelAvailable(oswHandle_, false);
     if (osw_) osw_->clear();
     hasOswData_ = false;
     oswSourcePath_.clear();
-    setDockAvailable(consensusDock_, false);
+    setPanelAvailable(consensusHandle_, false);
     if (consensus_) consensus_->clear();
     hasConsensusData_ = false;
     consensusMap_.reset();
@@ -1772,39 +1502,64 @@ namespace OpenMSViewer
 
   void MainWindow::showDataPage()
   {
-    centralStack_->setCurrentWidget(peakMapPanel_);
+    centralStack_->setCurrentWidget(rowStack_);
     closeDataAction_->setEnabled(true);
   }
 
-  void MainWindow::initializeDockPreferences(bool hasSavedState)
+  QMap<QString, bool> MainWindow::defaultPanelPreferences() const
   {
-    const QMap<QString, bool> defaults{
-      {ticDock_->objectName(), true}, {spectrumDock_->objectName(), true},
-      {featuresDock_->objectName(), true}, {identificationsDock_->objectName(), true},
-      {spectraDock_->objectName(), false}, {chromatogramsDock_->objectName(), true},
-      {dataLayersDock_->objectName(), true},
-      {ionMobilityDock_->objectName(), true}, {faimsDock_->objectName(), true},
-      {imagingDock_->objectName(), true}, {oswDock_->objectName(), true},
-      {consensusDock_->objectName(), true}, {metadataDock_->objectName(), false},
-      {logDock_->objectName(), false}
+    // With no tabs every shown panel costs vertical space, so the default has to
+    // have an opinion: the peak map, the TIC and the spectrum, and nothing else.
+    // Data & layers rides beside the peak map, where it costs no height and
+    // still reports what is loaded.
+    //
+    // The exceptions are the plot panels that *are* a view of the run and are
+    // gated on capabilities most files lack (ion mobility, FAIMS, chromatograms)
+    // or that replace the curated three outright (imaging, OSW, consensus).
+    // Those crowd nothing for a plain mzML, and opening a timsTOF run or an
+    // imzML should not need a menu trip to see the thing you opened it for.
+    //
+    // The tables are the other kind of panel — reference you consult, not a view
+    // of the run — so they stay opt-in even when their data is loaded: Data &
+    // layers already reports the featureXML, and the peak map already overlays it.
+    return {
+      {peakMapHandle_->id(), true}, {dataLayersHandle_->id(), true},
+      {ticHandle_->id(), true}, {spectrumHandle_->id(), true},
+      {imagingHandle_->id(), true}, {oswHandle_->id(), true},
+      {consensusHandle_->id(), true}, {chromatogramsHandle_->id(), true},
+      {ionMobilityHandle_->id(), true}, {faimsHandle_->id(), true},
+      {featuresHandle_->id(), false}, {identificationsHandle_->id(), false},
+      {spectraHandle_->id(), false},
+      {metadataHandle_->id(), false}, {logHandle_->id(), false}
     };
+  }
+
+  void MainWindow::initializePanelPreferences(bool hasSavedState)
+  {
+    const QMap<QString, bool> defaults = defaultPanelPreferences();
     QSettings settings;
-    for (QDockWidget* dock : {ticDock_, spectrumDock_, featuresDock_, identificationsDock_,
-                              spectraDock_, chromatogramsDock_, dataLayersDock_, ionMobilityDock_, faimsDock_,
-                              imagingDock_, oswDock_, consensusDock_, metadataDock_, logDock_})
+    for (PanelHandle* panel : rowStack_->panels())
     {
-      const QString key = QStringLiteral("docks/%1/preferredVisible").arg(dock->objectName());
-      bool preferred = defaults.value(dock->objectName(), false);
+      const QString key = QStringLiteral("panels/%1/preferredVisible").arg(panel->id());
+      bool preferred = defaults.value(panel->id(), false);
       if (settings.contains(key)) preferred = settings.value(key).toBool();
-      else if (hasSavedState) preferred = dock->toggleViewAction()->isChecked();
-      dockVisibilityPreference_[dock->objectName()] = preferred;
-      connect(dock->toggleViewAction(), &QAction::triggered, this,
-              [this, name = dock->objectName()](bool visible)
-              {
-                dockVisibilityPreference_[name] = visible;
-              });
+      else if (hasSavedState) preferred = desiredLayout_.contains(panel->id());
+      panelVisibilityPreference_[panel->id()] = preferred;
+
+      // Asking for a panel has to put it on screen. The stack is not the current
+      // page while the welcome screen is up, so without this the View menu is
+      // inert there and the panel turns up unbidden on the next load instead.
+      // triggered() fires only for a real user action, never for the programmatic
+      // setChecked that syncs the action to the layout.
+      connect(panel->toggleViewAction(), &QAction::triggered, this, [this](bool shown)
+      {
+        if (shown) showDataPage();
+      });
     }
-    setDockAvailable(logDock_, true);
+    // Preferences are now known, so the layout the row stack shows can be
+    // reconciled against them; captureDesiredLayout keeps them in step from here.
+    applyEffectiveLayout();
+    setPanelAvailable(logHandle_, true);
   }
 
   bool MainWindow::rtInMinutes() const
@@ -1812,82 +1567,70 @@ namespace OpenMSViewer
     return rtInMinutesAction_ && rtInMinutesAction_->isChecked();
   }
 
-  void MainWindow::moveDock(QDockWidget* dock, Qt::DockWidgetArea area)
+  bool MainWindow::panelWanted(PanelHandle* panel) const
   {
-    if (!dock) return;
-    if (dock->isFloating()) dock->setFloating(false);
-    // If the target area already holds a visible panel, split it vertically so the
-    // moved panel STACKS beneath it (both visible) instead of tabbing on top of it.
-    // Only an empty area uses addDockWidget (which would otherwise tab).
-    QDockWidget* anchor = nullptr;
-    for (QDockWidget* other : findChildren<QDockWidget*>())
-      if (other != dock && !other->isFloating() && other->isVisible()
-          && dockWidgetArea(other) == area)
-      { anchor = other; break; }
-    if (anchor)
-      splitDockWidget(anchor, dock, Qt::Vertical);
-    else
-      addDockWidget(area, dock);
-    dock->setVisible(true);
-    dock->raise();
-    dockVisibilityPreference_[dock->objectName()] = true;
+    return panel && panelVisibilityPreference_.value(panel->id(), false);
   }
 
-  void MainWindow::configureDock(QDockWidget* dock)
+  void MainWindow::setPanelAvailable(PanelHandle* panel, bool available)
   {
-    if (!dock) return;
-    const bool restrict = restrictDockFloating();
-    auto features = QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable;
-    if (!restrict) features |= QDockWidget::DockWidgetFloatable;
-    dock->setFeatures(features);
-    dock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    // Native title bar where floating is unsafe (WSLg); custom draggable header
-    // with float/dock/close controls everywhere else.
-    if (!restrict) dock->setTitleBarWidget(new FloatingDockTitleBar(dock));
-    connect(dock, &QDockWidget::topLevelChanged, this, [this, dock](bool floating)
-    {
-      if (!floating) return;
-      QTimer::singleShot(100, dock, [this, dock] { ensureFloatingDockVisible(dock); });
-    });
+    if (!panel) return;
+    panel->toggleViewAction()->setEnabled(available);
+    applyEffectiveLayout();
   }
 
-  void MainWindow::ensureFloatingDockVisible(QDockWidget* dock)
+  void MainWindow::applyEffectiveLayout()
   {
-    if (!dock || !dock->isFloating()) return;
-    // Wayland owns top-level placement. Moving a surface before/around its first
-    // configure event is a protocol error; the compositor already keeps it visible.
-    if (QGuiApplication::platformName().contains(QStringLiteral("wayland"),
-                                                  Qt::CaseInsensitive)) return;
-    if (!dock->isVisible()) return;
-    QWindow* handle = dock->windowHandle();
-    if (!handle || !handle->isExposed())
+    // A wanted panel that has never been placed joins at the bottom — the same
+    // rule as opening one from the View menu.
+    for (PanelHandle* panel : rowStack_->panels())
+      if (panelWanted(panel) && panel->toggleViewAction()->isEnabled()
+          && !desiredLayout_.contains(panel->id()))
+        desiredLayout_.appendRow(panel->id());
+
+    LayoutModel effective = desiredLayout_;
+    for (PanelHandle* panel : rowStack_->panels())
+      if (!panelWanted(panel) || !panel->toggleViewAction()->isEnabled())
+        effective.remove(panel->id());
+    if (effective == rowStack_->model()) return;
+
+    applyingLayout_ = true;
+    rowStack_->setLayoutModel(effective);
+    applyingLayout_ = false;
+  }
+
+  void MainWindow::captureDesiredLayout()
+  {
+    const LayoutModel effective = rowStack_->model();
+    // For a panel whose data exists, its presence in the layout is the user's
+    // intent — including a close-button click, which never touches the action.
+    for (PanelHandle* panel : rowStack_->panels())
+      if (panel->toggleViewAction()->isEnabled())
+        panelVisibilityPreference_[panel->id()] = effective.contains(panel->id());
+
+    // A panel filtered out for want of data is absent from the shown layout but
+    // was not closed. Fold it back where the user last had it — preferring its
+    // row-mate as the anchor, so a two-panel row survives a launch without it.
+    LayoutModel next = effective;
+    for (int row = 0; row < desiredLayout_.rowCount(); ++row)
     {
-      QTimer::singleShot(100, dock, [this, dock] { ensureFloatingDockVisible(dock); });
-      return;
+      const std::vector<PanelId>& panels = desiredLayout_.rows()[row].panels;
+      for (std::size_t column = 0; column < panels.size(); ++column)
+      {
+        const PanelId& id = panels[column];
+        PanelHandle* panel = rowStack_->panel(id);
+        if (!panel || next.contains(id)) continue;
+        if (panel->toggleViewAction()->isEnabled()) continue;  // available: really closed
+        if (!panelWanted(panel)) continue;
+
+        const PanelId mate = panels.size() == 2 ? panels[1 - column] : PanelId();
+        const bool rejoined = !mate.isEmpty() && next.contains(mate)
+          && next.applyDrop(id, {column == 0 ? LayoutModel::DropKind::LeftOfAnchor
+                                             : LayoutModel::DropKind::RightOfAnchor, mate});
+        if (!rejoined) next.insertRow(std::min(row, next.rowCount()), id);
+      }
     }
-    QScreen* screen = QGuiApplication::screenAt(dock->frameGeometry().center());
-    if (!screen) screen = QGuiApplication::primaryScreen();
-    if (!screen) return;
-    const QRect available = screen->availableGeometry();
-    QSize size = dock->size();
-    size.setWidth(std::min(size.width(), static_cast<int>(available.width() * 0.9)));
-    size.setHeight(std::min(size.height(), static_cast<int>(available.height() * 0.9)));
-    dock->resize(size);
-
-    const QRect frame = dock->frameGeometry();
-    const int minimumVisibleWidth = std::min(160, frame.width());
-    const int x = std::clamp(frame.x(), available.left() - frame.width() + minimumVisibleWidth,
-                             available.right() - minimumVisibleWidth + 1);
-    const int y = std::clamp(frame.y(), available.top(),
-                             std::max(available.top(), available.bottom() - 31));
-    dock->move(x, y);
-  }
-
-  void MainWindow::setDockAvailable(QDockWidget* dock, bool available)
-  {
-    if (!dock) return;
-    dock->toggleViewAction()->setEnabled(available);
-    dock->setVisible(available && dockVisibilityPreference_.value(dock->objectName(), false));
+    desiredLayout_ = next;
   }
 
   void MainWindow::closeSurface3D()
@@ -1938,29 +1681,10 @@ namespace OpenMSViewer
     surface3DDialog_->activateWindow();
   }
 
-  void MainWindow::resetDockLayout()
+  void MainWindow::resetPanelLayout()
   {
-    dockVisibilityPreference_[ticDock_->objectName()] = true;
-    dockVisibilityPreference_[spectrumDock_->objectName()] = true;
-    dockVisibilityPreference_[featuresDock_->objectName()] = true;
-    dockVisibilityPreference_[identificationsDock_->objectName()] = true;
-    dockVisibilityPreference_[spectraDock_->objectName()] = false;
-    dockVisibilityPreference_[chromatogramsDock_->objectName()] = true;
-    dockVisibilityPreference_[dataLayersDock_->objectName()] = true;
-    dockVisibilityPreference_[ionMobilityDock_->objectName()] = true;
-    dockVisibilityPreference_[faimsDock_->objectName()] = true;
-    dockVisibilityPreference_[imagingDock_->objectName()] = true;
-    dockVisibilityPreference_[oswDock_->objectName()] = true;
-    dockVisibilityPreference_[consensusDock_->objectName()] = true;
-    dockVisibilityPreference_[metadataDock_->objectName()] = false;
-    dockVisibilityPreference_[logDock_->objectName()] = false;
-
-    for (QDockWidget* dock : {ticDock_, spectrumDock_, featuresDock_, identificationsDock_,
-                              spectraDock_, chromatogramsDock_, dataLayersDock_, ionMobilityDock_, faimsDock_,
-                              imagingDock_, oswDock_, consensusDock_, metadataDock_, logDock_})
-      dock->setFloating(false);
-
-    arrangeDocksDefault();
+    panelVisibilityPreference_ = defaultPanelPreferences();
+    applyDefaultLayout();
     updateDataLayers();
 
     if (document_.isEmpty() && !document_.hasFeatures() && !document_.hasIdentifications()
@@ -1968,133 +1692,120 @@ namespace OpenMSViewer
       showWelcomePage();
     else if (hasOswData_)
     {
-      setDockAvailable(oswDock_, true);
-      oswDock_->raise();
+      setPanelAvailable(oswHandle_, true);
+      oswHandle_->raise();
     }
     else if (hasConsensusData_)
     {
-      setDockAvailable(consensusDock_, true);
-      consensusDock_->raise();
+      setPanelAvailable(consensusHandle_, true);
+      consensusHandle_->raise();
     }
     else if (imagingStore_)
     {
-      setDockAvailable(spectrumDock_, true);
-      setDockAvailable(imagingDock_, true);
-      imagingDock_->raise();
+      setPanelAvailable(peakMapHandle_, false);
+      setPanelAvailable(spectrumHandle_, true);
+      setPanelAvailable(imagingHandle_, true);
+      imagingHandle_->raise();
     }
     else
     {
       const bool hasSpectra = !document_.spectra().empty();
-      setDockAvailable(ticDock_, hasSpectra);
-      setDockAvailable(spectrumDock_, hasSpectra);
-      setDockAvailable(spectraDock_, hasSpectra);
-      setDockAvailable(featuresDock_, document_.hasFeatures());
-      setDockAvailable(identificationsDock_, document_.hasIdentifications());
-      setDockAvailable(chromatogramsDock_, document_.hasChromatograms());
-      setDockAvailable(ionMobilityDock_, document_.hasIonMobility());
-      setDockAvailable(faimsDock_, document_.hasFaims());
-      setDockAvailable(metadataDock_, document_.experimentHandle() != nullptr);
+      setPanelAvailable(peakMapHandle_, hasSpectra);
+      setPanelAvailable(ticHandle_, hasSpectra);
+      setPanelAvailable(spectrumHandle_, hasSpectra);
+      setPanelAvailable(spectraHandle_, hasSpectra);
+      setPanelAvailable(featuresHandle_, document_.hasFeatures());
+      setPanelAvailable(identificationsHandle_, document_.hasIdentifications());
+      setPanelAvailable(chromatogramsHandle_, document_.hasChromatograms());
+      setPanelAvailable(ionMobilityHandle_, document_.hasIonMobility());
+      setPanelAvailable(faimsHandle_, document_.hasFaims());
+      setPanelAvailable(metadataHandle_, document_.experimentHandle() != nullptr);
     }
-    setDockAvailable(logDock_, true);
-    // Re-sync the save actions to the actual data: resetDockLayout can route through
+    setPanelAvailable(logHandle_, true);
+    // Re-sync the save actions to the actual data: resetPanelLayout can route through
     // showWelcomePage (which disables them) even when only an overlay — no raw run —
     // is loaded, which would otherwise leave a loaded map unsaveable.
     updateSaveActions();
     statusBar()->showMessage(tr("Panel layout reset"), 3000);
   }
 
-  void MainWindow::arrangeDocksDefault()
+  void MainWindow::applyDefaultLayout()
   {
-    // Everything lives in the bottom area, stacked in full-width rows — nothing in
-    // the narrow right column, and no half-width plots. Spectrum over TIC over a
-    // full-width tabbed row of tables/panels; every panel spans the full width.
-    addDockWidget(Qt::BottomDockWidgetArea, spectrumDock_);
-    splitDockWidget(spectrumDock_, ticDock_, Qt::Vertical);   // TIC full-width below the spectrum
-    splitDockWidget(ticDock_, featuresDock_, Qt::Vertical);   // tables full-width below the TIC
-    QDockWidget* previous = featuresDock_;
-    for (QDockWidget* dock : {identificationsDock_, spectraDock_, chromatogramsDock_,
-                              ionMobilityDock_, imagingDock_, faimsDock_, oswDock_,
-                              consensusDock_, metadataDock_, logDock_})
-    {
-      tabifyDockWidget(previous, dock);
-      previous = dock;
-    }
-    featuresDock_->raise();
-    addDockWidget(Qt::RightDockWidgetArea, dataLayersDock_);
+    // The peak map with its layer list beside it, then the TIC and the spectrum as
+    // full-width rows. Panels beyond these open on demand as new rows — with no
+    // tabs there is nowhere to park fifteen panels, so the default has to have an
+    // opinion. The first row is deliberately two-across: it puts Data & layers next
+    // to the map it controls, and shows the two-panel row without explaining it.
+    LayoutModel layout;
+    layout.appendRow(peakMapHandle_->id());
+    layout.applyDrop(dataLayersHandle_->id(),
+                     {LayoutModel::DropKind::RightOfAnchor, peakMapHandle_->id()});
+    layout.appendRow(ticHandle_->id());
+    layout.appendRow(spectrumHandle_->id());
+    desiredLayout_ = layout;
+    applyEffectiveLayout();
   }
 
   void MainWindow::applyLayoutPreset(LayoutPreset preset)
   {
-    if (preset == LayoutPreset::Overview) { resetDockLayout(); return; }
+    if (preset == LayoutPreset::Overview) { resetPanelLayout(); return; }
 
-    const std::vector<QDockWidget*> allDocks = {
-      ticDock_, spectrumDock_, featuresDock_, identificationsDock_, spectraDock_,
-      chromatogramsDock_, ionMobilityDock_, faimsDock_, imagingDock_, oswDock_,
-      consensusDock_, metadataDock_, logDock_};
-    for (QDockWidget* dock : allDocks) dock->setFloating(false);
-
-    // A dock is only worth showing if its data is present; setDockAvailable keeps
+    // A panel is only worth showing if its data is present; setPanelAvailable keeps
     // the toggle action's enabled state in sync with that.
-    const auto available = [](QDockWidget* dock) { return dock->toggleViewAction()->isEnabled(); };
-    // Feature a dock (record the preference + show it if it has data), or hide it.
-    const auto feature = [&](QDockWidget* dock, bool wanted)
-    {
-      dockVisibilityPreference_[dock->objectName()] = wanted;
-      dock->setVisible(wanted && available(dock));
-    };
-    const auto hideRest = [&](std::initializer_list<QDockWidget*> featured)
-    {
-      for (QDockWidget* dock : allDocks)
-        if (std::find(featured.begin(), featured.end(), dock) == featured.end())
-          feature(dock, false);
-    };
+    const auto available = [](PanelHandle* panel) { return panel->toggleViewAction()->isEnabled(); };
 
     QString name;
-    QDockWidget* focus = nullptr;
+    PanelHandle* focus = nullptr;
+    std::vector<PanelHandle*> featured;
+    LayoutModel layout;
+    const auto row = [&](PanelHandle* panel)
+    {
+      featured.push_back(panel);
+      layout.appendRow(panel->id());
+    };
+
     switch (preset)
     {
       case LayoutPreset::Identification:
-        // Analyte-centric: the annotated spectrum full width on top, the ID + spectra
-        // tables tabbed full width below (never a side column).
-        addDockWidget(Qt::BottomDockWidgetArea, spectrumDock_);
-        splitDockWidget(spectrumDock_, identificationsDock_, Qt::Vertical);
-        tabifyDockWidget(identificationsDock_, spectraDock_);
-        feature(spectrumDock_, true);
-        feature(identificationsDock_, true);
-        feature(spectraDock_, true);
-        hideRest({spectrumDock_, identificationsDock_, spectraDock_});
-        focus = identificationsDock_;
+        // Analyte-centric: the annotated spectrum over the ID table, with the
+        // spectra table beside the IDs rather than behind them.
+        row(spectrumHandle_);
+        row(identificationsHandle_);
+        featured.push_back(spectraHandle_);
+        layout.applyDrop(spectraHandle_->id(),
+                         {LayoutModel::DropKind::RightOfAnchor, identificationsHandle_->id()});
+        focus = identificationsHandle_;
         name = tr("Identification");
         break;
 
       case LayoutPreset::Imaging:
-        // MSI: the ion image full width over the spectrum.
-        addDockWidget(Qt::BottomDockWidgetArea, imagingDock_);
-        splitDockWidget(imagingDock_, spectrumDock_, Qt::Vertical);
-        feature(imagingDock_, true);
-        feature(spectrumDock_, true);
-        hideRest({imagingDock_, spectrumDock_});
-        focus = imagingDock_;
+        // MSI: the ion image over the spectrum.
+        row(imagingHandle_);
+        row(spectrumHandle_);
+        focus = imagingHandle_;
         name = tr("Imaging");
         break;
 
       case LayoutPreset::Dia:
-        // Targeted DIA: OpenSWATH panel, spectrum, and chromatograms as full-width
-        // rows stacked top to bottom.
-        addDockWidget(Qt::BottomDockWidgetArea, oswDock_);
-        splitDockWidget(oswDock_, spectrumDock_, Qt::Vertical);
-        splitDockWidget(spectrumDock_, chromatogramsDock_, Qt::Vertical);
-        feature(oswDock_, true);
-        feature(spectrumDock_, true);
-        feature(chromatogramsDock_, true);
-        hideRest({oswDock_, spectrumDock_, chromatogramsDock_});
-        focus = oswDock_;
+        // Targeted DIA: OpenSWATH panel, spectrum, and chromatograms stacked.
+        row(oswHandle_);
+        row(spectrumHandle_);
+        row(chromatogramsHandle_);
+        focus = oswHandle_;
         name = tr("DIA / OpenSWATH");
         break;
 
       case LayoutPreset::Overview:
         break;  // handled above
     }
+
+    // Record the preference for every panel first, then let availability decide
+    // what is actually placed: a featured panel whose data is missing stays out.
+    for (PanelHandle* panel : rowStack_->panels())
+      panelVisibilityPreference_[panel->id()] =
+        std::find(featured.begin(), featured.end(), panel) != featured.end();
+    desiredLayout_ = layout;
+    applyEffectiveLayout();
 
     if (focus && available(focus)) focus->raise();
     updateSaveActions();
@@ -2136,12 +1847,12 @@ namespace OpenMSViewer
       hasConsensusData_, showConsensusAction_->isChecked());
     dataLayers_->setLayer(DataLayersWidget::Layer::OpenSwath, oswSourcePath_,
       hasOswData_ ? tr("OpenSWATH results") : QString{}, hasOswData_,
-      oswDock_ && oswDock_->isVisible());
+      oswHandle_ && oswHandle_->isShown());
 
     const bool anything = hasPrimary || document_.hasFeatures() || document_.hasIdentifications()
       || hasConsensusData_ || hasOswData_;
-    if (dataLayersDock_->toggleViewAction()->isEnabled() != anything)
-      setDockAvailable(dataLayersDock_, anything);
+    if (dataLayersHandle_->toggleViewAction()->isEnabled() != anything)
+      setPanelAvailable(dataLayersHandle_, anything);
   }
 
   void MainWindow::updateFeatureEditState()
@@ -2632,9 +2343,9 @@ namespace OpenMSViewer
     lastPrimaryPath_ = sourcePath;
     rememberRecentFile(sourcePath);
     showDataPage();
-    dockVisibilityPreference_[oswDock_->objectName()] = true;
-    setDockAvailable(oswDock_, true);
-    oswDock_->raise();
+    panelVisibilityPreference_[oswHandle_->id()] = true;
+    setPanelAvailable(oswHandle_, true);
+    oswHandle_->raise();
     updateWindowTitle();
     updateRunContext();
     statusBar()->showMessage(tr("Loaded OpenSWATH results from %1").arg(QFileInfo(sourcePath).fileName()), 8000);
@@ -2690,9 +2401,9 @@ namespace OpenMSViewer
     lastPrimaryPath_ = sourcePath;
     rememberRecentFile(sourcePath);
     showDataPage();
-    dockVisibilityPreference_[consensusDock_->objectName()] = true;
-    setDockAvailable(consensusDock_, true);
-    consensusDock_->raise();
+    panelVisibilityPreference_[consensusHandle_->id()] = true;
+    setPanelAvailable(consensusHandle_, true);
+    consensusHandle_->raise();
     updateWindowTitle();
     updateRunContext();
     statusBar()->showMessage(tr("Loaded consensus map from %1").arg(QFileInfo(sourcePath).fileName()), 8000);
@@ -2838,7 +2549,7 @@ namespace OpenMSViewer
     imagingStore_.reset();
     imagingSummary_ = {};
     imaging_->clear();
-    setDockAvailable(imagingDock_, false);
+    setPanelAvailable(imagingHandle_, false);
     lastPrimaryPath_ = sourcePath;
     rememberRecentFile(sourcePath);
     showDataPage();
@@ -2923,6 +2634,12 @@ namespace OpenMSViewer
     const QString sourcePath = result.sourcePath;
     document_.adoptIdentifications(std::move(result));
     rememberRecentFile(sourcePath);
+    // Every other loader does this. It did not matter while the panels were
+    // docks — they were peers of the central widget and showed whichever page
+    // was current — but they live in the row stack now, and the stack is not the
+    // page on view until this runs. Opening an idXML on its own would otherwise
+    // load, report success, and leave the welcome screen up.
+    showDataPage();
     updateRunContext();
     const std::size_t linked = static_cast<std::size_t>(std::count_if(
       document_.identifications().begin(), document_.identifications().end(),
@@ -2964,20 +2681,21 @@ namespace OpenMSViewer
     peakMap_->setPrecursorMarkers({});  // the imaging run has no MS/MS precursors
     showPrecursorsAction_->setEnabled(false);
     metadata_->clear();
-    setDockAvailable(metadataDock_, false);
+    setPanelAvailable(metadataHandle_, false);
     tic_->clear();
     spectrum_->clear();
     spectra_->clear();
     chromatograms_->clear();
     ionMobility_->clear();
     faims_->clear();
-    setDockAvailable(ticDock_, false);
-    setDockAvailable(spectraDock_, false);
-    setDockAvailable(chromatogramsDock_, false);
-    setDockAvailable(ionMobilityDock_, false);
-    setDockAvailable(faimsDock_, false);
-    setDockAvailable(featuresDock_, false);
-    setDockAvailable(identificationsDock_, false);
+    setPanelAvailable(peakMapHandle_, false);  // imaging has no peak map
+    setPanelAvailable(ticHandle_, false);
+    setPanelAvailable(spectraHandle_, false);
+    setPanelAvailable(chromatogramsHandle_, false);
+    setPanelAvailable(ionMobilityHandle_, false);
+    setPanelAvailable(faimsHandle_, false);
+    setPanelAvailable(featuresHandle_, false);
+    setPanelAvailable(identificationsHandle_, false);
     exportMzMLAction_->setEnabled(false);
     selection_.clear();
 
@@ -2989,9 +2707,9 @@ namespace OpenMSViewer
     rememberRecentFile(sourcePath);
     showDataPage();
     setPeakMapControlsEnabled(false);
-    setDockAvailable(imagingDock_, true);
-    setDockAvailable(spectrumDock_, true);
-    if (dockVisibilityPreference_.value(imagingDock_->objectName(), true)) imagingDock_->raise();
+    setPanelAvailable(imagingHandle_, true);
+    setPanelAvailable(spectrumHandle_, true);
+    if (panelVisibilityPreference_.value(imagingHandle_->id(), true)) imagingHandle_->raise();
     if (!imagingSummary_.pixels.empty())
       selectImagingSpectrum(imagingSummary_.pixels.front().spectrumIndex);
     updateWindowTitle();
@@ -3040,17 +2758,21 @@ namespace OpenMSViewer
     spectrum_->setExperiment(experiment);
     spectra_->setData(document_.spectra(), document_.identifications());
     const bool hasSpectra = !document_.spectra().empty();
-    setDockAvailable(ticDock_, hasSpectra);
-    setDockAvailable(spectrumDock_, hasSpectra);
-    setDockAvailable(spectraDock_, hasSpectra);
+    // The peak map is a row like any other now, so it has to earn its height:
+    // as the old central widget it could sit there empty for an imaging or
+    // OSW-only session, but a blank row just costs space.
+    setPanelAvailable(peakMapHandle_, hasSpectra);
+    setPanelAvailable(ticHandle_, hasSpectra);
+    setPanelAvailable(spectrumHandle_, hasSpectra);
+    setPanelAvailable(spectraHandle_, hasSpectra);
     metadata_->setExperiment(experiment);
-    setDockAvailable(metadataDock_, experiment != nullptr);
+    setPanelAvailable(metadataHandle_, experiment != nullptr);
     chromatograms_->setChromatograms(document_.chromatograms());
     chromatograms_->setPeakMapRange(document_.bounds());
-    setDockAvailable(chromatogramsDock_, document_.hasChromatograms());
+    setPanelAvailable(chromatogramsHandle_, document_.hasChromatograms());
     exportMzMLAction_->setEnabled(!document_.spectra().empty());
     ionMobility_->setData(experiment, document_.ionMobilityFrames());
-    setDockAvailable(ionMobilityDock_, document_.hasIonMobility());
+    setPanelAvailable(ionMobilityHandle_, document_.hasIonMobility());
     selection_.setFaimsChannel(-1);
     faims_->setChannels(document_.faimsChannels());
     std::vector<std::shared_ptr<const OpenMS::MSExperiment>> faimsExperiments;
@@ -3059,7 +2781,7 @@ namespace OpenMSViewer
       faimsExperiments.push_back(document_.faimsExperiment(index));
     faims_->setExperiments(faimsExperiments, document_.bounds());
     faims_->setPeakMapRange(document_.bounds());
-    setDockAvailable(faimsDock_, document_.hasFaims());
+    setPanelAvailable(faimsHandle_, document_.hasFaims());
     updateFeatureViews();
     updateIdentificationViews();
 
@@ -3093,7 +2815,7 @@ namespace OpenMSViewer
     showFeatureBoundsAction_->setEnabled(available);
     showFeatureHullsAction_->setEnabled(available);
     saveFeaturesAction_->setEnabled(available);
-    setDockAvailable(featuresDock_, available);
+    setPanelAvailable(featuresHandle_, available);
     updateRunContext();
   }
 
@@ -3108,7 +2830,7 @@ namespace OpenMSViewer
     showIdentificationsAction_->setEnabled(available);
     showIdentificationSequencesAction_->setEnabled(available);
     saveIdentificationsAction_->setEnabled(available);
-    setDockAvailable(identificationsDock_, available);
+    setPanelAvailable(identificationsHandle_, available);
     updateRunContext();
     reconcileSelection();  // re-link the current spectrum to newly loaded IDs
   }
@@ -3306,13 +3028,13 @@ namespace OpenMSViewer
         peakMap_->setConsensusFeatures({});
         showConsensusAction_->setChecked(false);
         showConsensusAction_->setEnabled(false);
-        setDockAvailable(consensusDock_, false);
+        setPanelAvailable(consensusHandle_, false);
         break;
       case DataLayersWidget::Layer::OpenSwath:
         hasOswData_ = false;
         oswSourcePath_.clear();
         osw_->clear();
-        setDockAvailable(oswDock_, false);
+        setPanelAvailable(oswHandle_, false);
         break;
       case DataLayersWidget::Layer::Count:
         return;
@@ -3940,7 +3662,12 @@ namespace OpenMSViewer
     }
     QSettings settings;
     settings.setValue(QStringLiteral("main/geometry"), saveGeometry());
+    // Toolbars are QMainWindow's own furniture; panels are ours.
     settings.setValue(QStringLiteral("main/state"), saveState());
+    QJsonObject layoutState = rowStack_->saveState();
+    layoutState.insert(QStringLiteral("desired"), desiredLayout_.toJson());
+    settings.setValue(QStringLiteral("layout/rowStack"),
+                      QJsonDocument(layoutState).toJson(QJsonDocument::Compact));
     const QString themeMode = themeDarkAction_->isChecked()  ? QStringLiteral("dark")
                               : themeLightAction_->isChecked() ? QStringLiteral("light")
                                                                : QStringLiteral("system");
@@ -3950,8 +3677,8 @@ namespace OpenMSViewer
     syncDisplayPreferences(/*save=*/true);
     settings.setValue(QStringLiteral("files/recent"), recentFiles_);
     settings.setValue(QStringLiteral("files/lastPrimary"), lastPrimaryPath_);
-    for (auto it = dockVisibilityPreference_.cbegin(); it != dockVisibilityPreference_.cend(); ++it)
-      settings.setValue(QStringLiteral("docks/%1/preferredVisible").arg(it.key()), it.value());
+    for (auto it = panelVisibilityPreference_.cbegin(); it != panelVisibilityPreference_.cend(); ++it)
+      settings.setValue(QStringLiteral("panels/%1/preferredVisible").arg(it.key()), it.value());
     QMainWindow::closeEvent(event);
   }
 

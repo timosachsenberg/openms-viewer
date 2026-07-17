@@ -26,10 +26,11 @@
 namespace
 {
   // WSLg defaults to the Wayland platform, where Qt draws the cursor client-side
-  // with no size hint (giant pointer) and cannot position its own top-level
-  // surfaces (floating panels can only be moved by the compositor). Preferring
-  // XWayland (xcb) and setting a cursor size sidesteps both. Both are only
-  // defaults: an explicit QT_QPA_PLATFORM or XCURSOR_SIZE still wins.
+  // with no size hint, giving a giant pointer. Preferring XWayland (xcb) and
+  // setting a cursor size sidesteps it. Both are only defaults: an explicit
+  // QT_QPA_PLATFORM or XCURSOR_SIZE still wins.
+  // (Panel dragging no longer depends on the platform at all — panels never
+  // float, so nothing needs the compositor to move a top-level surface.)
   void applyWslPlatformDefaults()
   {
     const bool isWsl = qEnvironmentVariableIsSet("WSL_INTEROP")

@@ -12,7 +12,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
-#include <QDockWidget>
+#include "widgets/RowStackWidget.h"
 #include <QMenu>
 #include <QSettings>
 #include <QTableView>
@@ -222,13 +222,13 @@ private slots:
     window.show();
     window.loadFile(path);
     auto* panel = window.findChild<OpenMSViewer::IonMobilityPanelWidget*>();
-    auto* dock = window.findChild<QDockWidget*>(QStringLiteral("ionMobilityDock"));
+    auto* dock = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("ionMobility"));
     auto* spectrum = window.findChild<OpenMSViewer::SpectrumWidget*>();
     QVERIFY(panel != nullptr);
     QVERIFY(dock != nullptr);
     QVERIFY(spectrum != nullptr);
     QTRY_COMPARE_WITH_TIMEOUT(panel->frameCount(), std::size_t{2}, 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(dock->isVisible(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(dock->isShown(), 3000);
     QTRY_VERIFY_WITH_TIMEOUT(!panel->plot()->raster().image.isNull(), 3000);
     auto* selector = panel->findChild<QComboBox*>(QStringLiteral("ionMobilityFrameSelector"));
     QVERIFY(selector != nullptr);

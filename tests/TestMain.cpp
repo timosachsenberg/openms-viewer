@@ -1,6 +1,8 @@
 #include <QApplication>
 #include <QStandardPaths>
 
+int runLayoutModelTests(int argc, char** argv);
+int runLayoutPersistenceTests(int argc, char** argv);
 int runPeakMapRasterizerTests(int argc, char** argv);
 int runFormatRegistryTests(int argc, char** argv);
 int runRichFormatsTests(int argc, char** argv);
@@ -37,7 +39,9 @@ int main(int argc, char** argv)
   QApplication application(argc, argv);
   QApplication::setOrganizationName(QStringLiteral("OpenMSViewerTests"));
   QApplication::setApplicationName(QStringLiteral("OpenMSViewerTests"));
-  int status = runPeakMapRasterizerTests(argc, argv);
+  int status = runLayoutModelTests(argc, argv);
+  status |= runLayoutPersistenceTests(argc, argv);
+  status |= runPeakMapRasterizerTests(argc, argv);
   status |= runFormatRegistryTests(argc, argv);
   status |= runRichFormatsTests(argc, argv);
   status |= runOswStoreTests(argc, argv);

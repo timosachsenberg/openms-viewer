@@ -46,6 +46,8 @@ add_library(openms_viewer_core STATIC
   src/model/IdentificationData.h
   src/model/FormatRegistry.cpp
   src/model/FormatRegistry.h
+  src/layout/LayoutModel.cpp
+  src/layout/LayoutModel.h
   src/logging/ApplicationLog.cpp
   src/logging/ApplicationLog.h
   src/model/ImagingDocument.cpp
@@ -124,6 +126,8 @@ add_library(openms_viewer_ui STATIC
   src/widgets/PeakMapWidget.h
   src/widgets/PeakSurface3DWidget.cpp
   src/widgets/PeakSurface3DWidget.h
+  src/widgets/RowStackWidget.cpp
+  src/widgets/RowStackWidget.h
   src/widgets/ChromatogramPanelWidget.cpp
   src/widgets/ChromatogramPanelWidget.h
   src/widgets/CompactControls.h
@@ -264,6 +268,8 @@ if(OPENMS_VIEWER_BUILD_TESTS)
 
   add_executable(openms_viewer_tests
     tests/TestMain.cpp
+    tests/LayoutModelTest.cpp
+    tests/LayoutPersistenceTest.cpp
     tests/FormatRegistryTest.cpp
     tests/RichFormatsTest.cpp
     tests/OswStoreTest.cpp

@@ -18,6 +18,7 @@
 #include "widgets/MetadataBrowserWidget.h"
 #include "widgets/OswPanel.h"
 #include "widgets/PeakMapWidget.h"
+#include "widgets/RowStackWidget.h"
 #include "widgets/SpectrumWidget.h"
 
 #include "annotation/SpectrumAnnotation.h"
@@ -39,7 +40,6 @@
 #include <QCheckBox>
 #include <QCoreApplication>
 #include <QDir>
-#include <QDockWidget>
 #include <QElapsedTimer>
 #include <QSettings>
 #include <QStandardPaths>
@@ -125,21 +125,43 @@ namespace
     return peakMap && waitUntil([peakMap] { return peakMap->hasExperiment(); }, timeoutMs);
   }
 
-  bool grabDockPanel(OpenMSViewer::MainWindow& window, const QString& dockName,
-                     int width, int height, const QString& png, int settleMs = 2500)
+  // Panels do not float, so "show just this panel at this size" means giving it
+  // the whole row stack and sizing the window around it. Two passes: the first
+  // measures the chrome between window and panel, the second lands the widget on
+  // the requested size.
+  OpenMSViewer::PanelHandle* soloPanel(OpenMSViewer::MainWindow& window, const QString& panelId,
+                                       int width, int height, int settleMs = 2500)
   {
-    auto* dock = window.findChild<QDockWidget*>(dockName);
-    if (!dock || !waitUntil([dock] { return dock->isEnabled(); }, 10000))
+    auto* stack = window.findChild<OpenMSViewer::RowStackWidget*>(QStringLiteral("rowStack"));
+    auto* panel = stack ? stack->panel(panelId) : nullptr;
+    if (!panel || !waitUntil([panel] { return panel->toggleViewAction()->isEnabled(); }, 10000))
+      return nullptr;
+
+    OpenMSViewer::LayoutModel solo;
+    solo.appendRow(panelId);
+    stack->setLayoutModel(solo);
+    pump(200);
+    for (int pass = 0; pass < 2 && panel->widget(); ++pass)
+    {
+      const QSize current = panel->widget()->size();
+      window.resize(window.width() + width - current.width(),
+                    window.height() + height - current.height());
+      pump(300);
+    }
+    pump(settleMs);
+    return panel;
+  }
+
+  bool grabPanel(OpenMSViewer::MainWindow& window, const QString& panelId,
+                 int width, int height, const QString& png, int settleMs = 2500)
+  {
+    OpenMSViewer::PanelHandle* panel = soloPanel(window, panelId, width, height, settleMs);
+    if (!panel)
     {
       skip(png, QStringLiteral("panel never populated"));
       return false;
     }
-    dock->setFloating(true);
-    dock->resize(width, height);
-    dock->show();
-    dock->raise();
-    pump(settleMs);
-    return dock->widget() && saveGrab(*dock->widget(), png);
+    return panel->widget() && saveGrab(*panel->widget(), png);
   }
 }
 
@@ -384,16 +406,8 @@ static void syntheticImaging()
   window.resize(1200, 760);
   window.show();
   window.loadFiles({path});
-  auto* dock = window.findChild<QDockWidget*>(QStringLiteral("imagingDock"));
-  if (!dock || !waitUntil([dock] { return dock->isEnabled(); }, 15000))
-  { skip(QStringLiteral("imaging.png"), QStringLiteral("imaging load failed")); return; }
   pump(1200);
-  dock->setFloating(true);
-  dock->resize(1000, 640);
-  dock->show();
-  dock->raise();
-  pump(600);
-  if (dock->widget()) saveGrab(*dock->widget(), QStringLiteral("imaging.png"));
+  grabPanel(window, QStringLiteral("imaging"), 1000, 640, QStringLiteral("imaging.png"), 600);
 }
 
 // ---- Real archive views -----------------------------------------------------
@@ -419,16 +433,10 @@ static void realPeakMapAndMetadata()
   }
 
   auto* metadata = window.findChild<OpenMSViewer::MetadataBrowserWidget*>();
-  auto* metadataDock = window.findChild<QDockWidget*>(QStringLiteral("metadataDock"));
-  if (metadata && metadataDock)
+  if (metadata)
   {
     if (auto* tree = metadata->findChild<QTreeWidget*>()) tree->expandToDepth(1);
-    metadataDock->setFloating(true);
-    metadataDock->resize(460, 640);
-    metadataDock->show();
-    metadataDock->raise();
-    pump(300);
-    saveGrab(*metadata, QStringLiteral("metadata.png"));
+    grabPanel(window, QStringLiteral("metadata"), 460, 640, QStringLiteral("metadata.png"), 300);
   }
   else skip(QStringLiteral("metadata.png"), QStringLiteral("no metadata panel"));
 }
@@ -442,7 +450,7 @@ static void realFaims()
   window.show();
   if (!loadExperiment(window, mzml, 180000))  // 1GB mzML — allow time
   { skip(QStringLiteral("faims.png"), QStringLiteral("load failed")); return; }
-  grabDockPanel(window, QStringLiteral("faimsDock"), 1120, 700, QStringLiteral("faims.png"));
+  grabPanel(window, QStringLiteral("faims"), 1120, 700, QStringLiteral("faims.png"));
 }
 
 static void realIonMobility()
@@ -457,14 +465,10 @@ static void realIonMobility()
   { skip(QStringLiteral("ion-mobility.png"), QStringLiteral("opentims load failed")); skip(QStringLiteral("dia-windows.png"), QStringLiteral("opentims load failed")); return; }
 
   auto* imPlot = window.findChild<OpenMSViewer::IonMobilityPlotWidget*>();
-  auto* imDock = window.findChild<QDockWidget*>(QStringLiteral("ionMobilityDock"));
-  if (!imPlot || !imDock || !waitUntil([imDock] { return imDock->isEnabled(); }, 10000))
+  OpenMSViewer::PanelHandle* im =
+    soloPanel(window, QStringLiteral("ionMobility"), 1000, 640, 0);
+  if (!imPlot || !im || !im->widget())
   { skip(QStringLiteral("ion-mobility.png"), QStringLiteral("IM panel not populated")); skip(QStringLiteral("dia-windows.png"), QStringLiteral("IM panel not populated")); return; }
-
-  imDock->setFloating(true);
-  imDock->resize(1000, 640);
-  imDock->show();
-  imDock->raise();
 
   // Toggle the panel's own "DIA windows" checkbox so the control reflects the view.
   QCheckBox* diaBox = nullptr;
@@ -473,11 +477,11 @@ static void realIonMobility()
 
   if (diaBox) diaBox->setChecked(false); else imPlot->setShowDiaWindows(false);
   pump(2500);
-  if (imDock->widget()) saveGrab(*imDock->widget(), QStringLiteral("ion-mobility.png"));
+  saveGrab(*im->widget(), QStringLiteral("ion-mobility.png"));
 
   if (diaBox) diaBox->setChecked(true); else imPlot->setShowDiaWindows(true);
   pump(2000);
-  if (imDock->widget()) saveGrab(*imDock->widget(), QStringLiteral("dia-windows.png"));
+  saveGrab(*im->widget(), QStringLiteral("dia-windows.png"));
 }
 
 int main(int argc, char** argv)

@@ -61,8 +61,11 @@ OpenMS data structures and format readers
   feature, identification/hit, and FAIMS channel. The main window applies those
   transitions to panels, while guarded table synchronization prevents recursive
   activation; panels do not reach into one another.
-- Qt docks provide panel show/hide, reordering, and layout persistence without a
-  custom panel framework.
+- Panels are arranged by a row-stack layout the viewer owns: a vertical stack of
+  rows, each holding at most two panels, with draggable dividers. The model is a
+  plain value tree in `openms_viewer_core`; `openms_viewer_ui` renders it with
+  nested `QSplitter`s. Qt docks were rejected because they cannot express the
+  two-panels-per-row limit — see `docs/adr/0001-row-stack-layout-instead-of-qdockwidget.md`.
 - The C++ application does not embed a Python interpreter. Reproducible data
   transformation belongs in OpenMS command-line tools or external Python
   scripts; the viewer provides a thread-safe, searchable/saveable diagnostics

@@ -6,6 +6,7 @@
 #include "model/OswDocument.h"
 #include "model/ConsensusDocument.h"
 #include "model/SelectionController.h"
+#include "widgets/RowStackWidget.h"
 
 #include <QFutureWatcher>
 #include <QElapsedTimer>
@@ -20,7 +21,6 @@
 
 class QAction;
 class QCloseEvent;
-class QDockWidget;
 class QDragEnterEvent;
 class QDropEvent;
 class QDoubleSpinBox;
@@ -98,19 +98,20 @@ namespace OpenMSViewer
     void finishMzMLExport();
     void reloadLastFile();
     void cancelCurrentOperation();
-    void resetDockLayout();
+    void resetPanelLayout();
     void show3DSurface();
     void closeSurface3D();
 
   private:
     // Task-oriented panel arrangements. Overview is the general default
-    // (resetDockLayout); the others declutter to the panels a task needs and
+    // (resetPanelLayout); the others declutter to the panels a task needs and
     // stack them sensibly. Only panels with data are actually shown.
     enum class LayoutPreset { Overview, Identification, Imaging, Dia };
     void applyLayoutPreset(LayoutPreset preset);
-    // Canonical default arrangement: a plots row (TIC | spectrum) over a full-width
-    // tabbed row of tables/panels in the bottom area — no narrow right column.
-    void arrangeDocksDefault();
+    // Canonical default arrangement: peak map over TIC over spectrum, each a
+    // full-width row. Every other panel starts hidden and is opened on demand —
+    // with no tabs, an opinionated default is the only way 15 panels stay usable.
+    void applyDefaultLayout();
 
     void createActions();
     void createMenus();
@@ -142,15 +143,19 @@ namespace OpenMSViewer
     void navigateConsensusToRawSpectrum(std::size_t consensusIndex);
     void updateSpectrumControls();
     void setPeakMapControlsEnabled(bool enabled);
-    void configureDock(QDockWidget* dock);
-    // Re-dock a panel into a specific area (Left/Right make it a vertical column),
-    // reachable from the View → Dock panel menu and each panel's header menu — a
-    // reliable alternative to drag-docking, which the custom header / WSLg block.
-    void moveDock(QDockWidget* dock, Qt::DockWidgetArea area);
     [[nodiscard]] bool rtInMinutes() const;
-    void ensureFloatingDockVisible(QDockWidget* dock);
-    void setDockAvailable(QDockWidget* dock, bool available);
-    void initializeDockPreferences(bool hasSavedState);
+    // A panel is shown only when its data exists (available) and the user wants
+    // it (preference). Availability is the document's business, the preference
+    // is the user's; neither alone decides.
+    void setPanelAvailable(PanelHandle* panel, bool available);
+    void initializePanelPreferences(bool hasSavedState);
+    [[nodiscard]] QMap<QString, bool> defaultPanelPreferences() const;
+    [[nodiscard]] bool panelWanted(PanelHandle* panel) const;
+    // Show desiredLayout_ minus the panels whose data is absent. Everything that
+    // changes availability or preference routes through here.
+    void applyEffectiveLayout();
+    // Fold a user-made change to the shown layout back into desiredLayout_.
+    void captureDesiredLayout();
     void installPlotContextMenu(QWidget* widget, const QString& defaultName,
                                 std::function<void()> reset = {});
     void showOperationError(const QString& title, const QString& summary, const QString& details);
@@ -221,20 +226,22 @@ namespace OpenMSViewer
     TicWidget* tic_{nullptr};
     SpectrumWidget* spectrum_{nullptr};
     class ToastOverlay* toasts_{nullptr};
-    QDockWidget* ticDock_{nullptr};
-    QDockWidget* spectrumDock_{nullptr};
-    QDockWidget* featuresDock_{nullptr};
-    QDockWidget* identificationsDock_{nullptr};
-    QDockWidget* spectraDock_{nullptr};
-    QDockWidget* chromatogramsDock_{nullptr};
-    QDockWidget* dataLayersDock_{nullptr};
-    QDockWidget* faimsDock_{nullptr};
-    QDockWidget* ionMobilityDock_{nullptr};
-    QDockWidget* imagingDock_{nullptr};
-    QDockWidget* oswDock_{nullptr};
-    QDockWidget* consensusDock_{nullptr};
-    QDockWidget* metadataDock_{nullptr};
-    QDockWidget* logDock_{nullptr};
+    RowStackWidget* rowStack_{nullptr};
+    PanelHandle* peakMapHandle_{nullptr};
+    PanelHandle* ticHandle_{nullptr};
+    PanelHandle* spectrumHandle_{nullptr};
+    PanelHandle* featuresHandle_{nullptr};
+    PanelHandle* identificationsHandle_{nullptr};
+    PanelHandle* spectraHandle_{nullptr};
+    PanelHandle* chromatogramsHandle_{nullptr};
+    PanelHandle* dataLayersHandle_{nullptr};
+    PanelHandle* faimsHandle_{nullptr};
+    PanelHandle* ionMobilityHandle_{nullptr};
+    PanelHandle* imagingHandle_{nullptr};
+    PanelHandle* oswHandle_{nullptr};
+    PanelHandle* consensusHandle_{nullptr};
+    PanelHandle* metadataHandle_{nullptr};
+    PanelHandle* logHandle_{nullptr};
     QProgressBar* progress_{nullptr};
     QLabel* runContext_{nullptr};
     QLabel* selectionContext_{nullptr};
@@ -299,7 +306,13 @@ namespace OpenMSViewer
     QString lastPrimaryPath_;
     QString featureSavePath_;
     QUndoStack* featureUndoStack_{nullptr};
-    QMap<QString, bool> dockVisibilityPreference_;
+    QMap<QString, bool> panelVisibilityPreference_;
+    // The arrangement the user built, including panels whose data is not loaded
+    // right now. The row stack shows this filtered by availability; persisting
+    // the filtered view instead would forget a two-panel row on every launch
+    // that starts without its data.
+    LayoutModel desiredLayout_;
+    bool applyingLayout_{false};
     bool updatingSpectrumIndex_{false};
     bool hasOswData_{false};
     bool hasConsensusData_{false};

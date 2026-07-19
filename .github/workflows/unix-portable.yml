@@ -7,6 +7,9 @@ on:
       - .github/workflows/unix-portable.yml
       - cmake/DeployRuntimeDependencies.cmake
       - cmake/FixupMacBundle.cmake
+      - ci/portable/*-unix.sh
+      - ci/portable/*-linux.sh
+      - ci/portable/*-macos.sh
       # The packaged app compiles + smoke-runs here, so exercise it when the
       # portable runtime code or build config changes, not just the workflow.
       - src/**

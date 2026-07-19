@@ -6,6 +6,8 @@ on:
     paths:
       - .github/workflows/windows-portable.yml
       - cmake/DeployRuntimeDependencies.cmake
+      - ci/portable/*-windows.sh
+      - ci/portable/*-windows.ps1
       # The packaged app compiles + smoke-runs here, so exercise it when the
       # portable runtime code or build config changes, not just the workflow.
       - src/**

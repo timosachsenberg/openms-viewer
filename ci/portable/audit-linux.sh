@@ -60,9 +60,15 @@ while IFS= read -r binary; do
     if [[ "$line" == *"=>"* ]]; then
       soname=$(sed -E 's/^[[:space:]]*([^ ]+) =>.*/\1/' <<<"$line")
       path=$(sed -E 's/.*=> (.*) \(0x[0-9a-f]+\)$/\1/' <<<"$line")
-    else
+    elif [[ "$line" =~ \(0x[0-9a-f]+\)$ ]]; then
+      # The loader or vdso, listed as "name (0xADDR)" with no "=>".
       path=$(sed -E 's/^[[:space:]]*([^ ]+) \(0x[0-9a-f]+\)$/\1/' <<<"$line")
       soname=$(basename "$path")
+    else
+      # An ldd status line that is not a dependency edge, e.g. the
+      # "statically linked" printed for a library with no NEEDED entries
+      # (ICU data, libX11-xcb, ...). Nothing to resolve.
+      continue
     fi
     [[ -z "$path" || "$path" == linux-vdso.so* ]] && continue
 

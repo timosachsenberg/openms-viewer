@@ -18,7 +18,7 @@ $bin = Join-Path $env:VIEWER_STAGE "bin"
 $executable = Join-Path $bin "openms-viewer.exe"
 
 # openms_thermo_bridge.dll links nethost.dll, the .NET host shim that
-# locates hostfxr at run time. OpenMS does not install nethost.dll — it
+# locates hostfxr at run time. OpenMS does not install nethost.dll -- it
 # is a .NET SDK artifact from the host pack OpenMS found at configure
 # time (Microsoft.NETCore.App.Host.win-x64/<ver>/runtimes/win-x64/native)
 # and copied next to the bridge in its build tree. The core-only install
@@ -37,7 +37,7 @@ if (Test-Path $hostPackRoot) {
     Where-Object { Test-Path (Join-Path $_ "nethost.dll") } |
     Select-Object -First 1
 }
-if ($nethostDirectory) { Write-Host "nethost.dll host pack: $nethostDirectory" }
+if ($nethostDirectory) { Write-Output "nethost.dll host pack: $nethostDirectory" }
 else { throw "No .NET host pack with nethost.dll was found under $hostPackRoot" }
 
 $searchDirectories = @(

@@ -36,10 +36,24 @@ comment.
 | `audit-macos.sh` | Reject bundle dependencies outside the macOS baseline (macOS) |
 | `archive-unix.sh` | Create the portable ZIP and SHA-256 checksum |
 
-## Windows
+## Stages (Windows)
 
-Windows filesystem/deployment logic uses PowerShell (`*.ps1`, strict mode with
-terminating errors), invoked from `windows-portable.yml`.
+Invoked from `windows-portable.yml`. The cmake build stages are Bash (they run
+under the runner's Git Bash, `set -eo pipefail`); the filesystem/deployment and
+verification stages are PowerShell (`Set-StrictMode -Version Latest` and
+`$ErrorActionPreference = "Stop"` for terminating errors). Each script documents
+its required environment in a header comment.
+
+| Script | Stage |
+| --- | --- |
+| `configure-openms-windows.sh` | Configure OpenMS core (core only, `WITH_GUI=OFF`) |
+| `build-openms-windows.sh` | Build and install OpenMS core |
+| `build-viewer-windows.sh` | Configure, build, and install the viewer + Thermo smoke probe |
+| `deploy-windows.ps1` | Deploy the DLL closure, run windeployqt, copy the CRT/OpenMP runtimes |
+| `bundle-dotnet-windows.ps1` | Stage the app-local .NET 8 runtime and hostfxr |
+| `stage-data-windows.ps1` | Stage OpenMS data, managed bridge, licenses, provenance |
+| `verify-windows.ps1` | Fail-closed verification against a restricted PATH |
+| `archive-windows.ps1` | Create the portable ZIP and SHA-256 checksum |
 
 ## Running locally
 

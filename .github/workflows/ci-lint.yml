@@ -1,0 +1,72 @@
+name: Lint CI scripts
+
+# Syntax/lint gate for the extracted portable-packaging scripts and the
+# workflows that orchestrate them: workflow YAML (actionlint, which also
+# shellchecks inline run: blocks), the Bash stage scripts (shellcheck), the
+# Windows PowerShell stage scripts (PSScriptAnalyzer), and the CMake deployment
+# helpers (cmakelint). Fast and host-independent, so it runs on every PR.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/**
+      - ci/portable/**
+      - cmake/**
+      - .cmakelintrc
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/**
+      - ci/portable/**
+      - cmake/**
+      - .cmakelintrc
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint CI scripts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install linters
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends shellcheck
+          python3 -m pip install --user cmakelint
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          {
+            echo "$(go env GOPATH)/bin"
+            echo "$(python3 -m site --user-base)/bin"
+          } >> "$GITHUB_PATH"
+
+      - name: actionlint (workflow YAML + inline shell)
+        shell: bash
+        run: actionlint -color
+
+      - name: shellcheck (Bash stage scripts)
+        shell: bash
+        run: shellcheck ci/portable/*.sh
+
+      - name: PSScriptAnalyzer (PowerShell stage scripts)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $scripts = Get-ChildItem -Path ci/portable -Filter *.ps1 -File -ErrorAction SilentlyContinue
+          if (-not $scripts) {
+            Write-Output 'No PowerShell stage scripts to analyze yet.'
+            exit 0
+          }
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+          Invoke-ScriptAnalyzer -Path ci/portable -Recurse -Severity Warning, Error -EnableExit
+
+      - name: cmakelint (CMake deployment helpers)
+        shell: bash
+        run: cmakelint cmake/*.cmake

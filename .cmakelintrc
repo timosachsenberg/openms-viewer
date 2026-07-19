@@ -1,0 +1,6 @@
+# cmakelint configuration for the CI lint stage (see .github/workflows/ci-lint.yml).
+# Keeps substantive checks (unbalanced parens, command usage) but disables the
+# categories cmakelint reports as false positives on valid multi-line if()
+# conditions, and relaxes the line-length limit to a modern width.
+linelength=100
+filter=-whitespace/indent,-whitespace/extra,-readability/mixedcase

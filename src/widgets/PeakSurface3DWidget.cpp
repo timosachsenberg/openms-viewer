@@ -182,7 +182,11 @@ namespace OpenMSViewer
         heightAt[static_cast<std::size_t>(r) * cols + c] = h;
         const double rx = x * cosYaw - y * sinYaw;
         const double ry = x * sinYaw + y * cosYaw;
-        const double py = ry * sinPitch - h * cosPitch;
+        // Screen-up (Qt y grows downward, so this is negated): height lifts vertices
+        // up, and depth (ry) tilts the plane so the far edge sits higher. The depth
+        // term must be negative — with +ry the camera looks up from beneath the sheet
+        // and peaks appear as pits punched through the floor.
+        const double py = -ry * sinPitch - h * cosPitch;
         unit[static_cast<std::size_t>(r) * cols + c] = QPointF(rx, py);
         minX = std::min(minX, rx); maxX = std::max(maxX, rx);
         minY = std::min(minY, py); maxY = std::max(maxY, py);
@@ -235,14 +239,16 @@ namespace OpenMSViewer
                                 static_cast<int>(qGreen(base) * shade),
                                 static_cast<int>(qBlue(base) * shade));
         // Depth along the camera axis (bigger = farther). Must include height, or at
-        // high pitch (near top-down) tall and low overlapping quads sort wrongly.
+        // high pitch (near top-down) tall and low overlapping quads sort wrongly. The
+        // height term is subtracted to match the from-above camera: near top-down a
+        // tall peak is closest to the eye (smaller depth), so it draws last / on top.
         const double avgY = ((r + 0.5) / (rows - 1) - 0.5);
         const double avgX = ((c + 0.5) / (cols - 1) - 0.5);
         const double avgH = 0.25 * (heightAt[static_cast<std::size_t>(i00)]
                                     + heightAt[static_cast<std::size_t>(i01)]
                                     + heightAt[static_cast<std::size_t>(i10)]
                                     + heightAt[static_cast<std::size_t>(i11)]);
-        const double depth = (avgX * sinYaw + avgY * cosYaw) * cosPitch + avgH * sinPitch;
+        const double depth = (avgX * sinYaw + avgY * cosYaw) * cosPitch - avgH * sinPitch;
         quads.push_back({{i00, i01, i11, i10}, depth, color});
       }
     std::sort(quads.begin(), quads.end(),
@@ -265,7 +271,7 @@ namespace OpenMSViewer
     {
       const double rx = x * cosYaw - y * sinYaw;
       const double ry = x * sinYaw + y * cosYaw;
-      return QPointF(centerX + rx * scale, centerY + ry * sinPitch * scale);
+      return QPointF(centerX + rx * scale, centerY - ry * sinPitch * scale);
     };
     QPolygonF footprint;
     footprint << basePoint(-0.5, -0.5) << basePoint(0.5, -0.5)

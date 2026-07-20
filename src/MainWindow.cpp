@@ -638,7 +638,9 @@ namespace OpenMSViewer
     editFeaturesModeAction_->setToolTip(
       tr("Edit features — drag a feature or click empty space (E)"));
 
-    zoomBackAction_ = new QAction(style()->standardIcon(QStyle::SP_ArrowBack), tr("Previous view"), this);
+    zoomBackAction_ = new QAction(
+      QIcon(QStringLiteral(":/icons/material-navigate-before.svg")), tr("Previous view"), this);
+    zoomBackAction_->setToolTip(tr("Previous view (Alt+Left)"));
     zoomBackAction_->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Left));
     zoomBackAction_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     zoomBackAction_->setEnabled(false);
@@ -1038,6 +1040,12 @@ namespace OpenMSViewer
     fileBar->addAction(reloadAction_);
     // ---- Peak-map options live in the peak-map panel's control bar ----
     peakMapControlBar_->addAction(zoomBackAction_);
+    if (auto* backButton = qobject_cast<QToolButton*>(
+          peakMapControlBar_->widgetForAction(zoomBackAction_)))
+    {
+      backButton->setObjectName(QStringLiteral("peakMapZoomBack"));
+      backButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    }
     peakMapControlBar_->addAction(resetViewAction_);
     if (auto* resetButton = qobject_cast<QToolButton*>(
           peakMapControlBar_->widgetForAction(resetViewAction_)))
@@ -1123,6 +1131,7 @@ namespace OpenMSViewer
     colorMap->setObjectName(QStringLiteral("peakMapColorMap"));
     colorMap->addItems({tr("Viridis"), tr("Plasma"), tr("Inferno"), tr("Magma"),
                         tr("Jet"), tr("Hot"), tr("Grayscale")});
+    colorMap->setCurrentIndex(1);   // Plasma default (set before connecting: no signal emitted)
     colorMap->setAccessibleName(tr("Peak-map color map"));
     addDisplayControl(tr("Color map"), colorMap);
     connect(colorMap, qOverload<int>(&QComboBox::currentIndexChanged),

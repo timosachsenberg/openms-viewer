@@ -978,7 +978,23 @@ namespace OpenMSViewer
 
   void SpectrumWidget::mousePressEvent(QMouseEvent* event)
   {
-    if (event->button() != Qt::LeftButton || !plotRect().contains(event->pos())) return;
+    if (!plotRect().contains(event->pos())) return;
+    // Pan: middle-drag, or Alt/Ctrl+left-drag — same triggers as the peak map.
+    const bool panTrigger =
+      event->button() == Qt::MiddleButton
+      || (event->button() == Qt::LeftButton
+          && (event->modifiers().testFlag(Qt::AltModifier)
+              || event->modifiers().testFlag(Qt::ControlModifier)));
+    if (panTrigger)
+    {
+      panning_ = true;
+      panButton_ = event->button();
+      panLast_ = event->pos();
+      setCursor(Qt::ClosedHandCursor);
+      event->accept();
+      return;
+    }
+    if (event->button() != Qt::LeftButton) return;
     if (measurementMode_)
     {
       const auto peak = peakAt(event->position());
@@ -1011,6 +1027,33 @@ namespace OpenMSViewer
 
   void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
   {
+    if (panning_)
+    {
+      const QRect area = plotRect();
+      if (area.width() > 0)
+      {
+        const auto full = fullMzRange();
+        const double minimum = mzView_ ? mzView_->first : full.first;
+        const double maximum = mzView_ ? mzView_->second : full.second;
+        const double span = maximum - minimum;
+        const int dxPixels = event->pos().x() - panLast_.x();
+        // Drag right → view slides left so the spectrum follows the cursor.
+        double delta = -dxPixels / static_cast<double>(area.width()) * span;
+        // Keep the fixed-width window inside the data range (no independent-bound
+        // clamping shrink from applyMzView at the edges).
+        delta = std::clamp(delta, full.first - minimum, full.second - maximum);
+        if (delta != 0.0) applyMzView(minimum + delta, maximum + delta);
+      }
+      panLast_ = event->pos();
+      return;
+    }
+    // Offer the grab affordance while the pan modifier is held over the plot.
+    if (!measurementMode_ && !labelMode_)
+    {
+      const bool panReady = event->modifiers().testFlag(Qt::AltModifier)
+        || event->modifiers().testFlag(Qt::ControlModifier);
+      setCursor(panReady ? Qt::OpenHandCursor : Qt::ArrowCursor);
+    }
     if (draggingZoom_) dragCurrent_ = event->pos();
     const auto peak = peakAt(event->position());
     const bool hoverChanged = peak != hoveredPeak_;
@@ -1059,6 +1102,13 @@ namespace OpenMSViewer
 
   void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
   {
+    if (panning_ && event->button() == panButton_)
+    {
+      panning_ = false;
+      panButton_ = Qt::NoButton;
+      setCursor((measurementMode_ || labelMode_) ? Qt::CrossCursor : Qt::ArrowCursor);
+      return;
+    }
     if (!draggingZoom_ || event->button() != Qt::LeftButton) return;
     draggingZoom_ = false;
     dragCurrent_ = event->pos();
@@ -1135,6 +1185,12 @@ namespace OpenMSViewer
     {
       measurementStart_.reset();
       draggingZoom_ = false;
+      if (panning_)
+      {
+        panning_ = false;
+        panButton_ = Qt::NoButton;
+        setCursor((measurementMode_ || labelMode_) ? Qt::CrossCursor : Qt::ArrowCursor);
+      }
       update();
       event->accept();
       return;

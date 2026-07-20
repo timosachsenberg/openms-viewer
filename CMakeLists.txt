@@ -38,6 +38,46 @@ endif()
 # Qt is needed in both modes; find_package is idempotent if the parent already ran it.
 find_package(Qt6 6.4 REQUIRED COMPONENTS Concurrent Gui Widgets Svg)
 
+# The 3-D peak surface is GPU-rendered through QRhiWidget on Qt 6.7+. That needs the
+# qsb shader compiler (Qt6::ShaderTools) and the (semi-private) QRhi headers. The QRhi
+# symbols are exported from Qt6::Gui; only the private include dirs are extra. We add
+# them directly rather than via Qt6::GuiPrivate, whose CMake config some Qt packages
+# (e.g. aqtinstall) omit. On older Qt the widget compiles its CPU QPainter fallback.
+set(OPENMS_VIEWER_HAVE_RHI OFF)
+set(OPENMS_VIEWER_QT_PRIVATE_INCLUDES "")
+if(Qt6_VERSION VERSION_GREATER_EQUAL 6.7)
+  find_package(Qt6 REQUIRED COMPONENTS ShaderTools)
+  set(OPENMS_VIEWER_HAVE_RHI ON)
+  # Qt 6.7's Gui interface links the GLVND OpenGL targets. FindOpenGL resolves the
+  # libraries (OPENGL_*_LIBRARY) but does not stamp IMPORTED_LOCATION on the targets
+  # in this environment, so generation fails with "IMPORTED_LOCATION not set". Stamp
+  # it ourselves from the resolved paths.
+  function(_openms_viewer_fix_gl_target target lib)
+    if(TARGET ${target} AND lib AND EXISTS "${lib}")
+      set_target_properties(${target} PROPERTIES
+        IMPORTED_LOCATION "${lib}"
+        IMPORTED_LOCATION_RELWITHDEBINFO "${lib}"
+        IMPORTED_LOCATION_RELEASE "${lib}"
+        IMPORTED_LOCATION_DEBUG "${lib}")
+      set_property(TARGET ${target} APPEND PROPERTY
+        IMPORTED_CONFIGURATIONS RELWITHDEBINFO RELEASE DEBUG)
+    endif()
+  endfunction()
+  _openms_viewer_fix_gl_target(OpenGL::OpenGL "${OPENGL_opengl_LIBRARY}")
+  _openms_viewer_fix_gl_target(OpenGL::GLX "${OPENGL_glx_LIBRARY}")
+  _openms_viewer_fix_gl_target(OpenGL::GL "${OPENGL_gl_LIBRARY}")
+  get_filename_component(OPENMS_VIEWER_QT_PREFIX "${Qt6_DIR}/../../.." ABSOLUTE)
+  set(OPENMS_VIEWER_QT_PRIVATE_INCLUDES
+    "${OPENMS_VIEWER_QT_PREFIX}/include/QtGui/${Qt6_VERSION}"
+    "${OPENMS_VIEWER_QT_PREFIX}/include/QtGui/${Qt6_VERSION}/QtGui")
+  if(NOT EXISTS "${OPENMS_VIEWER_QT_PRIVATE_INCLUDES}/QtGui/rhi/qrhi.h"
+     AND NOT EXISTS "${OPENMS_VIEWER_QT_PREFIX}/include/QtGui/${Qt6_VERSION}/QtGui/rhi/qrhi.h")
+    message(FATAL_ERROR
+      "QRhi private headers not found under ${OPENMS_VIEWER_QT_PREFIX}; cannot build the "
+      "GPU 3-D surface. Install the Qt private headers or use Qt < 6.7 (CPU fallback).")
+  endif()
+endif()
+
 add_library(openms_viewer_core STATIC
   src/export/MzMLExporter.cpp
   src/export/MzMLExporter.h
@@ -183,8 +223,27 @@ target_link_libraries(openms_viewer_ui
     Qt6::Svg
 )
 
+# GPU 3-D surface: link the QRhi (private) headers and compile the surface shaders
+# to .qsb, embedded under :/shaders. Gated on Qt 6.7+; the fallback path needs neither.
+if(OPENMS_VIEWER_HAVE_RHI)
+  target_include_directories(openms_viewer_ui PRIVATE ${OPENMS_VIEWER_QT_PRIVATE_INCLUDES})
+  qt6_add_shaders(openms_viewer_ui "openms_viewer_surface3d_shaders"
+    PREFIX "/shaders"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/shaders"
+    FILES
+      src/widgets/shaders/surface3d.vert
+      src/widgets/shaders/surface3d.frag
+  )
+endif()
+
 add_executable(openms-viewer src/main.cpp)
 target_link_libraries(openms-viewer PRIVATE openms_viewer_ui)
+
+# Headless verification tool for the GPU 3-D surface (QRhiWidget path only).
+if(OPENMS_VIEWER_HAVE_RHI)
+  add_executable(openms-viewer-surface3d-shot tools/screenshots/surface3d_shot.cpp)
+  target_link_libraries(openms-viewer-surface3d-shot PRIVATE openms_viewer_ui)
+endif()
 
 # Portable packages carry their own version-locked OpenMS libOpenMS + share tree.
 # In that mode the app forces its bundled data, fails closed if the bundle is

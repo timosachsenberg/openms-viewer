@@ -1684,7 +1684,7 @@ namespace OpenMSViewer
       surface3D_->setRtInMinutes(rtInMinutes());
       layout->addWidget(surface3D_);
     }
-    surface3D_->setView(experiment, view, peakMap_->colorMap());
+    surface3D_->setView(experiment, view, peakMap_->colorMap(), 1, peakMap_->intensityScale());
     surface3DDialog_->show();
     surface3DDialog_->raise();
     surface3DDialog_->activateWindow();

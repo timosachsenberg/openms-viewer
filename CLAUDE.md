@@ -105,9 +105,19 @@ than blocking the GUI thread.
 ### Custom plot widgets
 
 Plots are custom `QWidget`/`QPainter` canvases (no WebEngine, no external
-plotting library). This preserves a direct upgrade path to `QOpenGLWidget`
-without changing document or panel APIs — do not couple plot widgets to whether
-spectra are memory- or disk-backed.
+plotting library). This preserves a direct upgrade path to GPU rendering without
+changing document or panel APIs — do not couple plot widgets to whether spectra
+are memory- or disk-backed.
+
+The 3-D peak surface (`PeakSurface3DWidget`) already takes that path: on Qt 6.7+
+it renders through `QRhiWidget` (QRhi picks Vulkan/Metal/D3D/OpenGL at runtime;
+shaders live in `src/widgets/shaders/*.{vert,frag}`, compiled to `.qsb` by
+`qt6_add_shaders` and embedded under `:/shaders`). On older Qt it compiles a CPU
+`QPainter` painter's-algorithm fallback — same public API either way, gated by
+`OPENMS_VIEWER_SURFACE3D_RHI` (see `CMakeLists.txt` `OPENMS_VIEWER_HAVE_RHI`).
+Both surface backends and the 2-D peak map share
+`PeakMapRasterizer::heightGrid` for the normalized intensity grid, so heights and
+colours track the 2-D map (readable on high-dynamic-range data).
 
 ## Constraints
 

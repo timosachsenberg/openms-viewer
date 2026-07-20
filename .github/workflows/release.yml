@@ -1,0 +1,92 @@
+name: Release
+
+# Publishes the portable packages for a v* tag.
+#
+# The builds are not duplicated here: this calls unix-portable.yml and
+# windows-portable.yml, the same workflows that already run on pull requests
+# touching src/ or the packaging scripts. Whatever is published has therefore
+# been exercised continuously, rather than coming from a release-only code path
+# that nobody runs until release day.
+#
+# workflow_dispatch builds everything without publishing, so the pipeline can
+# be rehearsed before a tag is cut.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  unix:
+    uses: ./.github/workflows/unix-portable.yml
+
+  windows:
+    uses: ./.github/workflows/windows-portable.yml
+
+  publish:
+    name: Publish draft release
+    needs: [unix, windows]
+    runs-on: ubuntu-latest
+    # Only a tag publishes. A manual run still builds every package above.
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          # Each matrix job uploads into its own artifact directory, so flatten
+          # them into one folder for the release page.
+          find artifacts -type f -name '*.zip' -exec cp {} release/ \;
+          # The per-package .sha256 sidecars are merged into a single checksum
+          # file and then dropped, so the release carries one list.
+          find artifacts -type f -name '*.sha256' -exec cat {} + > release/SHA256SUMS.txt
+          if [ ! -s release/SHA256SUMS.txt ]; then
+            echo "ERROR: no checksums were collected." >&2
+            exit 1
+          fi
+          ls -la release
+          cat release/SHA256SUMS.txt
+
+      - name: Verify every package carries its runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A packaging mistake that ships the bare executable would otherwise
+          # reach the release page unnoticed: the staged tree each portable
+          # workflow verifies is not the same object as the published archive.
+          status=0
+          for zip in release/*.zip; do
+            listing=$(unzip -l "$zip")
+            case "$listing" in
+              *Qt6Core*) ;;
+              *)
+                echo "ERROR: $(basename "$zip") contains no Qt runtime." >&2
+                status=1
+                ;;
+            esac
+          done
+          exit "$status"
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          draft: true
+          fail_on_unmatched_files: true

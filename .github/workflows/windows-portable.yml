@@ -2,6 +2,9 @@ name: Windows portable package
 
 on:
   workflow_dispatch:
+  # Reusable so release.yml publishes artifacts from exactly this pipeline
+  # rather than a release-only copy of it.
+  workflow_call:
   pull_request:
     paths:
       - .github/workflows/windows-portable.yml

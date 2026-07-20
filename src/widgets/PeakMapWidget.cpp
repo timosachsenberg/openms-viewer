@@ -182,6 +182,8 @@ namespace OpenMSViewer
 
   bool PeakMapWidget::axesSwapped() const noexcept { return axesSwapped_; }
   PeakMapColorMap PeakMapWidget::colorMap() const noexcept { return colorMap_; }
+
+  PeakMapIntensityScale PeakMapWidget::intensityScale() const noexcept { return intensityScale_; }
   int PeakMapWidget::rasterWidth() const noexcept { return rasterWidth_; }
   const PlotRange& PeakMapWidget::viewRange() const noexcept { return view_; }
   bool PeakMapWidget::canZoomBack() const noexcept { return !history_.empty(); }
@@ -1345,26 +1347,21 @@ namespace OpenMSViewer
 
   void PeakMapWidget::updateInteractionCursor()
   {
-    const auto useIcon = [this](const QString& path, const QPoint& hotSpot,
-                                Qt::CursorShape fallback)
-    {
-      const QPixmap pixmap = QIcon(path).pixmap(QSize(32, 32));
-      if (pixmap.isNull()) setCursor(fallback);
-      else setCursor(QCursor(pixmap, hotSpot.x(), hotSpot.y()));
-    };
+    // Native cursor shapes render crisply at every DPI with correct hotspots and
+    // match OS conventions; the toolbar SVGs stay on the toolbar buttons only.
     switch (interactionMode_)
     {
       case PeakMapInteractionMode::Zoom:
-        useIcon(QStringLiteral(":/icons/interaction-zoom.svg"), {4, 4}, Qt::CrossCursor);
+        setCursor(Qt::CrossCursor);
         break;
       case PeakMapInteractionMode::Pan:
-        useIcon(QStringLiteral(":/icons/interaction-pan.svg"), {16, 16}, Qt::OpenHandCursor);
+        setCursor(Qt::OpenHandCursor);
         break;
       case PeakMapInteractionMode::Measure:
-        useIcon(QStringLiteral(":/icons/interaction-measure.svg"), {4, 4}, Qt::CrossCursor);
+        setCursor(Qt::CrossCursor);
         break;
       case PeakMapInteractionMode::Edit:
-        useIcon(QStringLiteral(":/icons/interaction-edit.svg"), {5, 26}, Qt::PointingHandCursor);
+        setCursor(Qt::PointingHandCursor);
         break;
     }
   }

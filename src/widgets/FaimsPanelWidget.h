@@ -56,7 +56,7 @@ namespace OpenMSViewer
     PlotRange bounds_;
     PlotRange view_;
     std::vector<QImage> images_;
-    PeakMapColorMap colorMap_{PeakMapColorMap::Viridis};
+    PeakMapColorMap colorMap_{PeakMapColorMap::Plasma};
     int selectedChannel_{-1};
     std::uint64_t desiredGeneration_{0};
     std::uint64_t activeGeneration_{0};

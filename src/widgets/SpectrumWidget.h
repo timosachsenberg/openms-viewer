@@ -118,5 +118,12 @@ namespace OpenMSViewer
     bool draggingZoom_{false};
     QPoint dragStart_;
     QPoint dragCurrent_;
+    // Pan (grab-and-drag along m/z): started by Alt/Ctrl+left-drag or middle-drag,
+    // mirroring the peak map. panButton_ records which button began the pan so the
+    // matching release ends it. panLast_ is the previous move point for incremental
+    // shifting without accumulating rounding drift.
+    bool panning_{false};
+    Qt::MouseButton panButton_{Qt::NoButton};
+    QPoint panLast_;
   };
 }

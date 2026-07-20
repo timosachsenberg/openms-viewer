@@ -195,7 +195,7 @@ namespace OpenMSViewer
         case BasePeak: return QStringLiteral("BPI");
         case MzRange: return QStringLiteral("m/z range");
         case PrecursorMz: return QStringLiteral("Prec m/z");
-        case Charge: return QStringLiteral("Z");
+        case Charge: return QStringLiteral("z");
         case Rank: return QStringLiteral("Rank");
         case Sequence: return QStringLiteral("Sequence");
         case Score: return QStringLiteral("Score");

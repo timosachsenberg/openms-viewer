@@ -67,6 +67,7 @@ namespace OpenMSViewer
 
     [[nodiscard]] bool axesSwapped() const noexcept;
     [[nodiscard]] PeakMapColorMap colorMap() const noexcept;
+    [[nodiscard]] PeakMapIntensityScale intensityScale() const noexcept;
     [[nodiscard]] int rasterWidth() const noexcept;
     [[nodiscard]] const PlotRange& viewRange() const noexcept;
     [[nodiscard]] bool canZoomBack() const noexcept;
@@ -221,7 +222,7 @@ namespace OpenMSViewer
     PlotRange dragStartRange_;
     std::vector<PlotRange> history_;
     QImage minimap_;
-    PeakMapColorMap colorMap_{PeakMapColorMap::Viridis};
+    PeakMapColorMap colorMap_{PeakMapColorMap::Plasma};
     PeakMapIntensityScale intensityScale_{PeakMapIntensityScale::Equalized};
     int rasterWidth_{DefaultRasterWidth};
     PeakMapInteractionMode interactionMode_{PeakMapInteractionMode::Zoom};

@@ -90,7 +90,7 @@ namespace OpenMSViewer
     IonMobilityRange bounds_;
     IonMobilityRange view_;
     IonMobilityRaster raster_;
-    PeakMapColorMap colorMap_{PeakMapColorMap::Viridis};
+    PeakMapColorMap colorMap_{PeakMapColorMap::Plasma};
     bool showMobilogram_{true};
     bool smoothMobilogram_{false};
     std::vector<DiaWindow> diaWindows_;  // distinct MS2 isolation windows (m/z × IM)

@@ -45,21 +45,17 @@ namespace OpenMSViewer
       }
     }
 
-    // Shared shading tail: adaptive spread + intensity mapping + colormap.
-    QImage shadeGrid(std::vector<float>& values, std::size_t rtBins, std::size_t mzBins,
-                     QSize size, bool axesSwapped, PeakMapColorMap colorMap,
-                     PeakMapIntensityScale intensityScale)
+    // Adaptive spread + intensity mapping, producing a normalized [0,1] grid in the
+    // native values[mzIndex * rtBins + rtIndex] layout. Mutates `values` (dynspread
+    // dilation). Shared by the 2-D shader and the 3-D surface so both read identical
+    // structure from the same data. Empty cells stay exactly 0.
+    std::vector<float> normalizeGrid(std::vector<float>& values, std::size_t rtBins,
+                                     std::size_t mzBins, PeakMapIntensityScale intensityScale)
     {
+      std::vector<float> normalized(values.size(), 0.0F);
       float maximum = 0.0F;
-      for (const float value : values)
-      {
-        maximum = std::max(maximum, value);
-      }
-
-      QImage image(size, QImage::Format_RGB32);
-      // Background is the colormap floor so "no data" blends into "lowest data".
-      image.fill(RasterShading::sample(colorMap, 0.0));
-      if (maximum <= 0.0F) return image;
+      for (const float value : values) maximum = std::max(maximum, value);
+      if (maximum <= 0.0F) return normalized;
 
       // Histogram equalization (datashader eq_hist): build the CDF from the
       // ORIGINAL grid so a value's colour depends only on the data distribution,
@@ -68,37 +64,55 @@ namespace OpenMSViewer
       if (intensityScale == PeakMapIntensityScale::Equalized)
         equalization = RasterShading::buildEqualization(values);
 
-      // Datashader-style dynspread for display only: choose a radius from local
-      // neighbor density, then grow through the default circular footprint. Max
-      // compositing reuses original values, so the CDF above still applies.
+      // Datashader-style dynspread: choose a radius from local neighbor density, then
+      // grow through the default circular footprint. Max compositing reuses original
+      // values, so the CDF above still applies.
       const int spreadRadius = RasterShading::dynspreadRadius(values, mzBins, rtBins);
       RasterShading::dilateMaxCircular(values, mzBins, rtBins, spreadRadius);
 
       const double logMaximum = std::log1p(static_cast<double>(maximum));
+      for (std::size_t i = 0; i < values.size(); ++i)
+      {
+        const float intensity = values[i];
+        if (!(intensity > 0.0F)) continue;   // leaves empty / non-finite cells at 0
+        double value = static_cast<double>(intensity) / maximum;
+        switch (intensityScale)
+        {
+          case PeakMapIntensityScale::Equalized:
+            value = equalization.rank(intensity);
+            break;
+          case PeakMapIntensityScale::Logarithmic:
+            value = std::pow(std::log1p(static_cast<double>(intensity)) / logMaximum, 0.72);
+            break;
+          case PeakMapIntensityScale::SquareRoot:
+            value = std::sqrt(value);
+            break;
+          case PeakMapIntensityScale::Linear:
+            break;
+        }
+        normalized[i] = static_cast<float>(std::clamp(value, 0.0, 1.0));
+      }
+      return normalized;
+    }
+
+    // Shared shading tail: normalize, then map to colours.
+    QImage shadeGrid(std::vector<float>& values, std::size_t rtBins, std::size_t mzBins,
+                     QSize size, bool axesSwapped, PeakMapColorMap colorMap,
+                     PeakMapIntensityScale intensityScale)
+    {
+      QImage image(size, QImage::Format_RGB32);
+      // Background is the colormap floor so "no data" blends into "lowest data".
+      image.fill(RasterShading::sample(colorMap, 0.0));
+
+      const std::vector<float> normalized = normalizeGrid(values, rtBins, mzBins, intensityScale);
       for (std::size_t mzIndex = 0; mzIndex < mzBins; ++mzIndex)
         for (std::size_t rtIndex = 0; rtIndex < rtBins; ++rtIndex)
         {
-          const float intensity = values[mzIndex * rtBins + rtIndex];
-          if (!(intensity > 0.0F)) continue;   // skips empty and non-finite cells
-          double normalized = static_cast<double>(intensity) / maximum;
-          switch (intensityScale)
-          {
-            case PeakMapIntensityScale::Equalized:
-              normalized = equalization.rank(intensity);
-              break;
-            case PeakMapIntensityScale::Logarithmic:
-              normalized = std::pow(std::log1p(static_cast<double>(intensity)) / logMaximum, 0.72);
-              break;
-            case PeakMapIntensityScale::SquareRoot:
-              normalized = std::sqrt(normalized);
-              break;
-            case PeakMapIntensityScale::Linear:
-              break;
-          }
+          const float value = normalized[mzIndex * rtBins + rtIndex];
+          if (!(value > 0.0F)) continue;
           // Keep any occupied cell at least one LUT step above the floor so a lone
           // faint peak never disappears into the colormap-floor background.
-          normalized = std::max(normalized, 1.0 / 255.0);
-          const QRgb color = RasterShading::sample(colorMap, normalized);
+          const QRgb color = RasterShading::sample(colorMap, std::max<double>(value, 1.0 / 255.0));
           const int x = axesSwapped ? static_cast<int>(mzIndex) : static_cast<int>(rtIndex);
           const int y = axesSwapped
                           ? size.height() - 1 - static_cast<int>(rtIndex)
@@ -143,5 +157,28 @@ namespace OpenMSViewer
   QRgb PeakMapRasterizer::color(double normalized, PeakMapColorMap colorMap)
   {
     return RasterShading::sample(colorMap, normalized);
+  }
+
+  std::vector<float> PeakMapRasterizer::heightGrid(const OpenMS::MSExperiment& experiment,
+                                                   const PlotRange& range,
+                                                   std::size_t rtBins, std::size_t mzBins,
+                                                   unsigned int msLevel,
+                                                   PeakMapIntensityScale intensityScale)
+  {
+    std::vector<float> values(rtBins * mzBins, 0.0F);
+    if (!range.isValid() || rtBins == 0 || mzBins == 0) return values;
+
+    // Same switch as render(): exact per-peak points when zoomed in, fast native
+    // RT/m-z aggregation otherwise.
+    const bool exactPoints = range.rtSpan() < kDeepZoomRtThreshold
+                          && range.mzSpan() < kDeepZoomMzThreshold;
+    if (exactPoints)
+      splatPeaks(experiment, range, rtBins, mzBins, msLevel, values);
+    else
+      experiment.rasterizeRTMZ(values.data(), rtBins, mzBins,
+                               range.rtMin, range.rtMax, range.mzMin, range.mzMax,
+                               msLevel, OpenMS::MSExperiment::RasterAggregation::SUM);
+
+    return normalizeGrid(values, rtBins, mzBins, intensityScale);
   }
 }

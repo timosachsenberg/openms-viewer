@@ -858,11 +858,18 @@ namespace OpenMSViewer
     }
     else if (dragMode_ == DragMode::Measure)
     {
+      // Endpoints snap to the nearest peak when zoomed in (issue #14); pixelFor()
+      // maps the (possibly snapped) data point back to a pixel so the drawn line and
+      // the ΔRT/Δm/z readout share exactly the same endpoints.
+      const QPointF startData = measureEndpoint(dragStart_);
+      const QPointF endData = measureEndpoint(dragCurrent_);
+      const QPointF start = pixelFor(startData.x(), startData.y());
+      const QPointF end = pixelFor(endData.x(), endData.y());
       painter.setPen(QPen(QColor(255, 215, 70), 2));
-      painter.drawLine(dragStart_, dragCurrent_);
+      painter.drawLine(start, end);
       painter.setBrush(QColor(255, 215, 70));
-      painter.drawEllipse(dragStart_, 3, 3);
-      painter.drawEllipse(dragCurrent_, 3, 3);
+      painter.drawEllipse(start, 3, 3);
+      painter.drawEllipse(end, 3, 3);
     }
 
     // Keep interaction guidance/readouts inside the peak-map canvas but away
@@ -1265,8 +1272,8 @@ namespace OpenMSViewer
     QString hint;
     if (dragMode_ == DragMode::Measure)
     {
-      const QPointF start = dataAt(dragStart_);
-      const QPointF end = dataAt(dragCurrent_);
+      const QPointF start = measureEndpoint(dragStart_);
+      const QPointF end = measureEndpoint(dragCurrent_);
       hint = tr("ΔRT %1 %2 · Δm/z %3")
                .arg(RtUnit::format(std::abs(end.x() - start.x()), rtInMinutes_))
                .arg(RtUnit::unit(rtInMinutes_))
@@ -1395,9 +1402,9 @@ namespace OpenMSViewer
     return best;
   }
 
-  double PeakMapWidget::nearestIntensity(double rt, double mz) const
+  std::optional<PeakMapWidget::NearestPeak> PeakMapWidget::nearestPeak(double rt, double mz) const
   {
-    if (!experiment_ || experiment_->empty()) return -1.0;
+    if (!experiment_ || experiment_->empty()) return std::nullopt;
     const auto& spectra = experiment_->getSpectra();
     auto center = std::lower_bound(spectra.cbegin(), spectra.cend(), rt,
       [](const OpenMS::MSSpectrum& spectrum, double value) { return spectrum.getRT() < value; });
@@ -1419,7 +1426,7 @@ namespace OpenMSViewer
       }
       if (nearest && offset > 4) break;
     }
-    if (!nearest || nearest->empty()) return -1.0;
+    if (!nearest || nearest->empty()) return std::nullopt;
     auto peak = std::lower_bound(nearest->cbegin(), nearest->cend(), mz,
       [](const OpenMS::Peak1D& candidate, double value) { return candidate.getMZ() < value; });
     if (peak == nearest->cend()) --peak;
@@ -1428,8 +1435,38 @@ namespace OpenMSViewer
       const auto previous = peak - 1;
       if (std::abs(previous->getMZ() - mz) < std::abs(peak->getMZ() - mz)) peak = previous;
     }
+    return NearestPeak{nearest->getRT(), peak->getMZ(), peak->getIntensity()};
+  }
+
+  double PeakMapWidget::nearestIntensity(double rt, double mz) const
+  {
+    const auto peak = nearestPeak(rt, mz);
+    if (!peak) return -1.0;
     const double tolerance = view_.mzSpan() / std::max(1, plotRect().width()) * 5.0;
-    return std::abs(peak->getMZ() - mz) <= tolerance ? peak->getIntensity() : -1.0;
+    return std::abs(peak->mz - mz) <= tolerance ? peak->intensity : -1.0;
+  }
+
+  std::optional<QPointF> PeakMapWidget::snapToPeak(double rt, double mz) const
+  {
+    if (view_.mzSpan() >= kSnapMaxMzSpan) return std::nullopt;
+    const auto peak = nearestPeak(rt, mz);
+    if (!peak) return std::nullopt;
+    // Accept the snap only when the peak sits within a small pixel radius of the
+    // cursor in both dimensions — this rejects peaks in a distant scan (RT) or an
+    // empty m/z neighbourhood, so releasing over blank canvas leaves the endpoint free.
+    const QPointF cursorPx = pixelFor(rt, mz);
+    const QPointF peakPx = pixelFor(peak->rt, peak->mz);
+    const double dx = peakPx.x() - cursorPx.x();
+    const double dy = peakPx.y() - cursorPx.y();
+    if (dx * dx + dy * dy > kSnapPixelRadius * kSnapPixelRadius) return std::nullopt;
+    return QPointF(peak->rt, peak->mz);
+  }
+
+  QPointF PeakMapWidget::measureEndpoint(const QPoint& pixel) const
+  {
+    const QPointF data = dataAt(pixel);
+    if (const auto snapped = snapToPeak(data.x(), data.y())) return *snapped;
+    return data;
   }
 
   void PeakMapWidget::resizeEvent(QResizeEvent* event)

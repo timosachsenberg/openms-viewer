@@ -168,6 +168,27 @@ namespace OpenMSViewer
     [[nodiscard]] std::optional<std::size_t> nearestPrecursor(const QPointF& position) const;
     [[nodiscard]] double nearestIntensity(double rt, double mz) const;
 
+    // The peak nearest to a data-space (rt, mz) point: the m/z-closest peak of the
+    // MS1 spectrum nearest in RT. No tolerance is applied here — callers decide what
+    // counts as "close enough". rt is the hosting spectrum's RT (quantized to scans).
+    struct NearestPeak { double rt; double mz; double intensity; };
+    [[nodiscard]] std::optional<NearestPeak> nearestPeak(double rt, double mz) const;
+    // Snap a measure endpoint to the nearest on-screen peak. Returns a data-space
+    // (rt, mz) point when a peak lies within kSnapPixelRadius of the cursor and the
+    // view is zoomed in past kSnapMaxMzSpan; otherwise std::nullopt (no snap).
+    [[nodiscard]] std::optional<QPointF> snapToPeak(double rt, double mz) const;
+    // Data-space endpoint used to draw and measure: the snapped peak when snapToPeak
+    // succeeds, else the raw cursor position. Shared by the paint and readout paths so
+    // the drawn line and the ΔRT/Δm/z hint always agree.
+    [[nodiscard]] QPointF measureEndpoint(const QPoint& pixel) const;
+
+    // Snapping is only meaningful when peaks are individually resolvable on screen;
+    // when zoomed out a pixel spans many peaks, so snapping would jump the endpoint
+    // unpredictably (see issue #14). Gate on the visible m/z span, and require the
+    // peak to fall within a small pixel radius of the cursor.
+    static constexpr double kSnapMaxMzSpan = 10.0;   // Da
+    static constexpr double kSnapPixelRadius = 8.0;  // px
+
     std::shared_ptr<const OpenMS::MSExperiment> experiment_;
     PlotRange dataBounds_;
     PlotRange view_;

@@ -29,6 +29,7 @@ int runExportWorkflowTests(int argc, char** argv);
 int runImagingWorkflowTests(int argc, char** argv);
 int runImagingMaldiTests(int argc, char** argv);
 int runSpectrumInteractionTests(int argc, char** argv);
+int runSelectionControllerTests(int argc, char** argv);
 int runLogWidgetTests(int argc, char** argv);
 int runUxWorkflowTests(int argc, char** argv);
 int runFeatureVisualizationTests(int argc, char** argv);
@@ -67,6 +68,7 @@ int main(int argc, char** argv)
   status |= runImagingWorkflowTests(argc, argv);
   status |= runImagingMaldiTests(argc, argv);
   status |= runSpectrumInteractionTests(argc, argv);
+  status |= runSelectionControllerTests(argc, argv);
   status |= runLogWidgetTests(argc, argv);
   status |= runUxWorkflowTests(argc, argv);
   status |= runFeatureVisualizationTests(argc, argv);

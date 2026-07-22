@@ -340,6 +340,23 @@ namespace OpenMSViewer
             this, &MainWindow::applyFeatureSelection);
     connect(&selection_, &SelectionController::identificationChanged,
             this, &MainWindow::applyIdentificationSelection);
+    // The pinned m/z is cross-panel: the controller fans it to both plots, and a
+    // pick in either plot feeds back through the controller (single source of truth).
+    connect(&selection_, &SelectionController::mzChanged, this,
+            [this](double mz, bool valid)
+    {
+      const std::optional<double> value = valid ? std::optional<double>{mz} : std::nullopt;
+      peakMap_->setSelectedMz(value);
+      spectrum_->setSelectedMz(value);
+    });
+    connect(peakMap_, &PeakMapWidget::mzActivated, this,
+            [this](double mz) { selection_.setMz(mz); });
+    connect(peakMap_, &PeakMapWidget::mzCleared, this,
+            [this] { selection_.setMz(std::nullopt); });
+    connect(spectrum_, &SpectrumWidget::mzActivated, this,
+            [this](double mz) { selection_.setMz(mz); });
+    connect(spectrum_, &SpectrumWidget::mzCleared, this,
+            [this] { selection_.setMz(std::nullopt); });
     // One owner for the visible region: every view-dependent panel updates here.
     connect(peakMap_, &PeakMapWidget::viewRangeChanged,
             this, &MainWindow::applyPeakMapViewRange);
@@ -711,6 +728,17 @@ namespace OpenMSViewer
     showMinimapAction_->setChecked(true);
     connect(showMinimapAction_, &QAction::toggled,
             peakMap_, &PeakMapWidget::setShowMinimap);
+
+    // Interaction modifier (not a display option): governs whether peak-map clicks
+    // and Measure endpoints snap to the nearest peak. Off lets an m/z be pinned at
+    // an arbitrary position. The hover highlight is intentionally never gated by it.
+    snapToPeakAction_ = new QAction(tr("Snap to peaks"), this);
+    snapToPeakAction_->setObjectName(QStringLiteral("peakMapSnapToPeak"));
+    snapToPeakAction_->setCheckable(true);
+    snapToPeakAction_->setChecked(true);
+    snapToPeakAction_->setToolTip(
+      tr("Snap peak-map clicks and measurements to the nearest peak"));
+    connect(snapToPeakAction_, &QAction::toggled, peakMap_, &PeakMapWidget::setSnapToPeak);
 
     // Single RT-unit control shared by every RT panel (always reachable, unlike a
     // per-panel checkbox that hides with the chromatogram panel), so units can't diverge.
@@ -1094,6 +1122,19 @@ namespace OpenMSViewer
     interactionGroup->addAction(editFeaturesModeAction_);
     zoomMode->setChecked(true);
     peakMapControlBar_->addWidget(interactionModes);
+
+    // Snap-to-peak sits with the interaction modes (it modifies click/measure
+    // behaviour), as a non-exclusive toggle rather than a member of the mode group.
+    auto* snapButton = new QToolButton(interactionModes);
+    snapButton->setObjectName(QStringLiteral("peakMapSnapToPeakButton"));
+    snapButton->setDefaultAction(snapToPeakAction_);
+    snapButton->setIcon(QIcon(QStringLiteral(":/icons/material-center-focus.svg")));
+    snapButton->setIconSize(QSize(22, 22));
+    snapButton->setAutoRaise(true);
+    snapButton->setCheckable(true);
+    snapButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    snapButton->setAccessibleName(tr("Snap to peaks"));
+    interactionLayout->addWidget(snapButton);
     connect(interactionGroup, &QActionGroup::triggered, peakMap_,
             [this](QAction* action) { peakMap_->setInteractionMode(action->data().toInt()); });
     connect(peakMap_, &PeakMapWidget::interactionModeChanged, interactionGroup,
@@ -3624,6 +3665,7 @@ namespace OpenMSViewer
       {QLatin1String("view/rtInMinutes"), rtInMinutesAction_},
       {QLatin1String("peakMap/swapAxes"), swapAxesAction_},
       {QLatin1String("peakMap/showMinimap"), showMinimapAction_},
+      {QLatin1String("peakMap/snapToPeak"), snapToPeakAction_},
       {QLatin1String("spectrum/relativeIntensity"), relativeIntensityAction_},
       {QLatin1String("spectrum/autoYScale"), autoYScaleAction_},
       {QLatin1String("spectrum/mirror"), mirrorSpectrumAction_},

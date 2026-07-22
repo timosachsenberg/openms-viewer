@@ -125,6 +125,63 @@ private slots:
     QVERIFY(std::abs(widget.measurements().front().secondMz - 500.15) < 1e-6);
   }
 
+  void normalClickPicksMzAndClearsOffPeak()
+  {
+    auto experiment = std::make_shared<OpenMS::MSExperiment>(OpenMSViewer::TestData::experiment());
+    OpenMSViewer::SpectrumWidget widget;
+    widget.resize(820, 420);
+    widget.show();
+    widget.setExperiment(experiment);
+    widget.setSpectrumIndex(0);  // peaks 400 (left edge) and 500 (right edge)
+    widget.grab();               // populate peakAt() scaling
+
+    std::optional<double> committed;
+    bool cleared = false;
+    connect(&widget, &OpenMSViewer::SpectrumWidget::mzActivated, &widget,
+            [&](double mz) { committed = mz; });
+    connect(&widget, &OpenMSViewer::SpectrumWidget::mzCleared, &widget,
+            [&] { cleared = true; });
+
+    const QRect plot = widget.rect().adjusted(62, 42, -18, -42);
+
+    // Normal-mode click on the base peak (right edge) commits its exact m/z.
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(plot.right() - 2, plot.center().y()));
+    QVERIFY(committed.has_value());
+    QVERIFY(std::abs(*committed - 500.0) < 1e-6);
+    QVERIFY(!cleared);
+
+    // A click in the empty middle (no peak near m/z ~450) clears the pin.
+    committed.reset();
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(plot.center().x(), plot.center().y()));
+    QVERIFY(cleared);
+    QVERIFY(!committed.has_value());
+
+    // Measurement mode owns the click: it must NOT commit an m/z.
+    committed.reset();
+    cleared = false;
+    widget.setMeasurementMode(true);
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(plot.right() - 2, plot.center().y()));
+    QVERIFY(!committed.has_value());
+    QVERIFY(!cleared);
+  }
+
+  void selectedMzLineRenders()
+  {
+    auto experiment = std::make_shared<OpenMS::MSExperiment>(OpenMSViewer::TestData::experiment());
+    OpenMSViewer::SpectrumWidget widget;
+    widget.resize(820, 420);
+    widget.show();
+    widget.setExperiment(experiment);
+    widget.setSpectrumIndex(0);
+    widget.setSelectedMz(500.0);
+    QVERIFY(!widget.grab().isNull());     // teal m/z line paints
+    widget.setSelectedMz(std::nullopt);
+    QVERIFY(!widget.grab().isNull());     // hidden again
+  }
+
   void rendersAnnotatedMirrorAndLegendWithoutCrash()
   {
     auto experiment = std::make_shared<OpenMS::MSExperiment>(OpenMSViewer::TestData::experiment());

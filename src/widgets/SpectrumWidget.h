@@ -57,6 +57,9 @@ namespace OpenMSViewer
     void clearMeasurements();
     void clearLabels();
     void resetMzView();
+    // The pinned cross-panel m/z reference (from SelectionController); nullopt hides
+    // the line. Drawn as a vertical line, mirroring the peak map.
+    void setSelectedMz(std::optional<double> mz);
 
     [[nodiscard]] std::size_t spectrumIndex() const noexcept;
     [[nodiscard]] const std::optional<SpectrumAnnotation>& annotation() const noexcept;
@@ -69,6 +72,9 @@ namespace OpenMSViewer
 
   signals:
     void mzViewChanged(double minimumMz, double maximumMz, bool reset);
+    // A peak was picked (or empty space clicked) -> commit / clear the selected m/z.
+    void mzActivated(double mz);
+    void mzCleared();
 
   protected:
     void paintEvent(QPaintEvent* event) override;
@@ -110,6 +116,7 @@ namespace OpenMSViewer
     double plotPositiveHeight_{1.0};
     double plotIntensityMax_{1.0};
     std::optional<std::pair<double, double>> mzView_;
+    std::optional<double> selectedMz_;  // pinned cross-panel m/z reference line
     std::optional<std::pair<double, double>> hoveredPeak_;
     std::optional<std::pair<double, double>> measurementStart_;
     std::map<std::size_t, std::vector<SpectrumMeasurement>> measurements_;

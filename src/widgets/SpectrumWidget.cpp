@@ -247,6 +247,13 @@ namespace OpenMSViewer
     update();
   }
 
+  void SpectrumWidget::setSelectedMz(std::optional<double> mz)
+  {
+    if (selectedMz_ == mz) return;
+    selectedMz_ = mz;
+    update();
+  }
+
   std::size_t SpectrumWidget::spectrumIndex() const noexcept { return spectrumIndex_; }
   const std::optional<SpectrumAnnotation>& SpectrumWidget::annotation() const noexcept { return annotation_; }
   bool SpectrumWidget::measurementMode() const noexcept { return measurementMode_; }
@@ -739,6 +746,16 @@ namespace OpenMSViewer
       }
     }
 
+    // The pinned cross-panel m/z (from SelectionController) — same teal line the
+    // peak map draws, so a pick in either plot is visible in both.
+    if (selectedMz_ && *selectedMz_ >= mzMin && *selectedMz_ <= mzMax)
+    {
+      painter.setPen(QPen(QColor(0, 200, 180), 1.5, Qt::DashLine));
+      const int x = xForMz(*selectedMz_);
+      painter.drawLine(x, area.top(), x, area.bottom());
+      painter.drawText(x + 4, area.bottom() - 6, tr("m/z %1").arg(*selectedMz_, 0, 'f', 4));
+    }
+
     painter.setRenderHint(QPainter::Antialiasing, true);
     {
       const auto& measurementList = measurements();
@@ -1114,11 +1131,19 @@ namespace OpenMSViewer
     dragCurrent_ = event->pos();
     if (std::abs(dragCurrent_.x() - dragStart_.x()) < 6)
     {
-      // A click (rather than a drag-to-zoom) selects/deselects a measurement so it
-      // can be removed with Delete; clicking empty space clears the selection.
-      const auto hit = measurementAt(event->position());
-      if (hit && hit == selectedMeasurement_) selectedMeasurement_.reset();
-      else selectedMeasurement_ = hit;
+      // A click (rather than a drag-to-zoom) first targets a measurement bracket so
+      // it can be removed with Delete. With none under the cursor, the click instead
+      // picks the cross-panel m/z: the nearest peak, or a clear over empty space.
+      if (const auto hit = measurementAt(event->position()))
+      {
+        selectedMeasurement_ = (hit == selectedMeasurement_) ? std::optional<std::size_t>{} : hit;
+      }
+      else
+      {
+        selectedMeasurement_.reset();
+        if (const auto peak = peakAt(event->position())) emit mzActivated(peak->first);
+        else emit mzCleared();
+      }
       update();
       return;
     }

@@ -210,7 +210,7 @@ int main(int argc, char* argv[])
   QApplication application(argc, argv);
   applyBundledDotNetDefault();
   QApplication::setApplicationName(QStringLiteral("OpenMS Viewer"));
-  QApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+  QApplication::setApplicationVersion(QStringLiteral("0.2.0"));
   QApplication::setOrganizationName(QStringLiteral("OpenMS"));
   QApplication::setStyle(QStringLiteral("Fusion"));
 

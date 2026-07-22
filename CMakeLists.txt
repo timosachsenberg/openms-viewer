@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(OpenMSViewer VERSION 0.1.0 LANGUAGES CXX)
+project(OpenMSViewer VERSION 0.2.0 LANGUAGES CXX)
 
 # Dual build modes. Standalone (top-level) resolves OpenMS/Qt and owns its own
 # packaging. Embedded — added via add_subdirectory() from a parent build such as

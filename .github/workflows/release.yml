@@ -73,8 +73,10 @@ jobs:
           status=0
           for zip in release/*.zip; do
             listing=$(unzip -l "$zip")
+            # Linux/Windows ship libQt6Core.so / Qt6Core.dll; macdeployqt
+            # bundles the framework as QtCore.framework, without the "6".
             case "$listing" in
-              *Qt6Core*) ;;
+              *Qt6Core* | *QtCore.framework*) ;;
               *)
                 echo "ERROR: $(basename "$zip") contains no Qt runtime." >&2
                 status=1

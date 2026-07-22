@@ -8,6 +8,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QPalette>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -56,6 +57,7 @@ namespace OpenMSViewer
     explicit PanelHeader(PanelFrame* frame);
 
   protected:
+    void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
@@ -144,11 +146,19 @@ namespace OpenMSViewer
 
   PanelHeader::PanelHeader(PanelFrame* frame) : QWidget(frame), frame_(frame)
   {
-    setAutoFillBackground(true);
-    QPalette headerPalette = palette();
-    headerPalette.setColor(QPalette::Window, headerPalette.color(QPalette::Midlight));
-    setPalette(headerPalette);
+    // The background is painted from the live palette in paintEvent (not baked into
+    // an explicit palette here): an explicit palette detaches the widget from the
+    // application palette, so a later light/dark switch would leave the header
+    // stuck at its construction-time colour (issue #23).
     setCursor(Qt::OpenHandCursor);
+  }
+
+  void PanelHeader::paintEvent(QPaintEvent*)
+  {
+    QPainter painter(this);
+    // Midlight sits a step off the window background in both themes, so the header
+    // reads as distinct chrome while its QLabel text keeps the palette's WindowText.
+    painter.fillRect(rect(), palette().color(QPalette::Midlight));
   }
 
   void PanelHeader::mousePressEvent(QMouseEvent* event)

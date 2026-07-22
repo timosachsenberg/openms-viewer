@@ -2,8 +2,10 @@
 
 #include "model/RtUnit.h"
 #include "plot/PlotAxis.h"
+#include "plot/PlotTheme.h"
 
 #include <QPainter>
+#include <QPalette>
 #include <QFontMetrics>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -20,18 +22,10 @@ namespace OpenMSViewer
 {
   namespace
   {
-    // The 1D spectrum canvas always renders on white — the classic TOPPView look —
-    // independent of the application light/dark theme, so peaks, annotations and
-    // exported/printed spectra read identically everywhere. These fixed colours
-    // replace the theme palette throughout paintEvent.
-    const QColor kCanvasBg(255, 255, 255);
-    const QColor kAxisLine(90, 90, 95);      // frame + baseline + tick marks
-    const QColor kGridLine(205, 205, 212);   // faint interior gridlines
-    const QColor kAxisText(35, 35, 40);      // labels, ticks, title
-    const QColor kMutedText(130, 130, 140);  // placeholders, secondary notes
-    const QColor kChipBg(255, 255, 255);     // translucent backing for on-canvas keys
-    const QColor kStick(15, 110, 150);       // unannotated peak sticks
-
+    // The spectrum canvas chrome (background, axis, grid, text) follows the
+    // application light/dark theme like every other plot; paintEvent derives the
+    // concrete colours from the live palette (see canvasColours below). Ion-type
+    // accents keep their fixed hues, which read on both themes.
     QColor ionColor(IonType type)
     {
       switch (type)
@@ -471,6 +465,20 @@ namespace OpenMSViewer
   {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, false);
+
+    // Theme-aware canvas colours, derived from the live palette so the spectrum
+    // matches the peak map / TIC in both light and dark (issue #23). Light mode is
+    // unchanged: Base is white and primaryTrace() is the same deep teal as before.
+    const QPalette& pal = palette();
+    const bool darkCanvas = PlotTheme::isDark(pal);
+    const QColor kCanvasBg = pal.color(QPalette::Base);
+    const QColor kAxisLine = darkCanvas ? QColor(150, 152, 160) : QColor(90, 90, 95);
+    const QColor kGridLine = darkCanvas ? QColor(66, 69, 78) : QColor(205, 205, 212);
+    const QColor kAxisText = pal.color(QPalette::Text);
+    const QColor kMutedText = pal.color(QPalette::PlaceholderText);
+    const QColor kChipBg = pal.color(QPalette::Base);
+    const QColor kStick = PlotTheme::primaryTrace(pal);
+
     painter.fillRect(rect(), kCanvasBg);
     const QRect area = plotRect();
 

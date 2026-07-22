@@ -9,6 +9,7 @@
 #include <QImage>
 #include <QFileInfo>
 #include <QPainter>
+#include <QPalette>
 #include <QFile>
 #include <QTemporaryDir>
 #include <QTest>
@@ -117,6 +118,38 @@ private slots:
     QCOMPARE(filter.range.mzMin, 300.0);
     QCOMPARE(filter.range.mzMax, 600.0);
     QCOMPARE(filter.msLevels.size(), std::size_t{2});
+  }
+
+  // A plot whose canvas follows palette() must export on the LIGHT theme even when
+  // the widget is currently on a dark palette, and its palette must be restored.
+  void exportsOnLightThemeRegardlessOfWidgetPalette()
+  {
+    class PaletteWidget final : public QWidget
+    {
+    protected:
+      void paintEvent(QPaintEvent*) override
+      {
+        QPainter painter(this);
+        painter.fillRect(rect(), palette().color(QPalette::Base));
+      }
+    } widget;
+    widget.resize(120, 80);
+    QPalette dark = widget.palette();
+    dark.setColor(QPalette::Base, QColor(20, 22, 28));  // dark canvas
+    widget.setPalette(dark);
+    widget.show();
+    QTest::qWait(10);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("dark-plot.png"));
+    QCOMPARE(OpenMSViewer::PlotExporter::writePng(widget, path), QString());
+    const QImage image(path);
+    QVERIFY(!image.isNull());
+    // The exported canvas is the light standard palette, not the widget's dark Base.
+    QVERIFY(image.pixelColor(2, 2).lightnessF() > 0.7);
+    // The widget's own palette is restored afterwards, never left forced light.
+    QCOMPARE(widget.palette().color(QPalette::Base), QColor(20, 22, 28));
   }
 };
 

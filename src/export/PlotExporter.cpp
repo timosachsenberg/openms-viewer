@@ -37,8 +37,11 @@ namespace OpenMSViewer
         }
         else
         {
-          widget_.setPalette(QPalette());                    // drop the override
-          widget_.setAttribute(Qt::WA_SetPalette, false);    // re-inherit the app palette
+          // A default-constructed palette has an empty resolve mask, so setPalette()
+          // itself clears WA_SetPalette and restores full inheritance from the app
+          // palette — no manual attribute reset needed (and resetting it could clobber
+          // a palette a widget reapplies synchronously in its PaletteChange handler).
+          widget_.setPalette(QPalette());
         }
       }
 

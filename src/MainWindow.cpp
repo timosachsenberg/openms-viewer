@@ -3633,6 +3633,11 @@ namespace OpenMSViewer
     palette.setColor(QPalette::HighlightedText, Qt::white);
     palette.setColor(QPalette::PlaceholderText, QColor(145, 148, 158));
     palette.setColor(QPalette::Mid, QColor(105, 108, 118));
+    // Midlight must be set explicitly: it is not derived from the roles above, so
+    // leaving it unset lets it fall back to a light value under the forced Fusion
+    // style — which would make the panel header chrome (painted from Midlight) light
+    // in dark mode. A step above Window reads as distinct dark chrome (issue #23).
+    palette.setColor(QPalette::Midlight, QColor(48, 51, 60));
     qApp->setPalette(palette);
     for (QWidget* widget : findChildren<QWidget*>()) widget->update();
   }

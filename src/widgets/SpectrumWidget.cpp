@@ -478,6 +478,12 @@ namespace OpenMSViewer
     const QColor kMutedText = pal.color(QPalette::PlaceholderText);
     const QColor kChipBg = pal.color(QPalette::Base);
     const QColor kStick = PlotTheme::primaryTrace(pal);
+    // Annotation accents need a lighter variant on a dark canvas to stay legible;
+    // their light-theme values are unchanged.
+    const QColor kAnnotatedStick = darkCanvas ? QColor(168, 168, 182, 180) : QColor(145, 145, 155, 170);
+    const QColor kUnmatchedTheo = darkCanvas ? QColor(150, 152, 166, 175) : QColor(120, 120, 130, 150);
+    const QColor kUserLabel = darkCanvas ? QColor(92, 206, 128) : QColor(28, 130, 60);
+    const QColor kAutoMzLabel = darkCanvas ? QColor(110, 192, 226) : QColor(30, 120, 160);
 
     painter.fillRect(rect(), kCanvasBg);
     const QRect area = plotRect();
@@ -598,7 +604,7 @@ namespace OpenMSViewer
       }
     };
 
-    painter.setPen(QPen(annotated ? QColor(145, 145, 155, 170) : stickColor, 1));
+    painter.setPen(QPen(annotated ? kAnnotatedStick : stickColor, 1));
     if (spectrum.size() <= 5000)
     {
       for (const auto& peak : spectrum)
@@ -686,7 +692,7 @@ namespace OpenMSViewer
           for (const TheoreticalIon& ion : annotation_->unmatched)
           {
             if (ion.mz < mzMin || ion.mz > mzMax) continue;
-            painter.setPen(QPen(QColor(120, 120, 130, 150), 1, Qt::DashLine));
+            painter.setPen(QPen(kUnmatchedTheo, 1, Qt::DashLine));
             const int x = xForMz(ion.mz);
             const int y = negativeY(ion.intensity);
             painter.drawLine(x, baseline, x, y);
@@ -815,7 +821,7 @@ namespace OpenMSViewer
     // User-authored peak labels: an arrowed leader to the peak tip plus a text
     // chip, stacked upward to avoid overlapping one another.
     {
-      const QColor labelColor(28, 130, 60);  // fixed dark green — reads on the white canvas
+      const QColor labelColor = kUserLabel;  // theme-aware: dark green on light, bright green on dark
       painter.setFont(QFont(painter.font().family(), std::max(7, font().pointSize() - 1)));
       std::vector<QRect> usedRects;
       for (const PeakLabel& label : labels())
@@ -889,7 +895,7 @@ namespace OpenMSViewer
       });
       if (peaks.size() > 15) peaks.resize(15);
       std::vector<int> usedX;
-      painter.setPen(QColor(30, 120, 160));  // fixed dark teal for the white canvas
+      painter.setPen(kAutoMzLabel);  // theme-aware: dark teal on light, bright teal on dark
       painter.setFont(QFont(painter.font().family(), std::max(7, painter.font().pointSize() - 2)));
       for (const auto* peak : peaks)
       {

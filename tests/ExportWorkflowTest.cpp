@@ -6,6 +6,7 @@
 
 #include <OpenMS/FORMAT/MzMLFile.h>
 
+#include <QApplication>
 #include <QImage>
 #include <QFileInfo>
 #include <QPainter>
@@ -148,8 +149,65 @@ private slots:
     QVERIFY(!image.isNull());
     // The exported canvas is the light standard palette, not the widget's dark Base.
     QVERIFY(image.pixelColor(2, 2).lightnessF() > 0.7);
-    // The widget's own palette is restored afterwards, never left forced light.
+    // The explicit widget palette is restored afterwards, never left forced light.
+    QVERIFY(widget.testAttribute(Qt::WA_SetPalette));
     QCOMPARE(widget.palette().color(QPalette::Base), QColor(20, 22, 28));
+  }
+
+  // A widget that INHERITS the app palette (no explicit palette) must still inherit
+  // after an export — the temporary light override must not leave it frozen, so a
+  // later app-wide theme change still reaches it. Also covers an inheriting child.
+  void exportRestoresPaletteInheritance()
+  {
+    const QPalette appSaved = qApp->palette();
+
+    QPalette darkApp = appSaved;
+    darkApp.setColor(QPalette::Base, QColor(18, 20, 26));
+    qApp->setPalette(darkApp);
+
+    class PaletteWidget final : public QWidget
+    {
+    protected:
+      void paintEvent(QPaintEvent*) override
+      {
+        QPainter painter(this);
+        painter.fillRect(rect(), palette().color(QPalette::Base));
+      }
+    };
+    auto* parent = new PaletteWidget;   // inherits the app palette (no setPalette)
+    parent->resize(120, 80);
+    auto* child = new PaletteWidget;    // inherits from parent -> app
+    child->setParent(parent);
+    child->resize(120, 80);
+    parent->show();
+    QVERIFY(!parent->testAttribute(Qt::WA_SetPalette));  // truly inheriting
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("inherited.png"));
+    QCOMPARE(OpenMSViewer::PlotExporter::writePng(*parent, path), QString());
+    QVERIFY(image_isLight(path));
+
+    // Still inheriting after the export (not frozen to the light override)...
+    QVERIFY(!parent->testAttribute(Qt::WA_SetPalette));
+    QVERIFY(!child->testAttribute(Qt::WA_SetPalette));
+    // ...so a later app-wide palette change reaches both widget and child.
+    QPalette lighterApp = appSaved;
+    lighterApp.setColor(QPalette::Base, QColor(240, 240, 245));
+    qApp->setPalette(lighterApp);
+    QApplication::processEvents();  // let the PaletteChange propagate
+    QCOMPARE(parent->palette().color(QPalette::Base), QColor(240, 240, 245));
+    QCOMPARE(child->palette().color(QPalette::Base), QColor(240, 240, 245));
+
+    delete parent;                 // deletes child too
+    qApp->setPalette(appSaved);    // don't leak palette state into other suites
+  }
+
+private:
+  static bool image_isLight(const QString& path)
+  {
+    const QImage image(path);
+    return !image.isNull() && image.pixelColor(2, 2).lightnessF() > 0.7;
   }
 };
 

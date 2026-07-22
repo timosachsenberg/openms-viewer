@@ -1129,24 +1129,33 @@ namespace OpenMSViewer
     if (!draggingZoom_ || event->button() != Qt::LeftButton) return;
     draggingZoom_ = false;
     dragCurrent_ = event->pos();
-    if (std::abs(dragCurrent_.x() - dragStart_.x()) < 6)
+    // A click is a small move in BOTH axes (a large vertical drag is not a click),
+    // and it must end inside the plot — otherwise a drag that strays into the
+    // margins would spuriously mutate the cross-panel m/z.
+    if ((dragCurrent_ - dragStart_).manhattanLength() < 6)
     {
-      // A click (rather than a drag-to-zoom) first targets a measurement bracket so
-      // it can be removed with Delete. With none under the cursor, the click instead
-      // picks the cross-panel m/z: the nearest peak, or a clear over empty space.
-      if (const auto hit = measurementAt(event->position()))
+      if (plotRect().contains(event->pos()))
       {
-        selectedMeasurement_ = (hit == selectedMeasurement_) ? std::optional<std::size_t>{} : hit;
-      }
-      else
-      {
-        selectedMeasurement_.reset();
-        if (const auto peak = peakAt(event->position())) emit mzActivated(peak->first);
-        else emit mzCleared();
+        // A click first targets a measurement bracket so it can be removed with
+        // Delete. With none under the cursor, it instead picks the cross-panel
+        // m/z: the nearest peak, or a clear over empty space.
+        if (const auto hit = measurementAt(event->position()))
+        {
+          selectedMeasurement_ = (hit == selectedMeasurement_) ? std::optional<std::size_t>{} : hit;
+        }
+        else
+        {
+          selectedMeasurement_.reset();
+          if (const auto peak = peakAt(event->position())) emit mzActivated(peak->first);
+          else emit mzCleared();
+        }
       }
       update();
       return;
     }
+    // A mostly-vertical drag (small horizontal extent) is neither a click nor a
+    // meaningful horizontal zoom — ignore it rather than zoom to a degenerate range.
+    if (std::abs(dragCurrent_.x() - dragStart_.x()) < 6) { update(); return; }
     const QRect area = plotRect();
     const auto full = fullMzRange();
     const double minimum = mzView_ ? mzView_->first : full.first;

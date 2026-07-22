@@ -156,6 +156,72 @@ private slots:
     QVERIFY(!mzTouched);
   }
 
+  // A feature click selects the feature and navigates by RT, but must NOT commit
+  // an m/z — overlay activation is not a raster peak pick.
+  void featureClickDoesNotCommitMz()
+  {
+    OpenMSViewer::PeakMapWidget peakMap;
+    peakMap.resize(820, 520);
+    peakMap.show();
+    auto experiment = std::make_shared<OpenMS::MSExperiment>(OpenMSViewer::TestData::experiment());
+    peakMap.setExperiment(experiment, OpenMSViewer::PlotRange{10.0, 20.0, 400.0, 600.0});
+    OpenMSViewer::FeatureRecord feature;
+    feature.index = 0;
+    feature.rt = 15.0;
+    feature.mz = 500.0;
+    feature.charge = 2;
+    feature.intensity = 1000.0;
+    feature.bounds = OpenMSViewer::PlotRange{14.0, 16.0, 499.0, 501.0};  // survive view culling
+    peakMap.setFeatures({feature});
+    peakMap.resetView();
+    peakMap.grab();
+
+    bool featureActivated = false;
+    bool mzTouched = false;
+    connect(&peakMap, &OpenMSViewer::PeakMapWidget::featureActivated, &peakMap,
+            [&](std::size_t) { featureActivated = true; });
+    connect(&peakMap, &OpenMSViewer::PeakMapWidget::mzActivated, &peakMap,
+            [&](double) { mzTouched = true; });
+    connect(&peakMap, &OpenMSViewer::PeakMapWidget::mzCleared, &peakMap,
+            [&] { mzTouched = true; });
+
+    const QPoint at = peakMap.mapDataToWidget(15.0, 500.0).toPoint();
+    QTest::mouseClick(&peakMap, Qt::LeftButton, Qt::NoModifier, at);
+    QTRY_VERIFY_WITH_TIMEOUT(featureActivated, 2000);
+    QVERIFY(!mzTouched);
+  }
+
+  // An identification click likewise navigates but must not commit an m/z.
+  void identificationClickDoesNotCommitMz()
+  {
+    OpenMSViewer::PeakMapWidget peakMap;
+    peakMap.resize(820, 520);
+    peakMap.show();
+    auto experiment = std::make_shared<OpenMS::MSExperiment>(OpenMSViewer::TestData::experiment());
+    peakMap.setExperiment(experiment, OpenMSViewer::PlotRange{10.0, 20.0, 400.0, 600.0});
+    OpenMSViewer::IdentificationRecord id;
+    id.index = 0;
+    id.rt = 15.0;
+    id.mz = 500.0;
+    peakMap.setIdentifications({id});
+    peakMap.resetView();
+    peakMap.grab();
+
+    bool idActivated = false;
+    bool mzTouched = false;
+    connect(&peakMap, &OpenMSViewer::PeakMapWidget::identificationActivated, &peakMap,
+            [&](std::size_t) { idActivated = true; });
+    connect(&peakMap, &OpenMSViewer::PeakMapWidget::mzActivated, &peakMap,
+            [&](double) { mzTouched = true; });
+    connect(&peakMap, &OpenMSViewer::PeakMapWidget::mzCleared, &peakMap,
+            [&] { mzTouched = true; });
+
+    const QPoint at = peakMap.mapDataToWidget(15.0, 500.0).toPoint();
+    QTest::mouseClick(&peakMap, Qt::LeftButton, Qt::NoModifier, at);
+    QTRY_VERIFY_WITH_TIMEOUT(idActivated, 2000);
+    QVERIFY(!mzTouched);
+  }
+
   // The pinned m/z draws without crashing in both orientations and hides when cleared.
   void selectedMzLineRenders()
   {

@@ -111,6 +111,7 @@ namespace OpenMSViewer
     minimap_ = {};
     ++desiredMinimapGeneration_;
     hasSelectedRt_ = false;
+    hoveredPeak_.reset();  // a hover from the previous data must not reproject
     emit zoomHistoryChanged(false);
     emit viewRangeChanged(view_);
     scheduleRender();
@@ -125,6 +126,7 @@ namespace OpenMSViewer
     ++desiredMinimapGeneration_;
     history_.clear();
     hasSelectedRt_ = false;
+    hoveredPeak_.reset();
     ++desiredGeneration_;
     emit zoomHistoryChanged(false);
     update();
@@ -356,6 +358,7 @@ namespace OpenMSViewer
     const auto mode = static_cast<PeakMapInteractionMode>(std::clamp(modeIndex, 0, 3));
     if (mode == interactionMode_) return;
     interactionMode_ = mode;
+    hoveredPeak_.reset();  // the dot only lives in Zoom/Pan; drop it when leaving
     updateInteractionCursor();
     update();
     emit interactionModeChanged(static_cast<int>(interactionMode_));
@@ -639,6 +642,7 @@ namespace OpenMSViewer
     if (next.rtSpan() < minRtSpan || next.mzSpan() < minMzSpan) return;
     if (remember) rememberCurrentRange();
     view_ = next;
+    hoveredPeak_.reset();  // keyboard/programmatic view change: cursor is no longer on it
     emit viewRangeChanged(view_);
     scheduleRender();
   }
@@ -1638,6 +1642,13 @@ namespace OpenMSViewer
                                    nearestIntensity(position.x(), position.y()));
       }
       if (resolved != hoveredPeak_) { hoveredPeak_ = resolved; update(); }
+    }
+    else if (hoveredPeak_)
+    {
+      // Cursor moved into the axis margins (or before any data): drop the dot so it
+      // never lingers where the pointer no longer is.
+      hoveredPeak_.reset();
+      update();
     }
     if (dragMode_ == DragMode::None)
     {

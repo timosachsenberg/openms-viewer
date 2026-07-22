@@ -108,10 +108,20 @@ namespace OpenMSViewer
     void zoomToConsensus(std::size_t consensusIndex);
     void setShowPrecursors(bool show);
     void setRtInMinutes(bool minutes);
+    // The pinned cross-panel m/z reference (from SelectionController). Drawn as a
+    // line perpendicular to the m/z axis; nullopt hides it.
+    void setSelectedMz(std::optional<double> mz);
+    // Governs click-commit snapping and Measure-mode endpoint snapping only.
+    // The hover peak highlight is deliberately unaffected (always resolves).
+    void setSnapToPeak(bool enabled);
 
   signals:
     void viewRangeChanged(const OpenMSViewer::PlotRange& range);
     void rtActivated(double rt);
+    // A raster peak/coordinate was picked -> commit as the selected m/z.
+    void mzActivated(double mz);
+    // A raster click landed off any peak (snapping on) -> clear the selected m/z.
+    void mzCleared();
     void featureActivated(std::size_t featureIndex);
     void identificationActivated(std::size_t identificationIndex);
     void precursorActivated(std::size_t spectrumIndex);
@@ -174,6 +184,10 @@ namespace OpenMSViewer
     // counts as "close enough". rt is the hosting spectrum's RT (quantized to scans).
     struct NearestPeak { double rt; double mz; double intensity; };
     [[nodiscard]] std::optional<NearestPeak> nearestPeak(double rt, double mz) const;
+    // The nearest peak when it is individually resolvable on screen: view m/z span
+    // below kSnapMaxMzSpan AND the peak within kSnapPixelRadius of the cursor.
+    // Toggle-independent (drives the hover highlight, which ignores setSnapToPeak).
+    [[nodiscard]] std::optional<NearestPeak> resolvablePeak(double rt, double mz) const;
     // Snap a measure endpoint to the nearest on-screen peak. Returns a data-space
     // (rt, mz) point when a peak lies within kSnapPixelRadius of the cursor and the
     // view is zoomed in past kSnapMaxMzSpan; otherwise std::nullopt (no snap).
@@ -203,6 +217,9 @@ namespace OpenMSViewer
     bool hasSelectedRt_{false};
     int selectedMsLevel_{1};
     std::optional<double> selectedMarkerMz_;   // precursor m/z for an MS2+ selection
+    std::optional<double> selectedMz_;         // pinned cross-panel m/z reference line
+    std::optional<QPointF> hoveredPeak_;       // data-space (rt,mz) of the hover-highlighted peak
+    bool snapToPeak_{true};                    // gates click-commit + Measure snapping
     std::vector<FeatureRecord> features_;
     std::optional<std::size_t> selectedFeature_;
     std::optional<std::size_t> hoveredFeature_;

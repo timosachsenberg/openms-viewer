@@ -269,6 +269,7 @@ namespace OpenMSViewer
     QAction* themeLightAction_{nullptr};
     QAction* themeDarkAction_{nullptr};
     QAction* showMinimapAction_{nullptr};
+    QAction* snapToPeakAction_{nullptr};
     QAction* rtInMinutesAction_{nullptr};
     QAction* relativeIntensityAction_{nullptr};
     QAction* autoYScaleAction_{nullptr};

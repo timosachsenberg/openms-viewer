@@ -34,6 +34,8 @@ namespace OpenMSViewer
 
   int SelectionController::faimsChannel() const noexcept { return faimsChannel_; }
 
+  const std::optional<double>& SelectionController::mz() const noexcept { return mz_; }
+
   void SelectionController::setSpectrum(std::optional<std::size_t> index)
   {
     if (spectrum_ == index) return;
@@ -65,11 +67,19 @@ namespace OpenMSViewer
     emit faimsChannelChanged(faimsChannel_);
   }
 
+  void SelectionController::setMz(std::optional<double> value)
+  {
+    if (mz_ == value) return;
+    mz_ = value;
+    emit mzChanged(mz_.value_or(0.0), mz_.has_value());
+  }
+
   void SelectionController::clear()
   {
     setSpectrum(std::nullopt);
     setFeature(std::nullopt);
     setIdentification(std::nullopt);
     setFaimsChannel(-1);
+    setMz(std::nullopt);
   }
 }

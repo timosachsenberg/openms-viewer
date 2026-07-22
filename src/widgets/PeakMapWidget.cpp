@@ -111,6 +111,7 @@ namespace OpenMSViewer
     minimap_ = {};
     ++desiredMinimapGeneration_;
     hasSelectedRt_ = false;
+    hoveredPeak_.reset();  // a hover from the previous data must not reproject
     emit zoomHistoryChanged(false);
     emit viewRangeChanged(view_);
     scheduleRender();
@@ -125,6 +126,7 @@ namespace OpenMSViewer
     ++desiredMinimapGeneration_;
     history_.clear();
     hasSelectedRt_ = false;
+    hoveredPeak_.reset();
     ++desiredGeneration_;
     emit zoomHistoryChanged(false);
     update();
@@ -137,6 +139,18 @@ namespace OpenMSViewer
     selectedMarkerMz_ = precursorMz;
     hasSelectedRt_ = true;
     update();
+  }
+
+  void PeakMapWidget::setSelectedMz(std::optional<double> mz)
+  {
+    if (selectedMz_ == mz) return;
+    selectedMz_ = mz;
+    update();
+  }
+
+  void PeakMapWidget::setSnapToPeak(bool enabled)
+  {
+    snapToPeak_ = enabled;
   }
 
   void PeakMapWidget::setAxesSwapped(bool swapped)
@@ -344,6 +358,7 @@ namespace OpenMSViewer
     const auto mode = static_cast<PeakMapInteractionMode>(std::clamp(modeIndex, 0, 3));
     if (mode == interactionMode_) return;
     interactionMode_ = mode;
+    hoveredPeak_.reset();  // the dot only lives in Zoom/Pan; drop it when leaving
     updateInteractionCursor();
     update();
     emit interactionModeChanged(static_cast<int>(interactionMode_));
@@ -627,6 +642,7 @@ namespace OpenMSViewer
     if (next.rtSpan() < minRtSpan || next.mzSpan() < minMzSpan) return;
     if (remember) rememberCurrentRange();
     view_ = next;
+    hoveredPeak_.reset();  // keyboard/programmatic view change: cursor is no longer on it
     emit viewRangeChanged(view_);
     scheduleRender();
   }
@@ -784,6 +800,39 @@ namespace OpenMSViewer
       }
     }
 
+    // Pinned m/z reference (from SelectionController): a full-span line drawn
+    // perpendicular to the m/z axis, plus its own label. A pure coordinate — no
+    // dot, no intensity — so it never claims a peak exists where it crosses.
+    if (selectedMz_ && *selectedMz_ >= view_.mzMin && *selectedMz_ <= view_.mzMax)
+    {
+      const QColor mzColor(0, 200, 180);  // teal — distinct from RT/precursor markers
+      const QPointF mzPoint = pixelFor((view_.rtMin + view_.rtMax) / 2.0, *selectedMz_);
+      painter.setPen(QPen(mzColor, 1.5, Qt::DashLine));
+      if (axesSwapped_) painter.drawLine(QPointF(mzPoint.x(), area.top()), QPointF(mzPoint.x(), area.bottom()));
+      else painter.drawLine(QPointF(area.left(), mzPoint.y()), QPointF(area.right(), mzPoint.y()));
+
+      const QString mzLabel = tr("m/z %1").arg(*selectedMz_, 0, 'f', 4);
+      painter.setPen(mzColor);
+      const int mzLabelWidth = painter.fontMetrics().horizontalAdvance(mzLabel);
+      if (axesSwapped_)
+      {
+        const double labelX = std::clamp<double>(mzPoint.x() + 6, area.left() + 4,
+                                                 area.right() - mzLabelWidth - 4);
+        painter.drawText(QPointF(labelX, area.bottom() - 6), mzLabel);
+      }
+      else
+        painter.drawText(QPointF(area.left() + 6, std::max<double>(area.top() + 12, mzPoint.y() - 5)), mzLabel);
+    }
+
+    // Transient hover highlight: a ring on the peak under the cursor.
+    if (hoveredPeak_)
+    {
+      const QPointF dot = pixelFor(hoveredPeak_->x(), hoveredPeak_->y());
+      painter.setPen(QPen(QColor(255, 255, 255), 1.6));
+      painter.setBrush(Qt::NoBrush);
+      painter.drawEllipse(dot, 5.0, 5.0);
+    }
+
     drawConsensus(painter);  // approximate multi-run context, under the precise overlays
     drawPrecursors(painter);
     drawFeatures(painter);
@@ -848,6 +897,26 @@ namespace OpenMSViewer
           painter.setPen(QPen(markerColor, 1.2));
           painter.setBrush(markerColor);
           painter.drawEllipse(QPointF(markerX, markerY), 2.5, 2.5);
+        }
+      }
+
+      // Mirror the pinned m/z line onto the minimap so both agree.
+      if (selectedMz_ && dataBounds_.mzSpan() > 0.0)
+      {
+        const double mzFrac = (*selectedMz_ - dataBounds_.mzMin) / dataBounds_.mzSpan();
+        if (std::isfinite(mzFrac) && mzFrac >= 0.0 && mzFrac <= 1.0)
+        {
+          painter.setPen(QPen(QColor(0, 200, 180), 1.2, Qt::DashLine));
+          if (axesSwapped_)
+          {
+            const double x = mini.left() + mzFrac * mini.width();
+            painter.drawLine(QPointF(x, mini.top()), QPointF(x, mini.bottom()));
+          }
+          else
+          {
+            const double y = mini.bottom() - mzFrac * mini.height();
+            painter.drawLine(QPointF(mini.left(), y), QPointF(mini.right(), y));
+          }
         }
       }
     }
@@ -1443,19 +1512,29 @@ namespace OpenMSViewer
     return std::abs(peak->mz - mz) <= tolerance ? peak->intensity : -1.0;
   }
 
-  std::optional<QPointF> PeakMapWidget::snapToPeak(double rt, double mz) const
+  std::optional<PeakMapWidget::NearestPeak> PeakMapWidget::resolvablePeak(double rt, double mz) const
   {
     if (view_.mzSpan() >= kSnapMaxMzSpan) return std::nullopt;
     const auto peak = nearestPeak(rt, mz);
     if (!peak) return std::nullopt;
-    // Accept the snap only when the peak sits within a small pixel radius of the
-    // cursor in both dimensions — this rejects peaks in a distant scan (RT) or an
-    // empty m/z neighbourhood, so releasing over blank canvas leaves the endpoint free.
+    // Accept only when the peak sits within a small pixel radius of the cursor in
+    // both dimensions — this rejects peaks in a distant scan (RT) or an empty m/z
+    // neighbourhood, so a cursor over blank canvas resolves nothing.
     const QPointF cursorPx = pixelFor(rt, mz);
     const QPointF peakPx = pixelFor(peak->rt, peak->mz);
     const double dx = peakPx.x() - cursorPx.x();
     const double dy = peakPx.y() - cursorPx.y();
     if (dx * dx + dy * dy > kSnapPixelRadius * kSnapPixelRadius) return std::nullopt;
+    return peak;
+  }
+
+  std::optional<QPointF> PeakMapWidget::snapToPeak(double rt, double mz) const
+  {
+    // Measure endpoints and click-commit snap only when the user opted in; the
+    // hover highlight uses resolvablePeak() directly and ignores this gate.
+    if (!snapToPeak_) return std::nullopt;
+    const auto peak = resolvablePeak(rt, mz);
+    if (!peak) return std::nullopt;
     return QPointF(peak->rt, peak->mz);
   }
 
@@ -1540,8 +1619,36 @@ namespace OpenMSViewer
     if (experiment_ && plotRect().contains(event->position().toPoint()))
     {
       const QPointF position = dataAt(event->position());
-      emit cursorPositionChanged(position.x(), position.y(),
-                                 nearestIntensity(position.x(), position.y()));
+      // Highlight the peak under the cursor while idly viewing (Zoom/Pan). This
+      // resolves regardless of the snap-to-peak toggle — a read-only peek costs
+      // nothing. When a peak is resolved the readout is its exact triple; off any
+      // peak (or zoomed out) it is the raw cursor with no intensity.
+      const bool hoverPeakMode = dragMode_ == DragMode::None
+        && (interactionMode_ == PeakMapInteractionMode::Zoom
+            || interactionMode_ == PeakMapInteractionMode::Pan);
+      std::optional<QPointF> resolved;
+      if (hoverPeakMode)
+      {
+        if (const auto peak = resolvablePeak(position.x(), position.y()))
+        {
+          resolved = QPointF(peak->rt, peak->mz);
+          emit cursorPositionChanged(peak->rt, peak->mz, peak->intensity);
+        }
+        else emit cursorPositionChanged(position.x(), position.y(), -1.0);
+      }
+      else
+      {
+        emit cursorPositionChanged(position.x(), position.y(),
+                                   nearestIntensity(position.x(), position.y()));
+      }
+      if (resolved != hoveredPeak_) { hoveredPeak_ = resolved; update(); }
+    }
+    else if (hoveredPeak_)
+    {
+      // Cursor moved into the axis margins (or before any data): drop the dot so it
+      // never lingers where the pointer no longer is.
+      hoveredPeak_.reset();
+      update();
     }
     if (dragMode_ == DragMode::None)
     {
@@ -1682,27 +1789,44 @@ namespace OpenMSViewer
       }
       else if ((dragCurrent_ - dragStart_).manhattanLength() < 6)
       {
+        // Two independent decisions: `specificNavigation` suppresses the generic
+        // nearest-RT jump; `overlayHit` suppresses the m/z commit. They differ —
+        // a feature click still navigates by RT but must NOT pin a raster m/z.
         bool specificNavigation = false;
+        bool overlayHit = false;
         if (const auto feature = nearestFeature(dragCurrent_))
         {
           selectedFeature_ = feature;
           emit featureActivated(*feature);
+          overlayHit = true;
         }
         else if (const auto identification = nearestIdentification(dragCurrent_))
         {
           selectedIdentification_ = identification;
           emit identificationActivated(*identification);
           specificNavigation = true;
+          overlayHit = true;
         }
         else if (const auto precursor = nearestPrecursor(dragCurrent_))
         {
           emit precursorActivated(precursorMarkers_[*precursor].spectrumIndex);
           specificNavigation = true;
+          overlayHit = true;
         }
         // Identification / precursor activation already navigates to a specific MS/MS
         // scan. A generic nearest-RT activation would often replace it with an
         // adjacent MS1 scan.
         if (!specificNavigation) emit rtActivated(dataAt(dragCurrent_).x());
+        // Commit the clicked m/z (only for a plain raster click, never an overlay
+        // activation): the snapped peak when snapping is on and resolvable, the raw
+        // cursor m/z when snapping is off, or a clear when snapping on but off any peak.
+        if (!overlayHit)
+        {
+          const QPointF data = dataAt(dragCurrent_);
+          if (!snapToPeak_) emit mzActivated(data.y());
+          else if (const auto snapped = snapToPeak(data.x(), data.y())) emit mzActivated(snapped->y());
+          else emit mzCleared();
+        }
       }
     }
     else if (completedMode == DragMode::Edit)
@@ -1762,6 +1886,7 @@ namespace OpenMSViewer
     hoveredFeature_.reset();
     hoveredIdentification_.reset();
     hoveredPrecursor_.reset();
+    hoveredPeak_.reset();
     setToolTip({});
     unsetCursor();
     emit cursorLeft();

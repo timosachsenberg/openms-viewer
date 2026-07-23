@@ -142,6 +142,13 @@ namespace OpenMSViewer
     [[nodiscard]] static LoadResult readExperiment(const QString& path,
                                                    ProgressCallback progress = {},
                                                    CancellationCheck cancelled = {});
+    // A standalone OpenSWATH .xic (CHROMPARQUET) chromatogram store: every stored
+    // transition XIC becomes an MSChromatogram, yielding the same chromatogram-only
+    // LoadResult the app already renders for chromatogram-only mzML. Without the
+    // paired .osw there is no peak-group context — these are flat per-transition
+    // traces (issue: standalone .xic opening).
+    [[nodiscard]] static LoadResult readXic(const QString& path,
+                                            CancellationCheck cancelled = {});
     [[nodiscard]] static FeatureLoadResult readFeatures(const QString& path);
     [[nodiscard]] static IdentificationLoadResult readIdentifications(const QString& path);
     bool adopt(LoadResult result);

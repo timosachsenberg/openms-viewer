@@ -10,6 +10,9 @@
 // include unconditionally — the classes simply aren't declared when unsupported.
 #include <OpenMS/FORMAT/ThermoRawFile.h>
 #include <OpenMS/FORMAT/BrukerTimsFile.h>
+#include <OpenMS/FORMAT/XICParquetFile.h>
+#include <OpenMS/KERNEL/MSChromatogram.h>
+#include <OpenMS/METADATA/Precursor.h>
 #include <OpenMS/METADATA/MetaInfoInterface.h>
 #include <OpenMS/IONMOBILITY/IMTypes.h>
 #include <OpenMS/CONCEPT/ProgressLogger.h>
@@ -719,6 +722,72 @@ namespace OpenMSViewer
     catch (...)
     {
       result.error = QStringLiteral("OpenMS could not read the file (unknown error).");
+    }
+    return result;
+  }
+
+  ViewerDocument::LoadResult ViewerDocument::readXic(const QString& path,
+                                                     CancellationCheck cancelled)
+  {
+    LoadResult result;
+    result.sourcePath = QFileInfo(path).absoluteFilePath();
+    const QFileInfo file(result.sourcePath);
+    if (!file.exists())
+    {
+      result.error = QStringLiteral("File does not exist: %1").arg(result.sourcePath);
+      return result;
+    }
+    try
+    {
+      OpenMS::XICParquetFile reader({result.sourcePath.toStdString()});
+      std::vector<OpenMS::XICParquetFile::XICChromatogram> xics;
+      reader.load(xics);
+      if (cancelled && cancelled()) throw LoadCancelled();
+
+      auto experiment = std::make_shared<OpenMS::MSExperiment>();
+      experiment->getChromatograms().reserve(xics.size());
+      for (const auto& xic : xics)
+      {
+        if (cancelled && cancelled()) throw LoadCancelled();
+        OpenMS::MSChromatogram chromatogram;
+        // No m/z is stored in a .xic, so identify each trace by its transition:
+        // the library annotation (e.g. "y7") when present, else the transition id.
+        const std::string label = !xic.annotation.empty()
+          ? xic.annotation
+          : (xic.has_transition_id ? std::to_string(xic.transition_id)
+                                   : std::string("transition"));
+        chromatogram.setNativeID(label);
+        // MS1 traces are precursor chromatograms; fragment traces are SRM.
+        chromatogram.setChromatogramType(
+          xic.ms_level == 1
+            ? OpenMS::ChromatogramSettings::ChromatogramType::BASEPEAK_CHROMATOGRAM
+            : OpenMS::ChromatogramSettings::ChromatogramType::SELECTED_REACTION_MONITORING_CHROMATOGRAM);
+        if (xic.has_precursor_charge)
+        {
+          OpenMS::Precursor precursor;
+          precursor.setCharge(static_cast<int>(xic.precursor_charge));
+          chromatogram.setPrecursor(precursor);
+        }
+        const std::size_t points = std::min(xic.rt.size(), xic.intensity.size());
+        chromatogram.reserve(points);
+        for (std::size_t i = 0; i < points; ++i)
+          chromatogram.emplace_back(xic.rt[i], static_cast<float>(xic.intensity[i]));
+        experiment->addChromatogram(std::move(chromatogram));
+      }
+      deriveLoadResult(result, std::move(experiment), cancelled);
+    }
+    catch (const LoadCancelled&)
+    {
+      result.error = QStringLiteral("Loading cancelled.");
+    }
+    catch (const std::exception& error)
+    {
+      result.error = QStringLiteral("OpenMS could not read the .xic file: %1")
+                       .arg(QString::fromLocal8Bit(error.what()));
+    }
+    catch (...)
+    {
+      result.error = QStringLiteral("OpenMS could not read the .xic file (unknown error).");
     }
     return result;
   }

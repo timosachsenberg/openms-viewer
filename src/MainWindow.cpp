@@ -2182,12 +2182,12 @@ namespace OpenMSViewer
     const QString startDirectory = settings.value(QStringLiteral("files/lastDirectory")).toString();
     const QStringList paths = QFileDialog::getOpenFileNames(
       this, tr("Open mass-spectrometry data"), startDirectory,
-      tr("OpenMS data (*.mzML *.mzml *.imzML *.imzml *.raw *.mzXML *.mzxml *.mzData *.mzdata *.sqMass *.sqmass *.featureXML *.featurexml *.idXML *.idxml *.mzid *.mzIdentML *.osw *.consensusXML *.consensusxml);;"
+      tr("OpenMS data (*.mzML *.mzml *.imzML *.imzml *.raw *.mzXML *.mzxml *.mzData *.mzdata *.sqMass *.sqmass *.featureXML *.featurexml *.idXML *.idxml *.mzid *.mzIdentML *.osw *.xic *.consensusXML *.consensusxml);;"
          "Spectra (*.mzML *.mzml *.mzXML *.mzxml *.mzData *.mzdata *.sqMass *.sqmass);;"
          "imzML imaging files (*.imzML *.imzml);;Thermo RAW files (*.raw);;"
          "Feature maps (*.featureXML *.featurexml);;"
          "Identifications (*.idXML *.idxml *.mzid *.mzIdentML);;"
-         "OpenSWATH results (*.osw);;Consensus maps (*.consensusXML *.consensusxml);;All files (*)"));
+         "OpenSWATH results (*.osw *.xic);;Consensus maps (*.consensusXML *.consensusxml);;All files (*)"));
     if (paths.isEmpty()) return;
     settings.setValue(QStringLiteral("files/lastDirectory"), QFileInfo(paths.front()).absolutePath());
     loadFiles(paths);
@@ -2201,9 +2201,10 @@ namespace OpenMSViewer
       this, tr("Open data folder (Bruker .d or Parquet bundle)"), startDirectory,
       QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
     if (path.isEmpty()) return;
-    // Directory inputs are Bruker .d datasets or the OpenMS Parquet bundle
-    // directories the loader can currently route: featureparquet / idparquet.
-    // (consensusparquet / chromparquet are recognized but not wired yet.)
+    // Directory inputs are Bruker .d datasets or an OpenMS Parquet bundle
+    // directory — featureparquet / idparquet / consensusparquet — all routed by
+    // category below. (chromparquet is the OpenSWATH .xic: a single file, not a
+    // bundle directory, and it is loaded alongside .osw results, not here.)
     const bool isBruker = QFileInfo(path).suffix().compare(QStringLiteral("d"), Qt::CaseInsensitive) == 0;
     const auto format = FormatRegistry::detect(path);
     const bool routable = isBruker
@@ -2351,6 +2352,7 @@ namespace OpenMSViewer
         case FormatRegistry::Category::Experiment:      loadExperimentData(path, format.type); return;
         case FormatRegistry::Category::Osw:             loadOswData(path); return;
         case FormatRegistry::Category::Consensus:       loadConsensusData(path); return;
+        case FormatRegistry::Category::ChromatogramSource: loadChromatogramFile(path); return;
         default: break;
       }
     }
@@ -2517,6 +2519,29 @@ namespace OpenMSViewer
       notify(tr("sqMass loads fully into memory — large files may take a while"), ToastLevel::Warning);
   }
 
+  void MainWindow::loadChromatogramFile(const QString& path)
+  {
+    if (loadWatcher_.isRunning() || imagingLoadWatcher_.isRunning())
+    {
+      statusBar()->showMessage(tr("A primary data file is already loading"), 3000);
+      return;
+    }
+    statusBar()->showMessage(tr("Loading OpenSWATH chromatograms %1…").arg(QFileInfo(path).fileName()));
+    mzMLLoadTimer_.start();
+    mzMLCancellation_ = std::make_shared<std::atomic_bool>(false);
+    // A standalone .xic decodes as a chromatogram-only experiment; it reuses the
+    // primary-load watcher/finish path, so peak map + spectrum stay empty and the
+    // chromatogram panel is populated.
+    beginOperation(MzMLOperation, tr("Loading chromatograms"),
+                   tr("Opening %1").arg(QFileInfo(path).fileName()), false);
+    const auto cancellation = mzMLCancellation_;
+    loadWatcher_.setFuture(QtConcurrent::run([path, cancellation]
+    {
+      return ViewerDocument::readXic(path, [cancellation] { return cancellation->load(); });
+    }));
+    updateLoadingUi();
+  }
+
   void MainWindow::loadFiles(const QStringList& paths)
   {
     bool startedMzML = false;
@@ -2548,8 +2573,11 @@ namespace OpenMSViewer
         // features; idXML/mzid/idparquet → identifications; mzXML/mzData/sqMass →
         // primary spectra).
         const auto format = FormatRegistry::detect(path);
-        if (format.supported && format.category == FormatRegistry::Category::Experiment)
+        if (format.supported && (format.category == FormatRegistry::Category::Experiment
+                                 || format.category == FormatRegistry::Category::ChromatogramSource))
         {
+          // A standalone .xic is a primary chromatogram source: it shares the
+          // primary-load watcher, so it dedups against mzML in the same batch.
           if (startedMzML) continue;
           startedMzML = true;
         }
@@ -2604,11 +2632,19 @@ namespace OpenMSViewer
     rememberRecentFile(sourcePath);
     showDataPage();
     updateDocumentViews();
-    notify(tr("Loaded %1 · %2 spectra, %3 peaks")
-             .arg(QFileInfo(sourcePath).fileName())
-             .arg(document_.statistics().spectrumCount)
-             .arg(document_.statistics().peakCount),
-           ToastLevel::Success);
+    // A chromatogram-only input (standalone .xic, or an mzML with only
+    // chromatograms) has no spectra to report — announce its chromatograms instead.
+    if (document_.statistics().spectrumCount == 0 && !document_.chromatograms().empty())
+      notify(tr("Loaded %1 · %2 chromatograms")
+               .arg(QFileInfo(sourcePath).fileName())
+               .arg(document_.chromatograms().size()),
+             ToastLevel::Success);
+    else
+      notify(tr("Loaded %1 · %2 spectra, %3 peaks")
+               .arg(QFileInfo(sourcePath).fileName())
+               .arg(document_.statistics().spectrumCount)
+               .arg(document_.statistics().peakCount),
+             ToastLevel::Success);
     qInfo().noquote() << QStringLiteral(
       "Loaded mzML in %1 ms: %2 spectra, %3 peaks, %4 chromatograms, %5 IM frames, %6 FAIMS CVs")
       .arg(mzMLLoadTimer_.isValid() ? mzMLLoadTimer_.elapsed() : -1)
@@ -3754,7 +3790,8 @@ namespace OpenMSViewer
       return format.supported
         && (format.category == Category::Experiment || format.category == Category::Features
             || format.category == Category::Identifications || format.category == Category::Imaging
-            || format.category == Category::Osw || format.category == Category::Consensus);
+            || format.category == Category::Osw || format.category == Category::Consensus
+            || format.category == Category::ChromatogramSource);
     }
   }
 

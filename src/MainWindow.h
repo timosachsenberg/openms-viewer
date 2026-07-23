@@ -164,6 +164,7 @@ namespace OpenMSViewer
     void loadFeatureData(const QString& path);
     void loadIdentificationData(const QString& path);
     void loadExperimentData(const QString& path, int fileType);
+    void loadChromatogramFile(const QString& path);
     void loadOswData(const QString& path);
     void loadConsensusData(const QString& path);
     void beginOperation(int operation, const QString& title, const QString& detail,

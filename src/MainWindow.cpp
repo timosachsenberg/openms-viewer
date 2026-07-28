@@ -2803,7 +2803,8 @@ namespace OpenMSViewer
     const QString sourcePath = result.summary.sourcePath;
     imagingStore_ = std::move(result.store);
     imagingSummary_ = std::move(result.summary);
-    imaging_->setData(imagingStore_, imagingSummary_);
+    imaging_->setData(imagingStore_, imagingSummary_, std::move(result.aggregate),
+                      result.aggregateBinPpm);
     lastPrimaryPath_ = sourcePath;
     rememberRecentFile(sourcePath);
     showDataPage();

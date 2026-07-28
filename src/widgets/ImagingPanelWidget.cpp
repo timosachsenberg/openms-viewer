@@ -734,9 +734,11 @@ namespace OpenMSViewer
       aggregateData_ = {};
       aggregate_->clear();
       // Bump the generation so a just-finished scan whose finished() is still
-      // queued cannot publish sticks for the previous bin width.
+      // queued cannot publish sticks for the previous bin width. Cancel the
+      // in-flight scan so it stops decoding pixels for the old bin width.
       ++dataGeneration_;
       aggregatePending_ = true;
+      cancelAggregate();
       if (!aggregateWatcher_.isRunning()) launchAggregate();
     });
     connect(colorMap_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index)
@@ -754,14 +756,18 @@ namespace OpenMSViewer
 
   ImagingPanelWidget::~ImagingPanelWidget()
   {
+    cancelAggregate();
     if (extractionWatcher_.isRunning()) extractionWatcher_.waitForFinished();
     if (aggregateWatcher_.isRunning()) aggregateWatcher_.waitForFinished();
   }
 
   void ImagingPanelWidget::setData(std::shared_ptr<ImagingStore> store,
-                                   const ImagingSummary& summary)
+                                   const ImagingSummary& summary,
+                                   AggregateSpectrum precomputedAggregate,
+                                   double precomputedBinPpm)
   {
     ++dataGeneration_;   // any in-flight extraction now belongs to a stale dataset
+    cancelAggregate();
     store_ = std::move(store);
     summary_ = summary;
     ticImage_.assign(static_cast<std::size_t>(summary.width) * summary.height, 0.0);
@@ -785,13 +791,26 @@ namespace OpenMSViewer
       .arg(summary_.imagingMode.isEmpty() ? tr("unknown") : summary_.imagingMode)
       .arg(summary_.mzMin, 0, 'f', 4).arg(summary_.mzMax, 0, 'f', 4));
 
-    // Compute the whole-image aggregate spectrum in the background.
     aggregateData_ = {};
     extractionPending_ = false;
     aggregatePending_ = false;
     aggregate_->clear();
-    launchAggregate();
+    // Prefer the load-pass sticks when the Display→Bin control still matches.
+    const double binPpm = binPpm_ ? binPpm_->value() : ImagingStore::kDefaultAggregateBinPpm;
+    if (!precomputedAggregate.mz.empty()
+        && std::abs(binPpm - precomputedBinPpm) < 1e-9)
+    {
+      aggregateData_ = std::move(precomputedAggregate);
+      updateAggregateDisplay(false);
+    }
+    else
+      launchAggregate();
     updateControls();
+  }
+
+  void ImagingPanelWidget::cancelAggregate()
+  {
+    if (aggregateCancel_) aggregateCancel_->store(true, std::memory_order_relaxed);
   }
 
   void ImagingPanelWidget::launchAggregate()
@@ -801,14 +820,21 @@ namespace OpenMSViewer
     if (!store_ || aggregateWatcher_.isRunning()) return;
     aggregatePending_ = false;
     activeAggregate_ = dataGeneration_;
+    cancelAggregate();
+    aggregateCancel_ = std::make_shared<std::atomic<bool>>(false);
     const auto store = store_;
+    const auto cancel = aggregateCancel_;
     const double low = summary_.mzMin;
     const double high = summary_.mzMax;
-    const double binPpm = binPpm_ ? binPpm_->value() : 5.0;
-    aggregateWatcher_.setFuture(QtConcurrent::run([store, low, high, binPpm]
+    const double binPpm = binPpm_ ? binPpm_->value() : ImagingStore::kDefaultAggregateBinPpm;
+    aggregateWatcher_.setFuture(QtConcurrent::run([store, low, high, binPpm, cancel]
     {
       // Never let an I/O exception rethrow through QFuture::result() on the GUI thread.
-      try { return store->aggregateSpectrum(low, high, binPpm); }
+      try
+      {
+        return store->aggregateSpectrum(low, high, binPpm,
+                                        [cancel] { return cancel->load(std::memory_order_relaxed); });
+      }
       catch (...) { return AggregateSpectrum{}; }
     }));
   }
@@ -816,6 +842,7 @@ namespace OpenMSViewer
   void ImagingPanelWidget::clear()
   {
     ++dataGeneration_;
+    cancelAggregate();
     store_.reset();
     summary_ = {};
     ticImage_.clear();
@@ -911,12 +938,18 @@ namespace OpenMSViewer
 
   void ImagingPanelWidget::finishAggregate()
   {
+    // Consume the future even when rejecting it, so a cancelled empty result is not
+    // left unread when the next setFuture replaces it.
+    AggregateSpectrum result = aggregateWatcher_.result();
     if (activeAggregate_ != dataGeneration_ || aggregatePending_)
     {
-      launchAggregate();   // dataset/bin-ppm changed while scanning; recompute
+      // Dataset or bin width changed while scanning. Relaunch only when sticks are
+      // still needed — skip if setData already adopted the load-pass aggregate.
+      if (store_ && (aggregatePending_ || !aggregate_->hasComputedSpectrum()))
+        launchAggregate();
       return;
     }
-    aggregateData_ = aggregateWatcher_.result();
+    aggregateData_ = std::move(result);
     updateAggregateDisplay(false);
   }
 

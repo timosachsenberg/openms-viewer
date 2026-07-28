@@ -9,6 +9,7 @@
 #include <QString>
 #include <QWidget>
 
+#include <atomic>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -139,7 +140,12 @@ namespace OpenMSViewer
     explicit ImagingPanelWidget(QWidget* parent = nullptr);
     ~ImagingPanelWidget() override;
 
-    void setData(std::shared_ptr<ImagingStore> store, const ImagingSummary& summary);
+    // `precomputedAggregate` is the stick spectrum from the load pass (same bin
+    // width as `precomputedBinPpm`). When it matches the Display→Bin control,
+    // the panel skips a second full-dataset scan.
+    void setData(std::shared_ptr<ImagingStore> store, const ImagingSummary& summary,
+                 AggregateSpectrum precomputedAggregate = {},
+                 double precomputedBinPpm = ImagingStore::kDefaultAggregateBinPpm);
     void clear();
     void setSelectedSpectrum(std::optional<std::size_t> spectrumIndex);
     [[nodiscard]] bool hasData() const noexcept;
@@ -161,6 +167,7 @@ namespace OpenMSViewer
     void showTicImage();
     void showOverlay();
     void updateControls();
+    void cancelAggregate();
     void launchAggregate();
     void updateAggregateDisplay(bool keepView);
     void browseToPeak(double mz);
@@ -194,6 +201,7 @@ namespace OpenMSViewer
     AggregateSpectrum aggregateData_;
     QFutureWatcher<ImagingImageResult> extractionWatcher_;
     QFutureWatcher<AggregateSpectrum> aggregateWatcher_;
+    std::shared_ptr<std::atomic<bool>> aggregateCancel_;  // polled by the worker
     std::uint64_t dataGeneration_{0};      // bumped whenever the dataset changes
     std::uint64_t activeExtraction_{0};    // dataGeneration_ the in-flight extraction was launched for
     std::uint64_t activeAggregate_{0};     // dataGeneration_ the in-flight aggregate was launched for

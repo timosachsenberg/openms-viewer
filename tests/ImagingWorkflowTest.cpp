@@ -104,10 +104,16 @@ private slots:
     OpenMSViewer::ImagingPanelWidget panel;
     panel.resize(800, 620);
     panel.show();
-    panel.setData(result.store, result.summary);
+    panel.setData(result.store, result.summary, result.aggregate, result.aggregateBinPpm);
     QVERIFY(panel.hasData());
     QVERIFY(!panel.imageWidget()->renderedImage().isNull());
     QCOMPARE(panel.imageWidget()->renderedImage().size(), QSize(2, 2));
+    // Load-pass sticks are adopted immediately — no second IBD scan.
+    auto* aggregate = panel.findChild<OpenMSViewer::AggregateSpectrumWidget*>(
+      QStringLiteral("imagingAggregateSpectrum"));
+    QVERIFY(aggregate != nullptr);
+    QVERIFY(aggregate->hasComputedSpectrum());
+    QVERIFY(aggregate->peakCount() >= 2);
     auto* mz = panel.findChild<QDoubleSpinBox*>(QStringLiteral("imagingMz"));
     auto* extract = panel.findChild<QPushButton*>(QStringLiteral("imagingExtract"));
     auto* mode = panel.findChild<QComboBox*>(QStringLiteral("imagingDisplayMode"));
@@ -164,6 +170,17 @@ private slots:
     QVERIFY(qAbs(aggregate.mz.back() - 200.0) < 1e-3);
     QVERIFY(qAbs(aggregate.mean.back() - 12.5) < 1e-6);         // (20+15+10+5)/4
     QVERIFY(qAbs(aggregate.maxIntensity.back() - 20.0) < 1e-6);
+
+    // Load-pass aggregate matches a fresh store scan (single disk pass at open).
+    QCOMPARE(result.aggregateBinPpm, 5.0);
+    QCOMPARE(result.aggregate.mz.size(), aggregate.mz.size());
+    QCOMPARE(result.aggregate.mean.front(), aggregate.mean.front());
+    QCOMPARE(result.aggregate.maxIntensity.front(), aggregate.maxIntensity.front());
+
+    // Cancellation aborts before finishing when requested up front.
+    const auto cancelled = result.store->aggregateSpectrum(
+      result.summary.mzMin, result.summary.mzMax, 5.0, [] { return true; });
+    QVERIFY(cancelled.mz.empty());
 
     // End-to-end: bin-centre m/z round-trips through a 10 ppm extraction.
     const OpenMS::IonImage image = result.store->extractIonImage(aggregate.mz.front(), 10.0);
@@ -267,7 +284,7 @@ private slots:
     OpenMSViewer::ImagingPanelWidget panel;
     panel.resize(800, 620);
     panel.show();
-    panel.setData(result.store, result.summary);
+    panel.setData(result.store, result.summary, result.aggregate, result.aggregateBinPpm);
     auto* aggregate = panel.findChild<OpenMSViewer::AggregateSpectrumWidget*>(
       QStringLiteral("imagingAggregateSpectrum"));
     auto* binPpm = panel.findChild<QDoubleSpinBox*>(QStringLiteral("imagingBinPpm"));
@@ -277,8 +294,8 @@ private slots:
     QVERIFY(colorMap != nullptr);
     QCOMPARE(binPpm->value(), 5.0);
     QCOMPARE(colorMap->count(), 5);   // viridis / plasma / inferno / magma / hot
-    // Wait for the initial aggregate sticks, then change bin width and colormap.
-    QTRY_VERIFY_WITH_TIMEOUT(aggregate->hasComputedSpectrum(), 3000);
+    // Load-pass sticks are already on screen; changing bin width rescans.
+    QVERIFY(aggregate->hasComputedSpectrum());
     QVERIFY(aggregate->peakCount() >= 2);
     const auto firstCount = aggregate->peakCount();
     binPpm->setValue(10.0);

@@ -5,10 +5,11 @@
 #include <OpenMS/FORMAT/MzMLFile.h>
 #include <OpenMS/FORMAT/FeatureXMLFile.h>
 #include <OpenMS/FORMAT/IdXMLFile.h>
-// Vendor readers self-disable via WITH_THERMO_RAW / WITH_OPENTIMS (OpenMS PUBLIC
-// compile definitions inherited through the OpenMS target), so these are safe to
-// include unconditionally — the classes simply aren't declared when unsupported.
+// Vendor readers are compiled into OpenMS only when enabled; the headers are
+// absent from the install tree when the corresponding option is OFF.
+#ifdef WITH_THERMO_RAW
 #include <OpenMS/FORMAT/ThermoRawFile.h>
+#endif
 #include <OpenMS/FORMAT/BrukerTimsFile.h>
 #include <OpenMS/FORMAT/XICParquetFile.h>
 #include <OpenMS/KERNEL/MSChromatogram.h>

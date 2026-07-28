@@ -58,7 +58,12 @@ namespace OpenMSViewer
     [[nodiscard]] std::size_t spectrumCount() const noexcept;
     [[nodiscard]] OpenMS::MSSpectrum spectrum(std::size_t index) const;
     [[nodiscard]] OpenMS::IonImage extractIonImage(double mz, double tolerancePpm) const;
-    [[nodiscard]] AggregateSpectrum aggregateSpectrum(double mzMin, double mzMax, int bins) const;
+    // Log-spaced aggregate over every geometry pixel (mean + skyline), matching
+    // pyopenms-viewer compute_aggregate. `binPpm` is the relative bin width
+    // (default 5 ppm). Mean = sum / (spectra that hit the bin); skyline =
+    // max per-peak intensity in the bin; reported m/z is the bin centre.
+    [[nodiscard]] AggregateSpectrum aggregateSpectrum(double mzMin, double mzMax,
+                                                      double binPpm = 5.0) const;
 
     OpenMS::OnDiscImzMLExperiment& experiment() noexcept;
     const OpenMS::OnDiscImzMLExperiment& experiment() const noexcept;

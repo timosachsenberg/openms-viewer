@@ -25,16 +25,37 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <numeric>
 
 namespace OpenMSViewer
 {
   namespace
   {
-    // Reuse the shared 256-entry viridis LUT so the image and colorbar match the
-    // rest of the app instead of carrying a separate approximation.
-    QRgb viridis(double value)
+    constexpr int kTopAggregatePeaks = 400;   // pyopenms-viewer _TOP_N_PEAKS
+
+    PeakMapColorMap colorMapAt(int index)
     {
-      return RasterShading::sample(PeakMapColorMap::Viridis, value);
+      // Order matches pyopenms-viewer _COLORMAPS: viridis, magma, plasma, hot, inferno.
+      switch (index)
+      {
+        case 1: return PeakMapColorMap::Magma;
+        case 2: return PeakMapColorMap::Plasma;
+        case 3: return PeakMapColorMap::Hot;
+        case 4: return PeakMapColorMap::Inferno;
+        default: return PeakMapColorMap::Viridis;
+      }
+    }
+
+    // Map geometry y (origin-lower, row 0 at bottom) onto QImage / widget row
+    // (origin-upper), matching pyopenms-viewer / matplotlib imshow(origin="lower").
+    [[nodiscard]] int displayY(std::uint32_t geometryY, std::uint32_t height) noexcept
+    {
+      return static_cast<int>(height - 1 - geometryY);
+    }
+
+    [[nodiscard]] std::uint32_t geometryY(int displayRow, std::uint32_t height) noexcept
+    {
+      return height - 1 - static_cast<std::uint32_t>(displayRow);
     }
 
     // Robust normalization scale: the `percentile`-th value of the positive,
@@ -133,6 +154,16 @@ namespace OpenMSViewer
     update();
   }
 
+  void ImagingImageWidget::setColorMap(PeakMapColorMap colorMap)
+  {
+    if (colorMap_ == colorMap) return;
+    colorMap_ = colorMap;
+    if (!composite_) rebuildImage();
+    else update();   // colorbar is unused for composites; still refresh chrome
+  }
+
+  PeakMapColorMap ImagingImageWidget::colorMap() const noexcept { return colorMap_; }
+
   const QImage& ImagingImageWidget::renderedImage() const noexcept { return image_; }
   std::optional<std::size_t> ImagingImageWidget::selectedSpectrum() const noexcept
   {
@@ -162,10 +193,10 @@ namespace OpenMSViewer
     const auto x = static_cast<std::uint32_t>(std::clamp(
       static_cast<int>((position.x() - area.left()) / area.width() * summary_.width),
       0, static_cast<int>(summary_.width) - 1));
-    const auto y = static_cast<std::uint32_t>(std::clamp(
+    const auto displayRow = static_cast<int>(std::clamp(
       static_cast<int>((position.y() - area.top()) / area.height() * summary_.height),
       0, static_cast<int>(summary_.height) - 1));
-    return std::pair{x, y};
+    return std::pair{x, geometryY(displayRow, summary_.height)};
   }
 
   void ImagingImageWidget::rebuildImage()
@@ -179,13 +210,12 @@ namespace OpenMSViewer
     }
     image_ = QImage(static_cast<int>(summary_.width), static_cast<int>(summary_.height),
                     QImage::Format_RGB32);
-    image_.fill(viridis(0.0));  // colormap floor, so masked pixels match the data in both themes
-    // Robust 99th-percentile scale (not the raw max) so one hot pixel doesn't dim
-    // the whole image; values above it clamp to the top of the colormap. displayMax_
-    // is the honest label (0 when there is no positive signal).
+    // Colormap floor, so masked pixels match the data in both themes.
+    image_.fill(RasterShading::sample(colorMap_, 0.0));
+    // Robust 99th-percentile linear scale (pyopenms-viewer heatmap): clip to the
+    // percentile then map [0, threshold] → colormap. Values above clamp to the top.
     displayMax_ = robustMaximum(intensities_, mask_, 0.99);
     const double divisor = displayMax_ > 0.0 ? displayMax_ : 1.0;
-    const double logMaximum = std::log1p(divisor);
     const bool useMask = !mask_.empty() && mask_.size() == intensities_.size();
     for (std::uint32_t y = 0; y < summary_.height; ++y)
     {
@@ -193,8 +223,9 @@ namespace OpenMSViewer
       {
         const std::size_t index = static_cast<std::size_t>(y) * summary_.width + x;
         if (useMask && !mask_[index]) continue;
-        const double normalized = std::log1p(std::max(0.0, intensities_[index])) / logMaximum;
-        image_.setPixel(static_cast<int>(x), static_cast<int>(y), viridis(normalized));
+        const double normalized = std::clamp(intensities_[index] / divisor, 0.0, 1.0);
+        image_.setPixel(static_cast<int>(x), displayY(y, summary_.height),
+                        RasterShading::sample(colorMap_, normalized));
       }
     }
     update();
@@ -226,7 +257,8 @@ namespace OpenMSViewer
         const double cellHeight = area.height() / static_cast<double>(summary_.height);
         painter.setPen(QPen(QColor(255, 80, 80), 2.0));
         painter.drawRect(QRectF(area.left() + pixel.x * cellWidth,
-                                area.top() + pixel.y * cellHeight, cellWidth, cellHeight));
+                                area.top() + displayY(pixel.y, summary_.height) * cellHeight,
+                                cellWidth, cellHeight));
         break;
       }
     }
@@ -287,7 +319,7 @@ namespace OpenMSViewer
       for (int row = 0; row < bar.height(); ++row)
       {
         const double value = 1.0 - row / static_cast<double>(std::max(1, bar.height() - 1));
-        painter.setPen(QColor::fromRgb(viridis(value)));
+        painter.setPen(QColor::fromRgb(RasterShading::sample(colorMap_, value)));
         painter.drawLine(bar.left(), bar.top() + row, bar.right(), bar.top() + row);
       }
       painter.setPen(QColor(220, 220, 228));
@@ -596,6 +628,19 @@ namespace OpenMSViewer
     aggregateMode_->addItems({tr("Mean"), tr("Max (skyline)")});
     CompactControls::addLabeledMenuControl(
       displayMenu, tr("Aggregate spectrum"), aggregateMode_);
+    binPpm_ = new QDoubleSpinBox(displayMenu);
+    binPpm_->setObjectName(QStringLiteral("imagingBinPpm"));
+    binPpm_->setRange(0.5, 100.0);
+    binPpm_->setDecimals(1);
+    binPpm_->setSingleStep(0.5);
+    binPpm_->setValue(5.0);
+    binPpm_->setSuffix(QStringLiteral(" ppm"));
+    binPpm_->setToolTip(tr("Relative width of each aggregate-spectrum bin"));
+    CompactControls::addLabeledMenuControl(displayMenu, tr("Bin"), binPpm_);
+    colorMap_ = new QComboBox(displayMenu);
+    colorMap_->setObjectName(QStringLiteral("imagingColorMap"));
+    colorMap_->addItems({tr("Viridis"), tr("Magma"), tr("Plasma"), tr("Hot"), tr("Inferno")});
+    CompactControls::addLabeledMenuControl(displayMenu, tr("Colormap"), colorMap_);
     display->setMenu(displayMenu);
     controls->addWidget(display);
 
@@ -683,6 +728,27 @@ namespace OpenMSViewer
             this, &ImagingPanelWidget::browseToPeak);
     connect(aggregateMode_, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int) { updateAggregateDisplay(true); });   // keep zoom on a Mean/Max swap
+    connect(binPpm_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double)
+    {
+      if (!store_) return;
+      aggregateData_ = {};
+      aggregate_->clear();
+      // Bump the generation so a just-finished scan whose finished() is still
+      // queued cannot publish sticks for the previous bin width.
+      ++dataGeneration_;
+      aggregatePending_ = true;
+      if (!aggregateWatcher_.isRunning()) launchAggregate();
+    });
+    connect(colorMap_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index)
+    {
+      image_->setColorMap(colorMapAt(index));
+      // Re-paint the active non-composite image under the new ramp.
+      if (displayMode_->currentIndex() == 0) showTicImage();
+      else if (displayMode_->currentIndex() == 1 && currentIonImage_)
+        image_->setImage(currentIonImage_->intensities, currentIonImage_->mask,
+          tr("Ion image · m/z %1 ± %2 ppm").arg(currentIonImage_->mz, 0, 'f', 5)
+                                                .arg(currentIonImage_->tolerancePpm, 0, 'f', 1));
+    });
     updateControls();
   }
 
@@ -722,6 +788,7 @@ namespace OpenMSViewer
     // Compute the whole-image aggregate spectrum in the background.
     aggregateData_ = {};
     extractionPending_ = false;
+    aggregatePending_ = false;
     aggregate_->clear();
     launchAggregate();
     updateControls();
@@ -732,15 +799,16 @@ namespace OpenMSViewer
     // Serialize: if a scan from a previous dataset is still running, don't start a
     // second full-dataset scan — finishAggregate() relaunches for the current data.
     if (!store_ || aggregateWatcher_.isRunning()) return;
+    aggregatePending_ = false;
     activeAggregate_ = dataGeneration_;
     const auto store = store_;
     const double low = summary_.mzMin;
     const double high = summary_.mzMax;
-    const int bins = std::clamp(static_cast<int>((high - low) * 20.0), 2000, 12000);
-    aggregateWatcher_.setFuture(QtConcurrent::run([store, low, high, bins]
+    const double binPpm = binPpm_ ? binPpm_->value() : 5.0;
+    aggregateWatcher_.setFuture(QtConcurrent::run([store, low, high, binPpm]
     {
       // Never let an I/O exception rethrow through QFuture::result() on the GUI thread.
-      try { return store->aggregateSpectrum(low, high, bins); }
+      try { return store->aggregateSpectrum(low, high, binPpm); }
       catch (...) { return AggregateSpectrum{}; }
     }));
   }
@@ -756,6 +824,7 @@ namespace OpenMSViewer
     overlays_.clear();
     aggregateData_ = {};
     extractionPending_ = false;
+    aggregatePending_ = false;
     image_->clear();
     aggregate_->clear();
     info_->setText(tr("No imaging dataset loaded"));
@@ -842,9 +911,9 @@ namespace OpenMSViewer
 
   void ImagingPanelWidget::finishAggregate()
   {
-    if (activeAggregate_ != dataGeneration_)
+    if (activeAggregate_ != dataGeneration_ || aggregatePending_)
     {
-      launchAggregate();   // dataset changed while scanning; recompute for the current one
+      launchAggregate();   // dataset/bin-ppm changed while scanning; recompute
       return;
     }
     aggregateData_ = aggregateWatcher_.result();
@@ -856,7 +925,28 @@ namespace OpenMSViewer
     if (!aggregate_) return;
     const bool useMax = aggregateMode_ && aggregateMode_->currentIndex() == 1;
     const std::vector<double>& values = useMax ? aggregateData_.maxIntensity : aggregateData_.mean;
-    aggregate_->setSpectrum(aggregateData_.mz, values,
+    // Cap to the top-N peaks by intensity (pyopenms-viewer _TOP_N_PEAKS) so dense
+    // centroid runs stay interactive; keep ascending m/z order for the stick plot.
+    std::vector<std::size_t> order(values.size());
+    std::iota(order.begin(), order.end(), 0);
+    if (order.size() > static_cast<std::size_t>(kTopAggregatePeaks))
+    {
+      std::partial_sort(order.begin(), order.begin() + kTopAggregatePeaks, order.end(),
+        [&](std::size_t a, std::size_t b) { return values[a] > values[b]; });
+      order.resize(static_cast<std::size_t>(kTopAggregatePeaks));
+      std::sort(order.begin(), order.end(),
+        [&](std::size_t a, std::size_t b) { return aggregateData_.mz[a] < aggregateData_.mz[b]; });
+    }
+    std::vector<double> mz;
+    std::vector<double> intensity;
+    mz.reserve(order.size());
+    intensity.reserve(order.size());
+    for (const std::size_t index : order)
+    {
+      mz.push_back(aggregateData_.mz[index]);
+      intensity.push_back(values[index]);
+    }
+    aggregate_->setSpectrum(std::move(mz), std::move(intensity),
       useMax ? tr("Aggregate spectrum (max / skyline) — click a peak to image it")
              : tr("Aggregate spectrum (mean) — click a peak to image it"),
       keepView);
@@ -914,7 +1004,7 @@ namespace OpenMSViewer
     std::vector<double> composite(ticImage_.size(), 0.0);
     QImage colorImage(static_cast<int>(summary_.width), static_cast<int>(summary_.height),
                       QImage::Format_RGB32);
-    colorImage.fill(viridis(0.0));  // colormap floor for masked/empty pixels
+    colorImage.fill(RasterShading::sample(image_->colorMap(), 0.0));  // floor for masked/empty
     std::vector<double> maxima(overlays_.size(), 1.0);
     std::vector<std::pair<QColor, QString>> legend;
     for (std::size_t channel = 0; channel < overlays_.size(); ++channel)
@@ -936,8 +1026,9 @@ namespace OpenMSViewer
       double blue = 0.0;
       for (std::size_t channel = 0; channel < overlays_.size(); ++channel)
       {
-        const double value = std::sqrt(std::max(0.0, overlays_[channel].intensities[index]
-                                                     / maxima[channel]));
+        // Linear 99th-percentile tint (pyopenms-viewer _compose_overlay_rgb).
+        const double value = std::clamp(
+          overlays_[channel].intensities[index] / maxima[channel], 0.0, 1.0);
         const auto& hue = hues[channel % hues.size()];
         red += value * hue[0];
         green += value * hue[1];
@@ -950,10 +1041,11 @@ namespace OpenMSViewer
       if (mask_.empty() || mask_[index])
       {
         const int x = static_cast<int>(index % summary_.width);
-        const int y = static_cast<int>(index / summary_.width);
-        colorImage.setPixel(x, y, qRgb(static_cast<int>(red * 255.0),
-                                       static_cast<int>(green * 255.0),
-                                       static_cast<int>(blue * 255.0)));
+        const auto y = static_cast<std::uint32_t>(index / summary_.width);
+        colorImage.setPixel(x, displayY(y, summary_.height),
+                            qRgb(static_cast<int>(red * 255.0),
+                                 static_cast<int>(green * 255.0),
+                                 static_cast<int>(blue * 255.0)));
       }
     }
     image_->setCompositeImage(std::move(colorImage), composite, mask_,
@@ -967,6 +1059,8 @@ namespace OpenMSViewer
     displayMode_->setEnabled(available);
     mz_->setEnabled(available);
     tolerance_->setEnabled(available);
+    if (binPpm_) binPpm_->setEnabled(available);
+    if (colorMap_) colorMap_->setEnabled(available);
     extract_->setEnabled(available && !extractionWatcher_.isRunning());
     addOverlay_->setEnabled(available && currentIonImage_.has_value());
     clearOverlay_->setEnabled(!overlays_.empty());

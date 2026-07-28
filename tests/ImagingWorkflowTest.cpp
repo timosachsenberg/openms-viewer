@@ -1,9 +1,11 @@
 #include "MainWindow.h"
+#include "TestData.h"
 #include "model/ImagingDocument.h"
 #include "widgets/ImagingPanelWidget.h"
 #include "widgets/SpectrumWidget.h"
 
 #include <OpenMS/FORMAT/ImzMLFile.h>
+#include <OpenMS/FORMAT/MzMLFile.h>
 #include <OpenMS/IMAGING/MSImagingExperiment.h>
 #include <OpenMS/IMAGING/MSImagingGeometry.h>
 #include <OpenMS/KERNEL/Peak1D.h>
@@ -16,6 +18,7 @@
 #include <QFileInfo>
 #include <QMenu>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
@@ -145,13 +148,16 @@ private slots:
     QVERIFY(result.succeeded());
 
     // Fixture: 4 pixels, m/z 100 intensities {10,20,30,40}, m/z 200 {20,15,10,5}.
+    // Log-spaced 5 ppm bins (pyopenms-viewer compute_aggregate); every pixel hits
+    // both peaks so mean = sum / hit-count equals sum / pixel-count.
     const auto aggregate =
-      result.store->aggregateSpectrum(result.summary.mzMin, result.summary.mzMax, 2000);
+      result.store->aggregateSpectrum(result.summary.mzMin, result.summary.mzMax, 5.0);
     QCOMPARE(aggregate.mz.size(), std::size_t{2});
     QCOMPARE(aggregate.mean.size(), std::size_t{2});
     QCOMPARE(aggregate.maxIntensity.size(), std::size_t{2});
-    // Representative m/z is the intensity-weighted peak location (exactly 100/200),
-    // NOT the bin centre (~100.025) — a ppm extraction around it must hit the peak.
+    // Reported m/z is the log-bin centre (Python centers); with 5 ppm bins around
+    // sharp centroid peaks that centre sits within << 1 mDa of the true peak, so
+    // a 10 ppm extraction still hits.
     QVERIFY(qAbs(aggregate.mz.front() - 100.0) < 1e-3);
     QVERIFY(qAbs(aggregate.mean.front() - 25.0) < 1e-6);        // (10+20+30+40)/4
     QVERIFY(qAbs(aggregate.maxIntensity.front() - 40.0) < 1e-6);
@@ -159,8 +165,7 @@ private slots:
     QVERIFY(qAbs(aggregate.mean.back() - 12.5) < 1e-6);         // (20+15+10+5)/4
     QVERIFY(qAbs(aggregate.maxIntensity.back() - 20.0) < 1e-6);
 
-    // End-to-end: the reported m/z round-trips through a 10 ppm extraction (a bin
-    // centre would sit outside the ppm window and extract an empty image).
+    // End-to-end: bin-centre m/z round-trips through a 10 ppm extraction.
     const OpenMS::IonImage image = result.store->extractIonImage(aggregate.mz.front(), 10.0);
     double total = 0.0;
     for (const double value : image.getData()) total += value;
@@ -208,15 +213,83 @@ private slots:
     QCOMPARE(spectrum->spectrumIndex(), std::size_t{0});
     dock->raise();
     QTest::qWait(30);
-    // Click the exact centre of the bottom-right pixel (x=1, y=1 → spectrum 3),
-    // computed from the on-screen image rect so it is robust to the widget size /
-    // panel layout rather than guessing a fraction of the widget.
+    // Click the centre of geometry pixel (x=1, y=1 → spectrum 3). With
+    // origin-lower rendering (pyopenms-viewer / matplotlib), geometry y=1 is at
+    // the *top* of the on-screen image.
     const QRect image = panel->imageWidget()->imageRect();
-    const QPoint bottomRightPixel = image.topLeft()
-      + QPoint(image.width() * 3 / 4, image.height() * 3 / 4);
-    QTest::mouseClick(panel->imageWidget(), Qt::LeftButton, Qt::NoModifier, bottomRightPixel);
+    const QPoint geometryPixel11 = image.topLeft()
+      + QPoint(image.width() * 3 / 4, image.height() * 1 / 4);
+    QTest::mouseClick(panel->imageWidget(), Qt::LeftButton, Qt::NoModifier, geometryPixel11);
     QTRY_COMPARE(spectrum->spectrumIndex(), std::size_t{3});
     QCOMPARE(panel->imageWidget()->selectedSpectrum().value(), std::size_t{3});
+
+    // Spectrum index spinbox is bidirectional in imaging mode (PR #44 parity).
+    auto* spectrumIndex = window.findChild<QSpinBox*>(QStringLiteral("spectrumIndex"));
+    QVERIFY(spectrumIndex != nullptr);
+    spectrumIndex->setValue(2);   // 1-based UI → spectrum index 1
+    QTRY_COMPARE(spectrum->spectrumIndex(), std::size_t{1});
+    QCOMPARE(panel->imageWidget()->selectedSpectrum().value(), std::size_t{1});
+  }
+
+  void clearsImagingWhenLoadingMzML()
+  {
+    QSettings().clear();
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString imzml = writeImagingFixture(directory.path());
+    const QString mzml = directory.filePath(QStringLiteral("after.mzML"));
+    OpenMS::MzMLFile().store(mzml.toStdString(), OpenMSViewer::TestData::experiment());
+
+    OpenMSViewer::MainWindow window;
+    window.resize(1250, 850);
+    window.show();
+    window.loadFile(imzml);
+    auto* panel = window.findChild<OpenMSViewer::ImagingPanelWidget*>();
+    auto* dock = window.findChild<OpenMSViewer::PanelHandle*>(QStringLiteral("imaging"));
+    QVERIFY(panel != nullptr);
+    QVERIFY(dock != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(panel->hasData(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(dock->isShown(), 3000);
+
+    window.loadFile(mzml);
+    QTRY_VERIFY_WITH_TIMEOUT(!panel->hasData(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!dock->isShown(), 3000);
+  }
+
+  void aggregateBinPpmControlRelaunchesScan()
+  {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = writeImagingFixture(directory.path());
+    auto result = OpenMSViewer::ImagingDocument::readImzML(path);
+    QVERIFY(result.succeeded());
+
+    OpenMSViewer::ImagingPanelWidget panel;
+    panel.resize(800, 620);
+    panel.show();
+    panel.setData(result.store, result.summary);
+    auto* aggregate = panel.findChild<OpenMSViewer::AggregateSpectrumWidget*>(
+      QStringLiteral("imagingAggregateSpectrum"));
+    auto* binPpm = panel.findChild<QDoubleSpinBox*>(QStringLiteral("imagingBinPpm"));
+    auto* colorMap = panel.findChild<QComboBox*>(QStringLiteral("imagingColorMap"));
+    QVERIFY(aggregate != nullptr);
+    QVERIFY(binPpm != nullptr);
+    QVERIFY(colorMap != nullptr);
+    QCOMPARE(binPpm->value(), 5.0);
+    QCOMPARE(colorMap->count(), 5);   // viridis / plasma / inferno / magma / hot
+    // Wait for the initial aggregate sticks, then change bin width and colormap.
+    QTRY_VERIFY_WITH_TIMEOUT(aggregate->hasComputedSpectrum(), 3000);
+    QVERIFY(aggregate->peakCount() >= 2);
+    const auto firstCount = aggregate->peakCount();
+    binPpm->setValue(10.0);
+    QTRY_COMPARE_WITH_TIMEOUT(binPpm->value(), 10.0, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(aggregate->hasComputedSpectrum(), 3000);
+    QVERIFY(aggregate->peakCount() >= 2);
+    // Fixture has two sharp peaks; coarser bins still keep both occupied.
+    QCOMPARE(aggregate->peakCount(), firstCount);
+    colorMap->setCurrentIndex(1);   // plasma — must not drop the imaging session
+    QVERIFY(panel.hasData());
+    QVERIFY(panel.imageWidget()->renderedImage().width() > 0);
   }
 };
 

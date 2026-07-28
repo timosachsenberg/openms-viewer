@@ -46,6 +46,32 @@ png = PeakMapRenderer().render(s, fast=False, draw_axes=True)  # base64 PNG
   spectrum marker are composited with soft alpha in the browser; OpenMS Viewer's
   equivalents are solid-stroke QPainter markers.
 
+## Mass-spectrometry imaging (imzML) parity
+
+pyopenms-viewer’s Ion Image panel ([PR #42](https://github.com/timosachsenberg/pyopenms-viewer/pull/42),
+lifecycle fixes in [PR #44](https://github.com/timosachsenberg/pyopenms-viewer/pull/44))
+is mirrored in OpenMS Viewer by `ImagingDocument` / `ImagingStore` and
+`ImagingPanelWidget`:
+
+- TIC on load, m/z ± ppm ion extraction, mean/skyline **log-spaced ppm** aggregate
+  (bin centres, per-peak skyline max — same `compute_aggregate` as the Python panel)
+  with peak-click → ion image, pixel → Spectrum panel, additive multi-ion RGB
+  overlays, auto-show when imzML is loaded, and clear-on-mzML.
+- Aggregate bin width and colormap controls match the Python browse UI (viridis /
+  magma / plasma / hot / inferno); ion/TIC uses linear 99th-percentile tone mapping
+  and origin-lower pixel layout; stale async work is rejected via a data-generation
+  token (desktop analogue of the Python panel’s load-generation guard).
+
+### Manual verification checklist (PR test plan)
+
+1. Load an imzML (+ IBD): **Ion Image** dock appears with TIC; aggregate sticks fill in.
+2. Change **Bin (ppm)** and **Colormap** under Display: aggregate rescans; image recolors.
+3. Click an aggregate peak → ion image updates; click a pixel → Spectrum panel shows that spectrum; spectrum index spinbox moves the highlight.
+4. **Add to overlay** / clear overlays; export PNG if exercised.
+5. Load an mzML afterward: imaging panel clears and hides; LC-MS views take over.
+
+Automated coverage: `ImagingWorkflowTest` (load/extract/overlay/aggregate/spinbox/mzML-clear/bin-ppm) via `QT_QPA_PLATFORM=offscreen ./build/openms_viewer_tests`.
+
 ## Where OpenMS Viewer is at least even
 
 - **Informative chrome:** a color-scale legend, a live minimap + viewport

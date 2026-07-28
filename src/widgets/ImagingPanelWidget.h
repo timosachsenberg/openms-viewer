@@ -1,6 +1,7 @@
 #pragma once
 
 #include "model/ImagingDocument.h"
+#include "plot/PeakMapRasterizer.h"
 
 #include <QColor>
 #include <QFutureWatcher>
@@ -52,6 +53,8 @@ namespace OpenMSViewer
                            std::vector<std::pair<QColor, QString>> legend);
     void clear();
     void setSelectedSpectrum(std::optional<std::size_t> spectrumIndex);
+    void setColorMap(PeakMapColorMap colorMap);
+    [[nodiscard]] PeakMapColorMap colorMap() const noexcept;
     [[nodiscard]] const QImage& renderedImage() const noexcept;
     [[nodiscard]] std::optional<std::size_t> selectedSpectrum() const noexcept;
     // On-screen rectangle the (aspect-preserved) image occupies within the widget.
@@ -83,6 +86,7 @@ namespace OpenMSViewer
     double displayMax_{0.0};   // robust (99th-percentile) intensity for the colorbar
     std::vector<std::pair<QColor, QString>> legend_;   // overlay channel colour + m/z
     std::optional<std::size_t> selectedSpectrum_;
+    PeakMapColorMap colorMap_{PeakMapColorMap::Viridis};
   };
 
   // Whole-image mean/skyline spectrum with click-to-browse: clicking a peak sets
@@ -98,6 +102,8 @@ namespace OpenMSViewer
                      bool keepView = false);
     void setMarkerMz(std::optional<double> mz);
     void clear();
+    [[nodiscard]] std::size_t peakCount() const noexcept { return mz_.size(); }
+    [[nodiscard]] bool hasComputedSpectrum() const noexcept { return computed_; }
 
   signals:
     void peakSelected(double mz);
@@ -176,6 +182,8 @@ namespace OpenMSViewer
     QComboBox* displayMode_{nullptr};
     QDoubleSpinBox* mz_{nullptr};
     QDoubleSpinBox* tolerance_{nullptr};
+    QDoubleSpinBox* binPpm_{nullptr};      // aggregate log-bin width (ppm)
+    QComboBox* colorMap_{nullptr};
     QPushButton* extract_{nullptr};
     QPushButton* addOverlay_{nullptr};
     QPushButton* clearOverlay_{nullptr};
@@ -190,5 +198,6 @@ namespace OpenMSViewer
     std::uint64_t activeExtraction_{0};    // dataGeneration_ the in-flight extraction was launched for
     std::uint64_t activeAggregate_{0};     // dataGeneration_ the in-flight aggregate was launched for
     bool extractionPending_{false};        // a click arrived while an extraction was running
+    bool aggregatePending_{false};         // bin-ppm changed while a scan was running
   };
 }

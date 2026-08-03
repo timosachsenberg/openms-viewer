@@ -563,7 +563,7 @@ namespace OpenMSViewer
 
     imaging_ = new ImagingPanelWidget;
     imagingHandle_ = rowStack_->addPanel(QStringLiteral("imaging"),
-                                         tr("Mass-spectrometry imaging"), imaging_);
+                                         tr("Ion Image"), imaging_);
 
     osw_ = new OswPanel;
     oswHandle_ = rowStack_->addPanel(QStringLiteral("osw"),
@@ -2782,13 +2782,29 @@ namespace OpenMSViewer
     setPanelAvailable(faimsHandle_, false);
     setPanelAvailable(featuresHandle_, false);
     setPanelAvailable(identificationsHandle_, false);
+    // Imaging is an exclusive primary mode — drop OSW/consensus the same way we
+    // clear LC-MS panels so stale result docks cannot outlive the new dataset.
+    hasOswData_ = false;
+    oswSourcePath_.clear();
+    osw_->clear();
+    setPanelAvailable(oswHandle_, false);
+    hasConsensusData_ = false;
+    consensusMap_.reset();
+    consensusColumns_.clear();
+    consensusSourcePath_.clear();
+    consensus_->clear();
+    peakMap_->setConsensusFeatures({});
+    showConsensusAction_->setChecked(false);
+    showConsensusAction_->setEnabled(false);
+    setPanelAvailable(consensusHandle_, false);
     exportMzMLAction_->setEnabled(false);
     selection_.clear();
 
     const QString sourcePath = result.summary.sourcePath;
     imagingStore_ = std::move(result.store);
     imagingSummary_ = std::move(result.summary);
-    imaging_->setData(imagingStore_, imagingSummary_);
+    imaging_->setData(imagingStore_, imagingSummary_, std::move(result.aggregate),
+                      result.aggregateBinPpm);
     lastPrimaryPath_ = sourcePath;
     rememberRecentFile(sourcePath);
     showDataPage();
@@ -3225,6 +3241,13 @@ namespace OpenMSViewer
 
   void MainWindow::selectSpectrum(std::size_t index)
   {
+    // Imaging pixels share the spectrum-index control but not ViewerDocument —
+    // route through the imaging path so the spinbox stays bidirectional.
+    if (imagingStore_)
+    {
+      selectImagingSpectrum(index);
+      return;
+    }
     const auto* selected = document_.spectrum(index);
     if (!selected) return;
 

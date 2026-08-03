@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -52,13 +53,24 @@ namespace OpenMSViewer
   class ImagingStore final
   {
   public:
+    using CancellationCheck = std::function<bool()>;
+
+    static constexpr double kDefaultAggregateBinPpm = 5.0;
+
     explicit ImagingStore(const QString& path);
 
     [[nodiscard]] bool isOpen() const noexcept;
     [[nodiscard]] std::size_t spectrumCount() const noexcept;
     [[nodiscard]] OpenMS::MSSpectrum spectrum(std::size_t index) const;
     [[nodiscard]] OpenMS::IonImage extractIonImage(double mz, double tolerancePpm) const;
-    [[nodiscard]] AggregateSpectrum aggregateSpectrum(double mzMin, double mzMax, int bins) const;
+    // Log-spaced aggregate over every geometry pixel (mean + skyline), matching
+    // pyopenms-viewer compute_aggregate. `binPpm` is the relative bin width
+    // (default 5 ppm). Mean = sum / (spectra that hit the bin); skyline =
+    // max per-peak intensity in the bin; reported m/z is the bin centre.
+    // `cancelled` is polled between pixels; on cancel returns an empty spectrum.
+    [[nodiscard]] AggregateSpectrum aggregateSpectrum(
+      double mzMin, double mzMax, double binPpm = kDefaultAggregateBinPpm,
+      CancellationCheck cancelled = {}) const;
 
     OpenMS::OnDiscImzMLExperiment& experiment() noexcept;
     const OpenMS::OnDiscImzMLExperiment& experiment() const noexcept;
@@ -81,6 +93,9 @@ namespace OpenMSViewer
   {
     std::shared_ptr<ImagingStore> store;
     ImagingSummary summary;
+    // Built during the same disk pass as TIC / m/z range (default bin width).
+    AggregateSpectrum aggregate;
+    double aggregateBinPpm{ImagingStore::kDefaultAggregateBinPpm};
     QString error;
 
     [[nodiscard]] bool succeeded() const noexcept

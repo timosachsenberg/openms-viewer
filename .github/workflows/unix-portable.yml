@@ -31,10 +31,10 @@ env:
   # Pinned OpenMS dependency versions for reproducible packaging. Bump these
   # together when moving to a newer OpenMS: the viewer must build against the
   # exact OpenMS + contrib it will run on (OpenMS has no stable cross-minor ABI).
-  # OPENMS_REF is the merge commit for OpenMS#9752, which provides the
-  # core-only target and install graph consumed below. OPENMS_CONTRIB_TAG was
-  # the latest OpenMS/contrib release when the packaging profile was created.
-  OPENMS_REF: ad6025add791453143191e0253f8cc86b5eb7409
+  # OPENMS_REF is develop past OpenMS#9903, which makes imzML loading tolerate
+  # duplicate (x/y) pixel coordinates instead of throwing. OPENMS_CONTRIB_TAG was
+  # the latest OpenMS/contrib release when this ref was pinned.
+  OPENMS_REF: 25b3b040a4541a6725b01a5749f5aa958fa9449d
   OPENMS_CONTRIB_TAG: 2026-03-25-183345
   OPENMS_SOURCE: ${{ github.workspace }}/_deps/OpenMS
   OPENMS_CONTRIB: ${{ github.workspace }}/_deps/contrib
